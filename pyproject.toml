@@ -21,6 +21,9 @@ ingest = [
 postgres = [
     "psycopg[binary]>=3.1",  # 운영 DB 드라이버(테스트는 SQLite라 불필요)
 ]
+ui = [
+    "streamlit>=1.36",       # 적재 검토 UI
+]
 dev = [
     "pytest>=8.0",
 ]

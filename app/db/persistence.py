@@ -7,9 +7,18 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
+from sqlalchemy import select
+
+from app.db.models import Chunk as ChunkRow
+from app.db.models import Document as DocumentRow
 from app.db.repositories import DocumentRepository
+from app.ingestion.chunking import Chunk
 from app.ingestion.pipeline import IngestionContext
+from app.schemas.enums import ChunkType
 from app.schemas.ingestion import IngestionStatus
+from app.schemas.metadata import ChunkMetadata
 
 
 def persistent_hash_lookup(repo: DocumentRepository):
@@ -23,3 +32,31 @@ def save_ingestion(repo: DocumentRepository, ctx: IngestionContext) -> None:
         repo.upsert_chunks(ctx.doc.identification.doc_id, ctx.chunks)
     if ctx.status == IngestionStatus.INDEXED:
         repo.mark_chunks_indexed(ctx.doc.identification.doc_id)
+
+
+def load_context(repo: DocumentRepository, doc_id: str) -> Optional[IngestionContext]:
+    """DB에서 IngestionContext를 복원한다(Streamlit rerun 간 상태 유지용)."""
+    doc = repo.get(doc_id)
+    if doc is None:
+        return None
+    doc_row = repo.session.get(DocumentRow, doc_id)
+    status = IngestionStatus(doc_row.status)
+
+    chunk_rows = repo.session.execute(
+        select(ChunkRow).where(ChunkRow.parent_doc_id == doc_id)
+        .order_by(ChunkRow.chunk_id)
+    ).scalars()
+    chunks = [
+        Chunk(
+            meta=ChunkMetadata(
+                chunk_id=r.chunk_id,
+                parent_doc_id=r.parent_doc_id,
+                chunk_type=ChunkType(r.chunk_type),
+                section_title=r.section_title,
+                page_no=r.page_no,
+            ),
+            text=r.text,
+        )
+        for r in chunk_rows
+    ]
+    return IngestionContext(doc=doc, chunks=chunks, status=status)

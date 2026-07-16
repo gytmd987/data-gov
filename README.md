@@ -79,9 +79,24 @@ app/
     session.py           # 엔진·세션 팩토리 (Postgres 운영 / SQLite 테스트)
     mapping.py           # DocumentMetadata ↔ ORM 행 변환
     repositories.py      # Document/User/Audit 리포지토리
-    persistence.py       # 파이프라인 ↔ 영속 계층 연결(중복탐지·단계 저장)
+    persistence.py       # 파이프라인 ↔ 영속 계층 연결(중복탐지·단계 저장·컨텍스트 복원)
+  review/
+    service.py           # 검토 서비스(UI 비의존): 적재 시작·목록·상세·제출/검증/색인
+    streamlit_app.py     # human-in-the-loop 검토 화면(얇은 UI)
+    factory.py           # 실제 서비스 배선(vLLM/TEI/Qdrant/Postgres)
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
+
+## 적재 검토 UI 실행
+
+```bash
+pip install -e ".[ingest,ui,postgres]"
+streamlit run app/review/streamlit_app.py
+```
+
+사이드바에서 문서 업로드 → 자동 채움(LLM) → 화면에서 신뢰도 확인·거버넌스 필수 필드 입력 →
+"검증 후 색인". 필수 필드 미충족 시 차단(BLOCKED) 사유가 표시된다. 로직은 `ReviewService`에 있어
+UI 없이도 단위 테스트된다(`tests/test_review.py`).
 
 ## 적재 파이프라인 흐름
 
