@@ -15,11 +15,11 @@
 
 ## VRAM 배치 (중요)
 
-현재 vLLM이 Qwen3.6-27B 서빙에 **~83GB를 점유**(기본 `gpu_memory_utilization`≈0.9)하여 잔여는 ~13GB.
+vLLM(Qwen3.6-27B)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태 → 잔여 **~26GB**.
 자세한 배분/튜닝은 [`docs/vram.md`](docs/vram.md) 참고.
 
-- **권고**: `--gpu-memory-utilization 0.45~0.5` + FP8로 vLLM을 ~45GB로 캡 → 40GB+ 확보
-- **설계 원칙**: 재튜닝 없이 잔여 ~13GB에서도 동작하도록 **경량 모델**(BGE-M3 / bge-reranker-v2-m3, 각 ~2GB / Granite-Docling·PaddleOCR) 채택
+- **현재 배치**: 임베딩(BGE-M3 ~3GB) + 리랭커(bge-v2-m3 ~3GB) + 적재용 **Qwen3-VL-8B(~18GB) on-demand**까지 수용 가능(합계 ~24GB)
+- **설계 원칙**: 임베딩/리랭커는 저지연·경량 BGE 계열을 기본값으로 유지. 적재/질의 피크가 겹치면 vLLM을 ~46GB로 더 낮춰(시나리오 A) 여유 확대
 
 ## 컴포넌트
 
@@ -28,7 +28,7 @@
 | vLLM (기구축) | 생성 LLM(Qwen3.6-27B) 서빙 | 재튜닝 권고 |
 | TEI Embedding | BGE-M3 (dense + sparse) | ~2-3GB |
 | TEI Reranker | bge-reranker-v2-m3 | ~2-3GB |
-| Docling + PaddleOCR | 포맷별 파싱·OCR·표 추출 | ~1-2GB |
+| 파싱 VLM/OCR | 포맷별 파싱·OCR·표 추출 (Granite-Docling 기본, Qwen3-VL-8B on-demand 가능) | ~1-2GB / ~18GB |
 | Qdrant | 청크 벡터 + payload(접근통제/생애주기) 하드 필터 | CPU/RAM |
 | PostgreSQL | 메타데이터·사용자/그룹·감사로그·적재 상태 | CPU/RAM |
 | MinIO | 원본 파일 보관(file_hash 중복탐지) | CPU/RAM |

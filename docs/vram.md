@@ -2,12 +2,14 @@
 
 ## 현재 상황
 
-vLLM이 **Qwen3.6-27B** 서빙에 **~83GB**를 점유하고 있다. 이는 27B 모델 자체 크기가 아니라,
-vLLM 기본값 `gpu_memory_utilization`(≈0.9)이 **가중치 + KV 캐시**로 GPU를 거의 전부 선점하기 때문이다.
-남은 VRAM은 약 **13GB**뿐이다.
+vLLM(**Qwen3.6-27B**)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태다. 남은 VRAM은 약 **26GB**.
+(초기에는 기본값 `gpu_memory_utilization`≈0.9로 ~83GB를 선점 → 잔여 13GB였음. 재튜닝으로 여유 확보.)
 
 RTX 6000(워크스테이션 Blackwell)은 **MIG를 지원하지 않으므로**, 한 장을 여러 프로세스가 메모리 상한으로
 나눠 쓴다. 각 서비스는 자신의 VRAM 상한을 반드시 설정해 OOM을 방지한다.
+
+**잔여 ~26GB로 가능한 배치:** 임베딩(BGE-M3 ~3GB) + 리랭커(bge-v2-m3 ~3GB) + **적재용 Qwen3-VL-8B(~18GB)까지 on-demand 수용 가능**(합계 ~24GB).
+필요하면 vLLM을 조금 더 낮춰(시나리오 A) 상시 여유를 더 확보할 수 있다.
 
 ## 시나리오 A (권고): vLLM 재튜닝으로 여유 확보
 
@@ -31,20 +33,23 @@ vllm serve <qwen3.6-27b> \
 
 → 임베딩·리랭커 상시 구동 + 적재 시 무거운 VLM까지 여유롭게 수용.
 
-## 시나리오 B (현재 상태 유지): 잔여 ~13GB로 운영
+## 시나리오 B (현재 상태): vLLM 70GB, 잔여 ~26GB
 
-vLLM 83GB를 그대로 두어도 아래 경량 스택은 잔여 13GB에 맞는다.
+재튜닝으로 잔여가 26GB로 늘어 경량 스택 + 적재용 VLM까지 수용 가능하다.
 
 | 서비스 | VRAM |
 |---|---|
-| (고정) vLLM Qwen3.6-27B | 83GB |
+| vLLM Qwen3.6-27B (재튜닝, 70GB) | 70GB |
 | TEI Embedding (BGE-M3, 568M) | ~2-3GB |
 | TEI Reranker (bge-reranker-v2-m3, 568M) | ~2-3GB |
-| 파싱: Granite-Docling-258M + PaddleOCR | ~1-2GB |
-| 여유 버퍼 | ~5GB |
+| 파싱 VLM: Qwen3-VL-8B (적재 전용, on-demand) 또는 Granite-Docling-258M | ~18GB / ~1-2GB |
+| 여유 버퍼 | ~2-5GB |
 
-→ 임베딩/리랭커는 **4B급(Qwen3) 대신 작은 BGE 계열**을 기본값으로. 무거운 VLM은 사용하지 않고
-Granite-Docling(258M)+PaddleOCR로 파싱. 적재 시 순간적으로 VRAM이 부족하면 파싱 VLM을 **CPU**로 폴백.
+→ 임베딩/리랭커는 여전히 **작은 BGE 계열**을 기본값으로(안전·저지연). 파싱은 이제 무거운 **Qwen3-VL-8B를 적재 시점에만 on-demand**로 쓸 수 있다.
+질의 트래픽과 겹쳐 VRAM이 빠듯하면 파싱 VLM을 Granite-Docling(258M) 또는 **CPU**로 폴백한다.
+
+> 참고: 임베딩·리랭커가 상시 ~6GB를 쓰므로, 적재 VLM(18GB)을 동시에 올리면 잔여 여유가 ~2GB로 얇아진다.
+> 적재와 질의 피크가 겹치는 운영이면 vLLM을 시나리오 A(~46GB)로 더 낮춰 여유를 키우는 것을 권장.
 
 ## 권장 결론
 
