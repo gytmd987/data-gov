@@ -1,0 +1,83 @@
+# 온프레미스 인사팀 RAG — 비-LLM 서비스 스택
+# vLLM(생성 LLM)은 이 compose에 포함하지 않는다. 이미 별도로 기동 중이며 .env의 VLLM_BASE_URL로 연결한다.
+#
+# GPU 서비스(TEI embed/rerank)는 단일 카드를 vLLM과 공유하므로 VRAM 상한에 주의한다(docs/vram.md).
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ragadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+
+  # BGE-M3: dense + sparse 벡터를 한 모델로 → 하이브리드 단순화. 568M, ~2-3GB VRAM.
+  embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    restart: unless-stopped
+    command: ["--model-id", "${EMBEDDING_MODEL:-BAAI/bge-m3}", "--port", "80"]
+    ports:
+      - "${EMBEDDING_PORT:-8081}:80"
+    volumes:
+      - hf_cache:/data
+    environment:
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}   # 폐쇄망 배포 시 1 (사전 다운로드 필요)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  # bge-reranker-v2-m3: 가볍고 안전한 다국어 크로스인코더. 568M, ~2-3GB VRAM.
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    restart: unless-stopped
+    command: ["--model-id", "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}", "--port", "80"]
+    ports:
+      - "${RERANKER_PORT:-8082}:80"
+    volumes:
+      - hf_cache:/data
+    environment:
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+volumes:
+  pgdata:
+  qdrantdata:
+  miniodata:
+  hf_cache:
