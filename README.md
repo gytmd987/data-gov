@@ -61,10 +61,19 @@ app/
     chunking.py          # 구조 인지 청킹(표는 통째로, 텍스트는 경계 분할+오버랩)
     enrichment.py        # LLM 자동 채움(controlled JSON 스키마 강제, confidence 임계치)
     pipeline.py          # 상태머신 오케스트레이션(자동단계→검토→검증→색인)
+  search/
+    access.py            # 사용자 컨텍스트 → 접근통제 하드필터(Qdrant + 파이썬 재검증)
+    retriever.py         # 하이브리드 검색(dense+BM25) + RRF 융합 + 권한 후처리
+    fusion.py            # Reciprocal Rank Fusion
+    rerank.py            # 리랭킹(bge-reranker-v2-m3) topN→topK
+    answer.py            # 근거 강제 프롬프트 + 출처 인용 파싱
+    pipeline.py          # 검색→리랭킹→답변→감사로그 오케스트레이션
   clients/
-    llm.py               # vLLM(OpenAI 호환, guided_json)
+    llm.py               # vLLM(OpenAI 호환, guided_json + 텍스트 생성)
     embedding.py         # TEI 임베딩(KURE-v1)
+    reranker.py          # TEI 리랭커(bge-reranker-v2-m3)
     qdrant_indexer.py    # Qdrant 업서트(payload에 접근통제/생애주기 상속)
+    qdrant_search.py     # Qdrant dense + BM25 검색 어댑터
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
 
@@ -76,6 +85,17 @@ apply_review()     : 사람이 거버넌스 필수 필드 입력·보정 → val
 index()            : 청크 임베딩 + Qdrant 업서트(접근통제 payload) → INDEXED
 ```
 
+## 검색·답변 파이프라인 흐름
+
+```
+SearchPipeline.answer(query, user)
+  → 하이브리드 검색(dense KURE-v1 + Qdrant BM25, 접근통제 하드필터 주입)
+  → RRF 융합 + 권한 재검증(만료/대체/민감도 배제)
+  → 리랭킹(bge-reranker-v2-m3) topN→topK
+  → 근거 강제 답변 생성 + [n] 출처 인용 + 감사로그
+```
+
+접근통제는 이중 적용: **① Qdrant 쿼리 필터**(후보 단계 배제) + **② 파이썬 allows() 재검증**(인용 직전 방어).
 외부 서비스(vLLM/TEI/Qdrant/OCR/해시조회)는 모두 Protocol/콜백으로 주입 → 서비스 없이 단위 테스트 가능.
 
 전체 실행 계획은 설계 문서를 참고.

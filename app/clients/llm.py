@@ -44,3 +44,18 @@ class VLLMClient:
             data = resp.json()
         content = data["choices"][0]["message"]["content"]
         return json.loads(content)
+
+    def complete_text(self, prompt: str, temperature: float = 0.2) -> str:
+        """일반 텍스트 생성(답변 생성용). answer.TextLLM 프로토콜 구현."""
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.post(
+                f"{self.base_url}/chat/completions", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        return data["choices"][0]["message"]["content"]
