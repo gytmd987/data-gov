@@ -26,8 +26,8 @@ vLLM(Qwen3.6-27B)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태 �
 | 컴포넌트 | 역할 | VRAM |
 |---|---|---|
 | vLLM (기구축) | 생성 LLM(Qwen3.6-27B) 서빙 | 재튜닝 권고 |
-| TEI Embedding | BGE-M3 (dense + sparse) | ~2-3GB |
-| TEI Reranker | bge-reranker-v2-m3 | ~2-3GB |
+| TEI Embedding | KURE-v1 (한국어 특화, dense) + Qdrant BM25 (sparse) | ~2-3GB |
+| TEI Reranker | bge-reranker-v2-m3 (한국어 최적화) | ~2-3GB |
 | 문서 파서/OCR | 포맷별 파싱·OCR·표 추출 (PaddleOCR-VL 기본; MinerU2.5·dots.OCR 대안) | ~1-3GB |
 | Qdrant | 청크 벡터 + payload(접근통제/생애주기) 하드 필터 | CPU/RAM |
 | PostgreSQL | 메타데이터·사용자/그룹·감사로그·적재 상태 | CPU/RAM |

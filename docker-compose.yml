@@ -38,11 +38,11 @@ services:
     volumes:
       - miniodata:/data
 
-  # BGE-M3: dense + sparse 벡터를 한 모델로 → 하이브리드 단순화. 568M, ~2-3GB VRAM.
+  # 임베딩: KURE-v1(한국어 특화, BGE-M3 기반, 568M ~2-3GB). dense는 이 모델, sparse는 Qdrant BM25.
   embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:latest
     restart: unless-stopped
-    command: ["--model-id", "${EMBEDDING_MODEL:-BAAI/bge-m3}", "--port", "80"]
+    command: ["--model-id", "${EMBEDDING_MODEL:-nlpai-lab/KURE-v1}", "--port", "80"]
     ports:
       - "${EMBEDDING_PORT:-8081}:80"
     volumes:

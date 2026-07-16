@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     vllm_model: str = "Qwen/Qwen3.6-27B"
 
     # 임베딩 / 리랭커 (TEI)
-    embedding_model: str = "BAAI/bge-m3"
+    embedding_model: str = "nlpai-lab/KURE-v1"   # 한국어 특화(BGE-M3 기반). 대안: BAAI/bge-m3
     embedding_port: int = 8081
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 대안: dragonkue/bge-reranker-v2-m3-ko
     reranker_port: int = 8082
 
     # 파싱 / OCR (문서 특화 파서 우선; 범용 Qwen3-VL보다 소형·고정확)
