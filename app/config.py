@@ -19,10 +19,10 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     reranker_port: int = 8082
 
-    # 파싱 / OCR
-    parser_vlm: str = "ibm-granite/granite-docling-258M"
-    parser_device: str = "cuda"
-    paddleocr_lang: str = "korean"
+    # 파싱 / OCR (문서 특화 파서 우선; 범용 Qwen3-VL보다 소형·고정확)
+    parser_model: str = "PaddleOCR-VL"   # 대안: MinerU2.5-Pro, dots.OCR
+    parser_device: str = "cuda"           # 피크 겹침/VRAM 부족 시 "cpu"
+    parser_lang: str = "korean"
 
     # 데이터 스토어
     postgres_user: str = "ragadmin"

@@ -18,8 +18,8 @@
 vLLM(Qwen3.6-27B)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태 → 잔여 **~26GB**.
 자세한 배분/튜닝은 [`docs/vram.md`](docs/vram.md) 참고.
 
-- **현재 배치**: 임베딩(BGE-M3 ~3GB) + 리랭커(bge-v2-m3 ~3GB) + 적재용 **Qwen3-VL-8B(~18GB) on-demand**까지 수용 가능(합계 ~24GB)
-- **설계 원칙**: 임베딩/리랭커는 저지연·경량 BGE 계열을 기본값으로 유지. 적재/질의 피크가 겹치면 vLLM을 ~46GB로 더 낮춰(시나리오 A) 여유 확대
+- **현재 배치**: 임베딩(BGE-M3 ~3GB) + 리랭커(bge-v2-m3 ~3GB) + 문서 파서(PaddleOCR-VL ~1-3GB) ≈ **~9GB만 사용**, 잔여 26GB 안에 여유
+- **설계 원칙**: 파싱은 무거운 범용 VLM 대신 **문서 특화 파서**(소형·고정확)를 채택 → VRAM 절감 + OCR 정확도 향상. 임베딩/리랭커는 저지연 BGE 계열 유지
 
 ## 컴포넌트
 
@@ -28,7 +28,7 @@ vLLM(Qwen3.6-27B)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태 �
 | vLLM (기구축) | 생성 LLM(Qwen3.6-27B) 서빙 | 재튜닝 권고 |
 | TEI Embedding | BGE-M3 (dense + sparse) | ~2-3GB |
 | TEI Reranker | bge-reranker-v2-m3 | ~2-3GB |
-| 파싱 VLM/OCR | 포맷별 파싱·OCR·표 추출 (Granite-Docling 기본, Qwen3-VL-8B on-demand 가능) | ~1-2GB / ~18GB |
+| 문서 파서/OCR | 포맷별 파싱·OCR·표 추출 (PaddleOCR-VL 기본; MinerU2.5·dots.OCR 대안) | ~1-3GB |
 | Qdrant | 청크 벡터 + payload(접근통제/생애주기) 하드 필터 | CPU/RAM |
 | PostgreSQL | 메타데이터·사용자/그룹·감사로그·적재 상태 | CPU/RAM |
 | MinIO | 원본 파일 보관(file_hash 중복탐지) | CPU/RAM |
