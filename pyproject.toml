@@ -9,6 +9,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ingest = [
+    "openpyxl>=3.1",     # xlsx
+    "python-docx>=1.1",  # docx
+    "python-pptx>=0.6",  # pptx
+    "pymupdf>=1.24",     # pdf (텍스트 레이어)
+    "httpx>=0.27",       # vLLM / TEI HTTP 클라이언트
+    "qdrant-client>=1.9",
+]
 dev = [
     "pytest>=8.0",
 ]

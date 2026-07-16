@@ -55,7 +55,27 @@ app/
     ingestion.py         # 적재 상태 머신 (UPLOADED→...→INDEXED / BLOCKED)
   governance/
     validator.py         # 거버넌스 필수 필드 검증 + 차단 로직
+  ingestion/
+    intake.py            # 해시·중복탐지·시스템 자동 식별 필드
+    parsers/             # 포맷별 파서(txt/docx/xlsx/pptx/pdf/image) + 레지스트리
+    chunking.py          # 구조 인지 청킹(표는 통째로, 텍스트는 경계 분할+오버랩)
+    enrichment.py        # LLM 자동 채움(controlled JSON 스키마 강제, confidence 임계치)
+    pipeline.py          # 상태머신 오케스트레이션(자동단계→검토→검증→색인)
+  clients/
+    llm.py               # vLLM(OpenAI 호환, guided_json)
+    embedding.py         # TEI 임베딩(KURE-v1)
+    qdrant_indexer.py    # Qdrant 업서트(payload에 접근통제/생애주기 상속)
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
+
+## 적재 파이프라인 흐름
+
+```
+run_auto_stages()  : intake(해시·중복) → parse → chunk → enrich(LLM 자동채움)  → PENDING_REVIEW
+apply_review()     : 사람이 거버넌스 필수 필드 입력·보정 → validate → VALIDATED | BLOCKED
+index()            : 청크 임베딩 + Qdrant 업서트(접근통제 payload) → INDEXED
+```
+
+외부 서비스(vLLM/TEI/Qdrant/OCR/해시조회)는 모두 Protocol/콜백으로 주입 → 서비스 없이 단위 테스트 가능.
 
 전체 실행 계획은 설계 문서를 참고.
