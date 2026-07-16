@@ -74,6 +74,12 @@ app/
     reranker.py          # TEI 리랭커(bge-reranker-v2-m3)
     qdrant_indexer.py    # Qdrant 업서트(payload에 접근통제/생애주기 상속)
     qdrant_search.py     # Qdrant dense + BM25 검색 어댑터
+  db/
+    models.py            # ORM: documents/chunks/users/groups/user_groups/audit_log
+    session.py           # 엔진·세션 팩토리 (Postgres 운영 / SQLite 테스트)
+    mapping.py           # DocumentMetadata ↔ ORM 행 변환
+    repositories.py      # Document/User/Audit 리포지토리
+    persistence.py       # 파이프라인 ↔ 영속 계층 연결(중복탐지·단계 저장)
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
 

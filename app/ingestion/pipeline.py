@@ -18,7 +18,12 @@ from typing import Any, Callable, Iterable, Optional, Protocol
 
 from app.governance.validator import ValidationResult, validate_governance
 from app.schemas.ingestion import IngestionStatus, assert_transition
-from app.schemas.metadata import DocumentMetadata, GovernanceBlock
+from app.schemas.metadata import (
+    ClassificationBlock,
+    DocumentMetadata,
+    GovernanceBlock,
+    LifecycleBlock,
+)
 
 from .chunking import Chunk, chunk_elements
 from .enrichment import LLMClient, enrich
@@ -106,13 +111,15 @@ def apply_review(
     # 사람이 확정한 거버넌스 필드로 교체(필수)
     ctx.doc.governance = governance
 
-    # 분류/생애주기 사람 보정(선택)
+    # 분류/생애주기 사람 보정(선택). 문자열 입력도 enum으로 검증·강제되도록 model_validate 사용.
     if classification_overrides:
-        ctx.doc.classification = ctx.doc.classification.model_copy(
-            update=classification_overrides)
+        data = ctx.doc.classification.model_dump()
+        data.update(classification_overrides)
+        ctx.doc.classification = ClassificationBlock.model_validate(data)
     if lifecycle_overrides:
-        ctx.doc.lifecycle = ctx.doc.lifecycle.model_copy(
-            update=lifecycle_overrides)
+        data = ctx.doc.lifecycle.model_dump()
+        data.update(lifecycle_overrides)
+        ctx.doc.lifecycle = LifecycleBlock.model_validate(data)
 
     result = validate_governance(
         ctx.doc,
