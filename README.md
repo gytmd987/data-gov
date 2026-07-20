@@ -133,6 +133,9 @@ python -m scripts.smoke --samples-dir samples
 
 접근통제 시연: 급여(대외비) 질의가 `hr_analyst`에겐 "확인 불가", `hr_lead`에겐 답변+출처로 나오면 정상.
 
+- **폐쇄망(HF 접속 차단)**: 모델 사전 다운로드·마운트 → [`docs/offline_models.md`](docs/offline_models.md)
+- **GPU 예약 실패/Blackwell TEI**: `docker compose -f docker-compose.cpu.yml up -d` (TEI를 CPU로)
+
 > Qdrant 색인·하드필터 배선은 실제 Qdrant 엔진(in-memory 로컬 모드)으로 회귀 테스트됨
 > (`tests/test_qdrant_integration.py`) — 서버 없이도 CI에서 검증된다.
 

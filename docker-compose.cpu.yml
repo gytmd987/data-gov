@@ -48,6 +48,7 @@ services:
       - "${EMBEDDING_PORT:-8081}:80"
     volumes:
       - hf_cache:/data
+      - ./models:/models:ro          # 폐쇄망: 미리 받은 모델을 로컬 경로로 마운트
     environment:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
 
@@ -60,6 +61,7 @@ services:
       - "${RERANKER_PORT:-8082}:80"
     volumes:
       - hf_cache:/data
+      - ./models:/models:ro          # 폐쇄망: 미리 받은 모델을 로컬 경로로 마운트
     environment:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
 
