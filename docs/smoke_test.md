@@ -73,7 +73,28 @@ docker compose up -d              # docker-compose.yml (embedding·reranker GPU)
 ```
 
 폐쇄망이면 `nvidia.github.io` 접근이 막힐 수 있다 → 사내 미러 사용하거나 인프라팀에 툴킷 설치 요청.
-Blackwell(SM120)은 최신 드라이버 + 최신 툴킷이 필요하다. **설치가 번거로우면 CPU(위)가 30명 규모엔 충분하다.**
+
+#### 그런데 GPU 예약은 되는데 TEI 컨테이너가 CUDA 에러로 죽는다면 (Blackwell 이미지)
+
+`:latest` TEI 이미지가 SM120을 지원 안 하는 버전일 수 있다(로그에 `cuda compute cap 120 is not supported` 류).
+TEI는 최근 릴리스에서 Blackwell을 지원하므로 **더 최신 태그**로 바꾼다 — compose 수정 없이 `.env`로:
+
+```bash
+# .env  (릴리스 페이지에서 최신 버전 확인 후 지정)
+TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:1.8
+```
+
+최신 태그도 안 되면 Blackwell용으로 직접 빌드(인터넷 필요):
+
+```bash
+git clone https://github.com/huggingface/text-embeddings-inference
+cd text-embeddings-inference
+docker build -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=120 -t tei-blackwell:local .
+# → .env 에  TEI_IMAGE=tei-blackwell:local
+```
+
+> 요구: NVIDIA 드라이버가 CUDA 12.2+ 호환이어야 한다(Blackwell이면 최신 드라이버라 보통 충족).
+> **번거로우면 CPU(위)가 30명 규모엔 충분하다** — 임베딩/리랭커는 소형이라 CPU 지연도 문제되지 않는다.
 
 ## 2. 파이썬 환경
 

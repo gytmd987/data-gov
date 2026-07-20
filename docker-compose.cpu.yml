@@ -41,7 +41,7 @@ services:
 
   # 임베딩: KURE-v1. CPU 이미지(GPU 예약 없음).
   embedding:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    image: ${TEI_IMAGE_CPU:-ghcr.io/huggingface/text-embeddings-inference:cpu-latest}
     restart: unless-stopped
     command: ["--model-id", "${EMBEDDING_MODEL:-nlpai-lab/KURE-v1}", "--port", "80"]
     ports:
@@ -54,7 +54,7 @@ services:
 
   # 리랭커: bge-reranker-v2-m3. CPU 이미지.
   reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    image: ${TEI_IMAGE_CPU:-ghcr.io/huggingface/text-embeddings-inference:cpu-latest}
     restart: unless-stopped
     command: ["--model-id", "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}", "--port", "80"]
     ports:

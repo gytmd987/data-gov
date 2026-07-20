@@ -40,7 +40,7 @@ services:
 
   # 임베딩: KURE-v1(한국어 특화, BGE-M3 기반, 568M ~2-3GB). dense는 이 모델, sparse는 Qdrant BM25.
   embedding:
-    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:latest}
     restart: unless-stopped
     command: ["--model-id", "${EMBEDDING_MODEL:-nlpai-lab/KURE-v1}", "--port", "80"]
     ports:
@@ -60,7 +60,7 @@ services:
 
   # bge-reranker-v2-m3: 가볍고 안전한 다국어 크로스인코더. 568M, ~2-3GB VRAM.
   reranker:
-    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:latest}
     restart: unless-stopped
     command: ["--model-id", "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}", "--port", "80"]
     ports:
