@@ -44,6 +44,37 @@ docker compose -f docker-compose.cpu.yml logs embedding --tail=20   # "Ready" �
 > 이후 명령에도 같은 `-f docker-compose.cpu.yml`을 붙인다(ps/logs/down 등).
 > vLLM은 여전히 별도 GPU 서버에서 기동돼 있어야 한다(이 compose에 없음).
 
+#### GPU로 돌리고 싶다면 (NVIDIA Container Toolkit 설치)
+
+`could not select device driver "nvidia"`는 드라이버가 아니라 **컨테이너 툴킷 미설치**가 원인이다.
+
+```bash
+# 0) 호스트에 드라이버가 있는지 먼저 확인
+nvidia-smi                       # 여기서 GPU가 보여야 함(안 보이면 드라이버부터)
+
+# 1) NVIDIA Container Toolkit 설치 (Ubuntu/Debian, 인터넷 필요)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+
+# 2) 도커 런타임에 등록 + 재시작
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 3) 검증
+docker info | grep -i nvidia                    # Runtimes 에 nvidia 보이면 OK
+docker run --rm --gpus all ubuntu nvidia-smi    # (이미지 접근 가능할 때)
+
+# 4) GPU 스택으로 기동
+docker compose up -d              # docker-compose.yml (embedding·reranker GPU)
+```
+
+폐쇄망이면 `nvidia.github.io` 접근이 막힐 수 있다 → 사내 미러 사용하거나 인프라팀에 툴킷 설치 요청.
+Blackwell(SM120)은 최신 드라이버 + 최신 툴킷이 필요하다. **설치가 번거로우면 CPU(위)가 30명 규모엔 충분하다.**
+
 ## 2. 파이썬 환경
 
 ```bash
