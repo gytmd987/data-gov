@@ -23,6 +23,10 @@ class RetrievedChunk(BaseModel):
         return self.payload.get("title")
 
     @property
+    def source_filename(self) -> Optional[str]:
+        return self.payload.get("source_filename")
+
+    @property
     def page_no(self) -> Optional[int]:
         return self.payload.get("page_no")
 

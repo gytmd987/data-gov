@@ -84,8 +84,27 @@ app/
     service.py           # 검토 서비스(UI 비의존): 적재 시작·목록·상세·제출/검증/색인
     streamlit_app.py     # human-in-the-loop 검토 화면(얇은 UI)
     factory.py           # 실제 서비스 배선(vLLM/TEI/Qdrant/Postgres)
+  eval/
+    metrics.py           # Recall@k / MRR / nDCG@k (순수 함수)
+    goldset.py           # 골드셋 스키마·로더(문서는 source_filename로 참조)
+    judge.py             # LLM-as-judge(groundedness / relevance)
+    runner.py            # 골드셋 실행 → 검색지표·접근통제 회귀·판정 집계
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
+
+## 품질 평가 (골드셋 회귀 + 접근통제 보안)
+
+```bash
+python -m scripts.smoke --samples-dir samples          # 먼저 색인
+python -m scripts.eval --goldset samples/goldset.json  # 검색지표 + 접근통제 회귀
+python -m scripts.eval --goldset samples/goldset.json --judge   # LLM-as-judge 포함
+```
+
+- **검색 지표**: Recall@k / MRR / nDCG@k
+- **접근통제 회귀(보안)**: 골드셋의 `forbidden_filenames`가 노출·인용되면 **회귀 실패(exit 1)**
+- **LLM-as-judge**: groundedness / answer relevance (로컬 LLM, `--judge`)
+
+하네스 로직은 오프라인 회귀됨(`tests/test_eval.py`) — 금지 문서 노출을 위반으로 잡는 보안 케이스 포함.
 
 ## 엔드투엔드 스모크 테스트
 

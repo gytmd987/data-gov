@@ -124,7 +124,8 @@ class ChunkMetadata(BaseModel):
             "status": life.status.value,
             "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,
             "superseded_by": life.superseded_by,
-            # 인용용
+            # 인용·평가용
             "doc_type": doc.classification.doc_type.value,
             "title": doc.classification.title_normalized,
+            "source_filename": doc.identification.source_filename,
         }

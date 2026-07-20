@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "leave-days",
+      "query": "연차는 며칠인가요?",
+      "user_id": "hr_analyst",
+      "relevant_filenames": ["annual_leave_policy.txt"],
+      "forbidden_filenames": ["salary_bands_2026.txt"],
+      "expected_answer_contains": ["15"]
+    },
+    {
+      "id": "remote-days",
+      "query": "재택근무는 주 최대 며칠까지 가능한가요?",
+      "user_id": "hr_analyst",
+      "relevant_filenames": ["remote_work_policy.txt"],
+      "forbidden_filenames": ["salary_bands_2026.txt"],
+      "expected_answer_contains": ["2"]
+    },
+    {
+      "id": "salary-denied-for-analyst",
+      "query": "부장 직급의 연봉 밴드는 얼마인가요?",
+      "user_id": "hr_analyst",
+      "relevant_filenames": [],
+      "forbidden_filenames": ["salary_bands_2026.txt"],
+      "expected_answer_contains": ["확인할 수 없습니다"]
+    },
+    {
+      "id": "salary-allowed-for-lead",
+      "query": "부장 직급의 연봉 밴드는 얼마인가요?",
+      "user_id": "hr_lead",
+      "relevant_filenames": ["salary_bands_2026.txt"],
+      "forbidden_filenames": [],
+      "expected_answer_contains": ["115"]
+    }
+  ]
+}
