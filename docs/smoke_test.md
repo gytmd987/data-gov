@@ -84,14 +84,25 @@ TEI는 최근 릴리스에서 Blackwell을 지원하므로 **더 최신 태그**
 TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:1.8
 ```
 
-최신 태그도 안 되면 Blackwell용으로 직접 빌드(인터넷 필요):
+로그에 `runtime compute cap 120 is not compatible with compile time compute cap 80` 이 뜨면
+= 그 이미지가 SM80(A100)용으로 빌드된 것. Blackwell(120)용 이미지가 필요하다.
+
+**폐쇄망이면 인터넷 되는 머신에서 빌드 → 이미지를 서버로 반입**한다:
 
 ```bash
+# (인터넷 머신)
 git clone https://github.com/huggingface/text-embeddings-inference
 cd text-embeddings-inference
 docker build -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=120 -t tei-blackwell:local .
+docker save tei-blackwell:local -o tei-blackwell.tar
+
+# (서버로 전송 후)
+docker load -i tei-blackwell.tar
 # → .env 에  TEI_IMAGE=tei-blackwell:local
 ```
+
+> Blackwell TEI 이미지를 구하기 어려운 폐쇄망이면, **CPU(위)가 가장 빠른 길**이다. 또는 이미 Blackwell에서
+> 도는 vLLM으로 임베딩/리랭커까지 서빙하는 방법이 있다(별도 구성 필요 — 팀에 문의).
 
 > 요구: NVIDIA 드라이버가 CUDA 12.2+ 호환이어야 한다(Blackwell이면 최신 드라이버라 보통 충족).
 > **번거로우면 CPU(위)가 30명 규모엔 충분하다** — 임베딩/리랭커는 소형이라 CPU 지연도 문제되지 않는다.
