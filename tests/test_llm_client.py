@@ -51,6 +51,22 @@ def test_extract_with_prose_prefix():
     assert extract_json(text) == {"language": "ko", "status": "active"}
 
 
+def test_extract_single_quoted_dict():
+    # 모델이 파이썬 dict 표현(작은따옴표)을 낼 때 복구
+    assert extract_json("{'doc_type': 'policy', 'language': 'ko'}") == {
+        "doc_type": "policy", "language": "ko"}
+
+
+def test_extract_trailing_comma():
+    assert extract_json('{"language": "ko", "status": "active",}') == {
+        "language": "ko", "status": "active"}
+
+
+def test_extract_single_quoted_in_fence_with_prose():
+    text = "결과:\n```json\n{'doc_type': 'payroll'}\n```"
+    assert extract_json(text) == {"doc_type": "payroll"}
+
+
 def test_extract_raises_when_no_json():
     with pytest.raises(ValueError):
         extract_json("JSON이 전혀 없는 응답")

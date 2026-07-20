@@ -7,9 +7,10 @@ vLLM 버전에 따라 구조화 방식이 달라 settings.vllm_structured_mode �
 
 from __future__ import annotations
 
+import ast
 import json
 import re
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -18,24 +19,46 @@ from app.config import settings
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _FENCE_OPEN_RE = re.compile(r"^```[a-zA-Z]*\n?")
 _FENCE_CLOSE_RE = re.compile(r"\n?```$")
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _try_parse(s: str) -> Optional[dict[str, Any]]:
+    """엄격 JSON → 후행콤마 제거 → 파이썬 리터럴(작은따옴표 dict) 순으로 시도."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return json.loads(_TRAILING_COMMA_RE.sub(r"\1", s))
+    except json.JSONDecodeError:
+        pass
+    try:
+        val = ast.literal_eval(s)   # {'k': 'v'} 같은 파이썬 dict 표현 복구
+        if isinstance(val, dict):
+            return val
+    except (ValueError, SyntaxError):
+        pass
+    return None
 
 
 def extract_json(text: str) -> dict[str, Any]:
     """모델 응답에서 JSON 오브젝트를 견고하게 추출한다.
 
-    코드펜스(```json ...```), <think> 추론 블록, 앞뒤 잡텍스트를 제거하고 파싱한다.
+    코드펜스(```json ...```), <think> 추론 블록, 앞뒤 잡텍스트, 작은따옴표/후행콤마까지 견딘다.
     """
     s = _THINK_RE.sub("", text).strip()
     if s.startswith("```"):
         s = _FENCE_CLOSE_RE.sub("", _FENCE_OPEN_RE.sub("", s)).strip()
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-    # 첫 '{' ~ 마지막 '}' 구간을 시도
+
+    candidates = [s]
     start, end = s.find("{"), s.rfind("}")
     if 0 <= start < end:
-        return json.loads(s[start:end + 1])
+        candidates.append(s[start:end + 1])
+
+    for cand in candidates:
+        parsed = _try_parse(cand)
+        if parsed is not None:
+            return parsed
     raise ValueError(f"응답에서 JSON을 찾지 못함: {text[:200]!r}")
 
 
