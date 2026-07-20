@@ -37,3 +37,6 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# repo 루트를 sys.path에 추가 → `pytest`(직접 실행)에서도 app/scripts 임포트 가능
+# (`python -m pytest`는 cwd를 넣지만 `pytest`는 안 넣기 때문)
+pythonpath = ["."]
