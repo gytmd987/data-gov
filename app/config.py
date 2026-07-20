@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     vllm_base_url: str = "http://localhost:8000/v1"
     vllm_api_key: str = "EMPTY"
     vllm_model: str = "Qwen/Qwen3.6-27B"
+    # 구조화 출력(적재 자동채움) 방식 — vLLM 버전에 맞춰 선택:
+    #   guided_json     (기본) vLLM 확장 guided_json
+    #   response_format OpenAI 표준 json_schema (최신 vLLM 권장)
+    #   json_object     response_format json_object + 프롬프트에 스키마 안내(강제는 약함)
+    vllm_structured_mode: str = "guided_json"
+    # guided_json 백엔드(빈 값이면 미전송 → vLLM 기본값 사용). 예: xgrammar, outlines, lm-format-enforcer
+    vllm_guided_backend: str = ""
 
     # 임베딩 / 리랭커 (TEI)
     embedding_model: str = "nlpai-lab/KURE-v1"   # 한국어 특화(BGE-M3 기반). 대안: BAAI/bge-m3
