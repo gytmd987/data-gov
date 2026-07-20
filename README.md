@@ -136,6 +136,17 @@ python -m scripts.smoke --samples-dir samples
 - **폐쇄망(HF 접속 차단)**: 모델 사전 다운로드·마운트 → [`docs/offline_models.md`](docs/offline_models.md)
 - **GPU 예약 실패/Blackwell TEI**: `docker compose -f docker-compose.cpu.yml up -d` (TEI를 CPU로)
 
+### 직접 질의하기
+
+색인 후, 특정 사용자 권한으로 원하는 질문을 던진다(접근통제 적용):
+
+```bash
+python -m scripts.ask --user hr_lead "부장 직급의 연봉 밴드는?"     # 한 번 질문
+python -m scripts.ask --user hr_analyst                          # 대화형 모드
+```
+
+같은 질문도 `hr_analyst`(hr_core/INTERNAL)와 `hr_lead`(payroll/RESTRICTED)의 답이 권한에 따라 달라진다.
+
 > Qdrant 색인·하드필터 배선은 실제 Qdrant 엔진(in-memory 로컬 모드)으로 회귀 테스트됨
 > (`tests/test_qdrant_integration.py`) — 서버 없이도 CI에서 검증된다.
 
