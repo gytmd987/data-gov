@@ -28,7 +28,7 @@ vLLM(Qwen3.6-27B)을 재튜닝하여 GPU 점유를 **~70GB**로 낮춘 상태 �
 | vLLM (기구축) | 생성 LLM(Qwen3.6-27B) 서빙 | 재튜닝 권고 |
 | TEI Embedding | KURE-v1 (한국어 특화, dense) + Qdrant BM25 (sparse) | ~2-3GB |
 | TEI Reranker | bge-reranker-v2-m3 (한국어 최적화) | ~2-3GB |
-| 문서 파서/OCR | 포맷별 파싱·OCR·표 추출 (PaddleOCR-VL 기본; MinerU2.5·dots.OCR 대안) | ~1-3GB |
+| 스캔/이미지 OCR | 기본은 **이미 뜬 Qwen3.6-27B 멀티모달 재사용**(추가 VRAM 0). 전용 파서(PaddleOCR-VL)는 옵션 | 0 (기본) |
 | Qdrant | 청크 벡터 + payload(접근통제/생애주기) 하드 필터 | CPU/RAM |
 | PostgreSQL | 메타데이터·사용자/그룹·감사로그·적재 상태 | CPU/RAM |
 | MinIO | 원본 파일 보관(file_hash 중복탐지) | CPU/RAM |
@@ -74,6 +74,7 @@ app/
     reranker.py          # TEI 리랭커(bge-reranker-v2-m3)
     qdrant_indexer.py    # Qdrant 업서트(payload에 접근통제/생애주기 상속)
     qdrant_search.py     # Qdrant dense + BM25 검색 어댑터
+    vision.py            # vLLM 멀티모달 OCR(스캔·이미지 → 텍스트, Qwen3.6-27B 재사용)
   db/
     models.py            # ORM: documents/chunks/users/groups/user_groups/audit_log
     session.py           # 엔진·세션 팩토리 (Postgres 운영 / SQLite 테스트)

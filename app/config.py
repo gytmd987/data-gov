@@ -19,9 +19,13 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 대안: dragonkue/bge-reranker-v2-m3-ko
     reranker_port: int = 8082
 
-    # 파싱 / OCR (문서 특화 파서 우선; 범용 Qwen3-VL보다 소형·고정확)
-    parser_model: str = "PaddleOCR-VL"   # 대안: MinerU2.5-Pro, dots.OCR
-    parser_device: str = "cuda"           # 피크 겹침/VRAM 부족 시 "cpu"
+    # 파싱 / OCR
+    # 스캔·이미지 OCR 백엔드: "vllm"(기본, 이미 뜬 Qwen3.6-27B 멀티모달 재사용, 추가 배포 0)
+    #                       | "none"(OCR 비활성; 텍스트 경로만)
+    #                       | "paddleocr-vl"(전용 파서, 정확도·처리량 필요 시 — 별도 배포)
+    ocr_backend: str = "vllm"
+    parser_model: str = "PaddleOCR-VL"   # ocr_backend="paddleocr-vl" 일 때 사용
+    parser_device: str = "cuda"
     parser_lang: str = "korean"
 
     # 데이터 스토어
