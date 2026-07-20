@@ -23,10 +23,13 @@ class QdrantIndexer:
         vector_size: int = 1024,   # KURE-v1(BGE-M3 계열) dense 차원
         host: str = "localhost",
         port: int | None = None,
+        client: QdrantClient | None = None,
     ) -> None:
         self.collection = collection
         self.vector_size = vector_size
-        self.client = QdrantClient(host=host, port=port or settings.qdrant_http_port)
+        # client 주입 시 그대로 사용(테스트: QdrantClient(location=":memory:")).
+        self.client = client or QdrantClient(
+            host=host, port=port or settings.qdrant_http_port)
 
     def ensure_collection(self) -> None:
         if not self.client.collection_exists(self.collection):

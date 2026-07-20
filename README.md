@@ -87,6 +87,22 @@ app/
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
 
+## 엔드투엔드 스모크 테스트
+
+실제 서비스(vLLM/TEI/Qdrant/Postgres)를 띄우고 샘플 문서를 적재→검색까지 통과시켜 통합을 검증한다.
+상세 절차는 [`docs/smoke_test.md`](docs/smoke_test.md).
+
+```bash
+docker compose up -d                       # Qdrant/Postgres/MinIO/TEI (vLLM은 별도 기동)
+pip install -e ".[ingest,ui,postgres]"
+python -m scripts.smoke --samples-dir samples
+```
+
+접근통제 시연: 급여(대외비) 질의가 `hr_analyst`에겐 "확인 불가", `hr_lead`에겐 답변+출처로 나오면 정상.
+
+> Qdrant 색인·하드필터 배선은 실제 Qdrant 엔진(in-memory 로컬 모드)으로 회귀 테스트됨
+> (`tests/test_qdrant_integration.py`) — 서버 없이도 CI에서 검증된다.
+
 ## 적재 검토 UI 실행
 
 ```bash

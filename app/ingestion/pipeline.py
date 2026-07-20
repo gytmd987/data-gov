@@ -146,7 +146,11 @@ def index(ctx: IngestionContext, embedder: Embedder, indexer: Indexer) -> int:
 
     texts = [c.text for c in ctx.chunks]
     vectors = embedder.embed(texts)
-    payloads = [c.meta.to_qdrant_payload(ctx.doc) for c in ctx.chunks]
+    payloads = []
+    for c in ctx.chunks:
+        pl = c.meta.to_qdrant_payload(ctx.doc)
+        pl["text"] = c.text   # 검색 결과·리랭킹·답변에 원문 필요
+        payloads.append(pl)
     ids = [c.meta.chunk_id for c in ctx.chunks]
     indexer.upsert(vectors=vectors, payloads=payloads, ids=ids)
 

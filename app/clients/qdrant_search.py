@@ -30,11 +30,13 @@ def _to_chunk(point) -> RetrievedChunk:
 
 
 class QdrantDenseSearch:
-    def __init__(self, embedder: TEIEmbedder, collection: str = "hr_chunks",
-                 host: str = "localhost", port: int | None = None) -> None:
+    def __init__(self, embedder, collection: str = "hr_chunks",
+                 host: str = "localhost", port: int | None = None,
+                 client: QdrantClient | None = None) -> None:
         self._embedder = embedder
         self.collection = collection
-        self.client = QdrantClient(host=host, port=port or settings.qdrant_http_port)
+        self.client = client or QdrantClient(
+            host=host, port=port or settings.qdrant_http_port)
 
     def search_dense(self, query: str, top_n: int, qdrant_filter: Any) -> list[RetrievedChunk]:
         vector = self._embedder.embed([query])[0]
