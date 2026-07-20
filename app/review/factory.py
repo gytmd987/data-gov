@@ -46,6 +46,6 @@ def build_service(session: Session | None = None) -> ReviewService:
         llm=VLLMClient(),
         llm_model=settings.vllm_model,
         embedder=TEIEmbedder(),
-        indexer=QdrantIndexer(),
+        indexer=QdrantIndexer(vector_size=settings.embedding_dim),
         ocr=build_ocr(),   # 기본: Qwen3.6-27B 멀티모달 OCR (설정 ocr_backend)
     )

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # 임베딩 / 리랭커 (TEI)
     embedding_model: str = "nlpai-lab/KURE-v1"   # 한국어 특화(BGE-M3 기반). 대안: BAAI/bge-m3
     embedding_port: int = 8081
+    embedding_dim: int = 1024                     # KURE-v1(BGE-M3 계열) dense 차원. 모델 바꾸면 조정
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 대안: dragonkue/bge-reranker-v2-m3-ko
     reranker_port: int = 8082
 

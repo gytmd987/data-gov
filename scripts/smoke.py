@@ -136,7 +136,9 @@ def main() -> int:
         session = make_session_factory(engine)()
         from app.review.factory import build_ocr
         svc = ReviewService(session=session, llm=VLLMClient(), llm_model=settings.vllm_model,
-                            embedder=TEIEmbedder(), indexer=QdrantIndexer(), ocr=build_ocr())
+                            embedder=TEIEmbedder(),
+                            indexer=QdrantIndexer(vector_size=settings.embedding_dim),
+                            ocr=build_ocr())
         build_pipe = lambda: _build_search(session)
 
     print("\n[1] 사용자·그룹 시드")

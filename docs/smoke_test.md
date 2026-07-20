@@ -26,13 +26,33 @@ curl -s localhost:6333/readyz && echo " qdrant ok"
 curl -s $VLLM_BASE_URL/models | head -c 200
 ```
 
+### TEI 이미지 / Blackwell 참고
+
+- `docker-compose.yml`의 TEI 이미지 태그가 Blackwell(SM120) GPU와 호환되는지 확인한다. vLLM처럼 TEI도
+  최신 GPU는 태그를 가려야 할 수 있다. 문제가 있으면 **임베딩/리랭커는 CPU로 돌려도 무방**하다(모델이
+  작아 30명 규모엔 충분). CPU로 돌리려면 해당 서비스의 `deploy.resources` GPU 예약을 제거하고
+  CPU 태그 이미지를 쓰면 된다.
+
 ## 2. 파이썬 환경
 
 ```bash
-pip install -e ".[ingest,ui,postgres]"
+pip install -e ".[ingest,ui,postgres]"   # postgres = psycopg 드라이버
 ```
 
-## 3. 스모크 실행
+## 3. 프리플라이트 점검 (권장 — 먼저 실행)
+
+각 서비스와 vLLM guided_json(적재 자동채움 의존) 경로를 개별 점검해 실패 지점을 특정한다.
+
+```bash
+python -m scripts.preflight
+```
+
+- ✅/❌로 Qdrant·Postgres·임베딩(차원 표시)·리랭커·vLLM 텍스트·vLLM guided_json 상태를 보여준다.
+- 지난번 "LLM/임베딩 연결 오류"는 여기서 어느 서비스가 안 떴는지 바로 드러난다.
+- 임베딩 차원이 1024가 아니면 경고가 뜬다 → `.env`에 `EMBEDDING_DIM`을 실제 값으로 설정.
+- 모두 ✅면 스모크로 진행.
+
+## 4. 스모크 실행
 
 ```bash
 python -m scripts.smoke --samples-dir samples
