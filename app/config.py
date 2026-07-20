@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # 생성 LLM (이미 vLLM으로 기동 중)
     vllm_base_url: str = "http://localhost:8000/v1"
     vllm_api_key: str = "EMPTY"
-    vllm_model: str = "Qwen/Qwen3.6-27B"
+    vllm_model: str = "thinkingcap"   # vLLM이 서빙하는 모델 id (/v1/models 와 일치)
     # 구조화 출력(적재 자동채움) 방식 — vLLM 버전에 맞춰 선택:
     #   guided_json     (기본) vLLM 확장 guided_json
     #   response_format OpenAI 표준 json_schema (최신 vLLM 권장)
