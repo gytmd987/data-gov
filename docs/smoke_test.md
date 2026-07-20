@@ -26,12 +26,23 @@ curl -s localhost:6333/readyz && echo " qdrant ok"
 curl -s $VLLM_BASE_URL/models | head -c 200
 ```
 
-### TEI 이미지 / Blackwell 참고
+### TEI 이미지 / Blackwell 참고 (GPU 예약 실패 시)
 
-- `docker-compose.yml`의 TEI 이미지 태그가 Blackwell(SM120) GPU와 호환되는지 확인한다. vLLM처럼 TEI도
-  최신 GPU는 태그를 가려야 할 수 있다. 문제가 있으면 **임베딩/리랭커는 CPU로 돌려도 무방**하다(모델이
-  작아 30명 규모엔 충분). CPU로 돌리려면 해당 서비스의 `deploy.resources` GPU 예약을 제거하고
-  CPU 태그 이미지를 쓰면 된다.
+증상: `docker compose ps`에 컨테이너가 **3개(postgres/qdrant/minio)만** 뜨고 embedding·reranker는
+로그도 비어 있음 → GPU 예약(`could not select device driver "nvidia" with capabilities: [[gpu]]`)을
+못 잡아 두 서비스가 생성조차 안 된 상태다. NVIDIA Container Toolkit 미설치 또는 Blackwell(SM120)
+이미지 비호환이 원인.
+
+해결: **임베딩·리랭커를 CPU로** 돌린다(568M 소형이라 30명 규모엔 충분). 준비된 CPU 전용 파일 사용:
+
+```bash
+docker compose -f docker-compose.cpu.yml up -d
+docker compose -f docker-compose.cpu.yml ps            # embedding/reranker 가 Up 인지
+docker compose -f docker-compose.cpu.yml logs embedding --tail=20   # "Ready" 확인
+```
+
+> 이후 명령에도 같은 `-f docker-compose.cpu.yml`을 붙인다(ps/logs/down 등).
+> vLLM은 여전히 별도 GPU 서버에서 기동돼 있어야 한다(이 compose에 없음).
 
 ## 2. 파이썬 환경
 
