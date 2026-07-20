@@ -97,10 +97,13 @@ def _build_search(session: Session) -> SearchPipeline:
 def _ask(pipe: SearchPipeline, session: Session, user: UserContext, query: str) -> None:
     ans = pipe.answer(query, user, today=date.today())
     session.commit()
+    files = sorted({c.source_filename for c in ans.used_chunks if c.source_filename})
     print(f"\n[{user.user_id}] Q: {query}")
     print(f"  A: {ans.text}")
+    print(f"  검색된 문서: {files or '(없음 — 접근 가능 문서에서 근거 못 찾음)'}")
     if ans.citations:
-        cites = "; ".join(f"[{c.marker}] {c.title} p.{c.page_no}" for c in ans.citations)
+        cites = "; ".join(f"[{c.marker}] {c.title or c.doc_id} p.{c.page_no}"
+                          for c in ans.citations)
         print(f"  출처: {cites}")
 
 
@@ -109,26 +112,41 @@ def main() -> int:
     ap.add_argument("--samples-dir", default="samples")
     ap.add_argument("--query", default="연차는 며칠인가요?")
     ap.add_argument("--salary-query", default="부장 직급의 연봉 밴드는?")
+    ap.add_argument("--offline", action="store_true",
+                    help="외부 서비스 없이 in-memory로 시연(가짜 임베딩/리랭커/LLM)")
     args = ap.parse_args()
 
-    print(f"설정: vLLM={settings.vllm_base_url} embed={settings.embedding_url} "
-          f"rerank={settings.reranker_url} qdrant=:{settings.qdrant_http_port}")
-
-    engine = make_engine()
-    create_all(engine)
-    session = make_session_factory(engine)()
+    if args.offline:
+        from qdrant_client import QdrantClient
+        from app.demo.offline import (
+            build_offline_review_service,
+            build_offline_search_pipeline,
+            make_offline_engine,
+        )
+        print("설정: OFFLINE 데모 (외부 서비스 없음, in-memory Qdrant/SQLite)")
+        session = make_session_factory(make_offline_engine())()
+        qdrant = QdrantClient(location=":memory:")
+        svc = build_offline_review_service(session, qdrant)
+        build_pipe = lambda: build_offline_search_pipeline(session, qdrant)
+    else:
+        print(f"설정: vLLM={settings.vllm_base_url} embed={settings.embedding_url} "
+              f"rerank={settings.reranker_url} qdrant=:{settings.qdrant_http_port}")
+        engine = make_engine()
+        create_all(engine)
+        session = make_session_factory(engine)()
+        svc = ReviewService(session=session, llm=VLLMClient(), llm_model=settings.vllm_model,
+                            embedder=TEIEmbedder(), indexer=QdrantIndexer())
+        build_pipe = lambda: _build_search(session)
 
     print("\n[1] 사용자·그룹 시드")
     _seed_users(session)
     print("  hr_analyst(hr_core/INTERNAL), hr_lead(hr_core+payroll/RESTRICTED)")
 
     print("\n[2] 샘플 문서 적재→검토→색인")
-    svc = ReviewService(session=session, llm=VLLMClient(), llm_model=settings.vllm_model,
-                        embedder=TEIEmbedder(), indexer=QdrantIndexer())
     _ingest_all(svc, Path(args.samples_dir))
 
     print("\n[3] 질의 (접근통제 시연)")
-    pipe = _build_search(session)
+    pipe = build_pipe()
     analyst = UserContext("hr_analyst", frozenset(["hr_core"]), SensitivityLevel.INTERNAL)
     lead = UserContext("hr_lead", frozenset(["hr_core", "payroll"]), SensitivityLevel.RESTRICTED)
 

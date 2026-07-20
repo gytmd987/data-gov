@@ -29,27 +29,46 @@ def main() -> int:
     ap.add_argument("--goldset", default="samples/goldset.json")
     ap.add_argument("-k", type=int, default=5)
     ap.add_argument("--judge", action="store_true", help="LLM-as-judge 채점 포함")
+    ap.add_argument("--offline", action="store_true",
+                    help="외부 서비스 없이 in-memory로 시드·색인·평가")
+    ap.add_argument("--samples-dir", default="samples")
     args = ap.parse_args()
 
-    engine = make_engine()
-    create_all(engine)
-    session = make_session_factory(engine)()
+    if args.offline:
+        from pathlib import Path
+        from qdrant_client import QdrantClient
+        from app.demo.offline import (
+            ExtractiveLLM, build_offline_review_service,
+            build_offline_search_pipeline, make_offline_engine,
+        )
+        from scripts.smoke import _ingest_all, _seed_users
+        print("OFFLINE 평가 (외부 서비스 없음)")
+        session = make_session_factory(make_offline_engine())()
+        qdrant = QdrantClient(location=":memory:")
+        _seed_users(session)
+        _ingest_all(build_offline_review_service(session, qdrant), Path(args.samples_dir))
+        pipeline = build_offline_search_pipeline(session, qdrant)
+        judge = ExtractiveLLM() if args.judge else None
+    else:
+        engine = make_engine()
+        create_all(engine)
+        session = make_session_factory(engine)()
+        pipeline = SearchPipeline(
+            retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder())),
+            reranker=TEIReranker(),
+            llm=VLLMClient(),
+            audit=AuditRepository(session),
+            top_k=args.k,
+        )
+        judge = VLLMClient() if args.judge else None
+
     users = UserRepository(session)
-
-    pipeline = SearchPipeline(
-        retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder())),
-        reranker=TEIReranker(),
-        llm=VLLMClient(),
-        audit=AuditRepository(session),
-        top_k=args.k,
-    )
-
     goldset = load_goldset(args.goldset)
     report = run_eval(
         pipeline, goldset,
         user_resolver=users.get_user_context,
         k=args.k,
-        judge=VLLMClient() if args.judge else None,
+        judge=judge,
     )
     session.commit()
 

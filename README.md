@@ -92,7 +92,20 @@ app/
 docs/vram.md             # VRAM 배치·튜닝 가이드
 ```
 
-## 품질 평가 (골드셋 회귀 + 접근통제 보안)
+## 오프라인 데모 (서비스 0개로 전체 흐름 시연)
+
+vLLM/TEI/Qdrant/Postgres **없이** in-memory + 결정적 fake 모델로 적재→질의→접근통제→인용을 그대로 시연한다.
+지금 단계(서비스 미기동)에서 파이프라인을 눈으로 확인할 때 사용.
+
+```bash
+python -m scripts.smoke --offline --samples-dir samples             # 적재·질의 시연
+python -m scripts.eval  --offline --goldset samples/goldset.json --judge   # 평가·접근통제 회귀
+```
+
+기대: 급여 질의가 `hr_analyst`에겐 "확인할 수 없습니다"(급여 문서 배제), `hr_lead`에겐 연봉 밴드 답변 + 출처.
+(오프라인은 toy 임베딩/LLM이라 답변 정확도는 예시 수준 — 실제 품질은 실서비스 모드에서 측정.)
+
+## 품질 평가 (실서비스: 골드셋 회귀 + 접근통제 보안)
 
 ```bash
 python -m scripts.smoke --samples-dir samples          # 먼저 색인
