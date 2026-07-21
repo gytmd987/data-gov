@@ -105,6 +105,16 @@ class DocumentRepository:
             self.session.delete(row)   # chunks는 cascade 삭제
             self.session.flush()
 
+    def set_similar_candidates(self, doc_id: str, candidates: list) -> None:
+        row = self.session.get(Document, doc_id)
+        if row is not None:
+            row.similar_candidates = candidates
+            self.session.flush()
+
+    def get_similar_candidates(self, doc_id: str) -> list:
+        row = self.session.get(Document, doc_id)
+        return list(row.similar_candidates) if row and row.similar_candidates else []
+
 
 class UserRepository:
     def __init__(self, session: Session) -> None:

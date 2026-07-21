@@ -64,6 +64,9 @@ class Document(Base):
     # 전체 메타데이터 원본
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # 유사(개정판 가능) 후보 — 적재 시 자동 탐지, 검토 화면에서 사람이 판단
+    similar_candidates: Mapped[list] = mapped_column(JSON, default=list)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

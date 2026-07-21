@@ -63,6 +63,7 @@ class ReviewView:
     lifecycle: dict[str, Any] = field(default_factory=dict)
     governance: dict[str, Any] = field(default_factory=dict)
     known_groups: list[str] = field(default_factory=list)
+    similar_candidates: list[dict[str, Any]] = field(default_factory=list)
     last_validation: Optional[dict[str, Any]] = None
 
 
@@ -93,8 +94,25 @@ class ReviewService:
             hash_lookup=persistent_hash_lookup(repo),
         )
         save_ingestion(repo, ctx)
+        # 유사(개정판 가능) 문서 자동 탐지 → 검토 화면에서 사람이 판단
+        self._detect_similar(ctx)
         self.session.commit()
         return ctx.doc.identification.doc_id
+
+    def _detect_similar(self, ctx) -> None:
+        client = getattr(self.indexer, "client", None)
+        collection = getattr(self.indexer, "collection", None)
+        if client is None or not ctx.chunks:
+            return
+        try:
+            from app.ingestion.dedup import find_similar
+            text = "\n".join(c.text for c in ctx.chunks[:20])
+            cands = find_similar(client, collection, self.embedder, text,
+                                 exclude_doc_id=ctx.doc.identification.doc_id)
+            if cands:
+                self.docs.set_similar_candidates(ctx.doc.identification.doc_id, cands)
+        except Exception:
+            pass  # 탐지는 부가 기능 — 실패해도 적재는 계속
 
     # ── 검토 대기 목록 ───────────────────────────────────────────────────────
     def list_pending(self) -> list[dict[str, Any]]:
@@ -161,6 +179,7 @@ class ReviewService:
                 "owner": gov.owner,
             },
             known_groups=self.users.known_access_groups(),
+            similar_candidates=repo.get_similar_candidates(doc_id),
         )
 
     # ── 검토 제출(검증·차단·색인) ────────────────────────────────────────────
