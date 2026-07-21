@@ -20,13 +20,16 @@ class TEIReranker:
     def rerank(self, query: str, texts: list[str]) -> list[float]:
         if not texts:
             return []
+        # 빈 문자열은 TEI가 거부(422) → 공백으로 대체. 긴 입력은 truncate.
+        clean_query = strip_surrogates(query) or " "
+        clean = [t or " " for t in clean_texts(texts)]
         with httpx.Client(timeout=self._timeout) as client:
             resp = client.post(
                 f"{self.base_url}/rerank",
-                json={"query": strip_surrogates(query),
-                      "texts": clean_texts(texts), "return_text": False},
+                json={"query": clean_query, "texts": clean, "truncate": True},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise RuntimeError(f"TEI rerank {resp.status_code}: {resp.text[:400]}")
             results = resp.json()  # [{"index": i, "score": s}, ...]
         scores = [0.0] * len(texts)
         for item in results:
