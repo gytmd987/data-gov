@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}문서 검토{% endblock %}
+{% block content %}
+<div style="max-width:1100px;margin:0 auto;padding:0 16px">
+<h2 style="margin:18px 0 4px">📝 문서 검토 및 등록</h2>
+<p class="msg-note">문서를 올리면 AI가 항목을 자동으로 채웁니다. 확인·보완 후 등록하면 검색에 노출됩니다.</p>
+{% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center">
+    {% csrf_token %}
+    <input type="file" name="file" required style="flex:1">
+    <button class="btn">올리기 (AI 자동 채움)</button>
+  </form>
+</div>
+
+{% if pending %}
+<div class="card">
+  <b>검토 대기 문서</b>
+  <p>{% for p in pending %}
+    <a href="?doc={{ p.doc_id }}">{{ p.filename }} <span class="msg-note">({{ p.status }})</span></a>{% if not forloop.last %} · {% endif %}
+  {% endfor %}</p>
+</div>
+{% else %}
+<div class="card">검토할 문서가 없습니다. 위에서 문서를 올려주세요.</div>
+{% endif %}
+
+{% if view %}
+<form method="post" action="/console/review/{{ view.doc_id }}/submit">
+{% csrf_token %}
+<div class="card">
+  <b>{{ view.source_filename }}</b>
+  <span class="msg-note">· {{ view.file_format }} · 조각 {{ view.chunk_count }}개 · 상태 {{ view.status }}</span>
+
+  {% if view.auto_filled %}
+  <p class="msg-note" style="margin-top:8px">🤖 AI 자동 채움 신뢰도:
+    {% for a in view.auto_filled %}{{ a.field }} {{ a.confidence }}{% if not forloop.last %} · {% endif %}{% endfor %}
+  </p>{% endif %}
+
+  {% if view.similar_candidates %}
+  <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
+    ⚠️ 유사한 기존 문서가 있습니다(개정판일 수 있음).
+    <select name="supersede_old" style="width:auto;margin-left:8px">
+      <option value="">별개 문서로 등록</option>
+      {% for c in view.similar_candidates %}
+      <option value="{{ c.doc_id }}">{{ c.filename }} 의 새 버전으로 (유사도 {{ c.score }})</option>
+      {% endfor %}
+    </select>
+  </div>{% endif %}
+
+  <div style="display:flex;gap:24px;margin-top:14px">
+    <div style="flex:1">
+      <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>
+      <p>문서 유형 <select name="doc_type">{% for o in opts.doc_type %}
+        <option {% if o == view.classification.doc_type %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>언어 <select name="language">{% for o in opts.language %}
+        <option {% if o == view.classification.language %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>제목 <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></p>
+      <p>요약 <textarea name="summary" rows="2">{{ view.classification.summary|default_if_none:'' }}</textarea></p>
+      <p>담당 부서 <input name="department" value="{{ view.classification.department|default_if_none:'' }}"></p>
+      <p>주제 태그(쉼표) <input name="topics" value="{{ view.classification.topics|join:', ' }}"></p>
+    </div>
+    <div style="flex:1">
+      <h4>② 접근·보안 <span style="color:#c0392b">(필수)</span></h4>
+      <p>민감도 등급 * <select name="sensitivity"><option value="">(미설정)</option>
+        {% for o in opts.sensitivity_level %}<option {% if o == view.governance.sensitivity_level %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>개인정보 포함? *
+        <label><input type="radio" name="pii" value="yes" {% if view.governance.contains_pii %}checked{% endif %}> 예</label>
+        <label><input type="radio" name="pii" value="no" {% if view.governance.contains_pii == False %}checked{% endif %}> 아니오</label></p>
+      <p>개인정보 유형 <select name="pii_types" multiple size="4">
+        {% for o in opts.pii_types %}<option {% if o in view.governance.pii_types %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>열람 가능 그룹 * <select name="groups" multiple size="4">
+        {% for g in view.known_groups %}<option {% if g in view.governance.access_groups %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></p>
+      <p>문서 책임자 * <input name="owner" value="{{ view.governance.owner|default_if_none:'' }}"></p>
+      <h4 style="margin-top:10px">③ 생애주기</h4>
+      <p>상태 <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+        <option {% if o == view.lifecycle.lifecycle_status %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>시행일 <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></p>
+      <p>만료일 <input name="expiry_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></p>
+    </div>
+  </div>
+  <button class="btn" style="margin-top:12px">✅ 확인 완료 → 검증 후 색인</button>
+</div>
+</form>
+{% endif %}
+</div>
+{% endblock %}

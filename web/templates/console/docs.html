@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}문서 관리{% endblock %}
+{% block content %}
+<div style="max-width:1100px;margin:0 auto;padding:0 16px">
+<h2 style="margin:18px 0 4px">📄 문서 관리</h2>
+<p class="msg-note">등록된 문서의 메타데이터 수정, 새 버전 연결(개정판), 보관/삭제. 변경은 검색에 즉시 반영됩니다.</p>
+{% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
+
+<form method="get" style="margin:10px 0"><input name="q" value="{{ q }}" placeholder="파일명·제목 검색" style="max-width:300px"></form>
+
+<table>
+  <tr><th>파일</th><th>유형</th><th>민감도</th><th>상태</th><th>그룹</th><th>책임자</th><th></th></tr>
+  {% for d in docs %}
+  <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
+    <td>{{ d.filename }}{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
+    <td>{{ d.doc_type }}</td><td>{{ d.sensitivity_level }}</td>
+    <td>{{ d.lifecycle_status }}</td><td>{{ d.access_groups|join:", " }}</td>
+    <td>{{ d.owner }}</td>
+    <td><a href="?doc={{ d.doc_id }}{% if q %}&q={{ q }}{% endif %}">관리</a></td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if doc %}
+<div class="card">
+  <b>{{ doc.identification.source_filename }}</b>
+  <div style="display:flex;gap:24px;margin-top:12px">
+    <form method="post" action="/console/docs/{{ sel }}/action" style="flex:1">
+      {% csrf_token %}<input type="hidden" name="action" value="save">
+      <h4>메타데이터 수정</h4>
+      <p>민감도 <select name="sensitivity">{% for o in opts.sensitivity_level %}
+        <option {% if doc.governance.sensitivity_level.value == o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <p>열람 그룹(쉼표) <input name="groups" value="{{ doc.governance.access_groups|join:', ' }}"></p>
+      <p>책임자 <input name="owner" value="{{ doc.governance.owner|default_if_none:'' }}"></p>
+      <p>상태 <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+        <option {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <button class="btn">💾 저장</button>
+    </form>
+    <div style="flex:1">
+      <form method="post" action="/console/docs/{{ sel }}/action">
+        {% csrf_token %}<input type="hidden" name="action" value="supersede">
+        <h4>버전 연결 (개정판 처리)</h4>
+        <p class="msg-note">이 문서가 대체할 <b>옛 문서</b>를 고르면, 옛 문서는 검색에서 제외됩니다.</p>
+        <p><select name="old_id"><option value="">(선택)</option>
+          {% for d in docs %}{% if d.doc_id != sel %}<option value="{{ d.doc_id }}">{{ d.filename }}</option>{% endif %}{% endfor %}
+        </select></p>
+        <button class="btn">🔗 새 버전으로 지정</button>
+      </form>
+      <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:14px">
+        {% csrf_token %}<input type="hidden" name="action" value="archive">
+        <button class="btn ghost">🗄️ 보관(검색 제외)</button>
+      </form>
+      <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:8px"
+            onsubmit="return confirm('정말 영구 삭제할까요? 되돌릴 수 없습니다.')">
+        {% csrf_token %}<input type="hidden" name="action" value="delete">
+        <button class="btn ghost" style="color:#c0392b">🗑️ 영구 삭제</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+</div>
+{% endblock %}

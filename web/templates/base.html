@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}인사 어시스턴트{% endblock %}</title>
+<style>
+:root{--bg:#f7f7f8;--panel:#fff;--line:#e5e5e6;--txt:#1a1a1a;--sub:#6b6b6b;
+      --accent:#3b6ef5;--user:#3b6ef5;--asst:#f0f0f2}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Pretendard','Malgun Gothic',system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+a{color:var(--accent);text-decoration:none}
+.topbar{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);
+        border-bottom:1px solid var(--line)}
+.topbar .brand{font-weight:700}
+.topbar .nav a{margin-right:12px;color:var(--sub)}
+.topbar .nav a.on{color:var(--accent);font-weight:600}
+.topbar .me{margin-left:auto;color:var(--sub);font-size:13px}
+.btn{display:inline-block;padding:8px 14px;border:none;border-radius:8px;background:var(--accent);
+     color:#fff;cursor:pointer;font-size:14px}
+.btn.ghost{background:transparent;color:var(--sub);border:1px solid var(--line)}
+input,select,textarea{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;width:100%}
+table{border-collapse:collapse;width:100%;background:var(--panel)}
+th,td{border:1px solid var(--line);padding:8px 10px;font-size:14px;text-align:left}
+th{background:#fafafa}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin:16px 0}
+.msg-note{color:var(--sub);font-size:13px}
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">🏢 인사 어시스턴트</span>
+  <span class="nav">
+    <a href="/" class="{% if request.path == '/' %}on{% endif %}">💬 채팅</a>
+    {% if is_admin %}
+    <a href="/console/review/" class="{% if '/console/review' in request.path %}on{% endif %}">📝 문서 검토</a>
+    <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}">📄 문서 관리</a>
+    <a href="/console/users/" class="{% if '/console/users' in request.path %}on{% endif %}">👤 사용자 관리</a>
+    {% endif %}
+  </span>
+  <span class="me">
+    {% if user.is_authenticated %}{{ user.username }} ·
+      <form method="post" action="/accounts/logout/" style="display:inline">{% csrf_token %}
+        <button class="btn ghost" style="padding:2px 8px">로그아웃</button></form>
+    {% endif %}
+  </span>
+</div>
+{% block content %}{% endblock %}
+</body>
+</html>

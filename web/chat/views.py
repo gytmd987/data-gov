@@ -1,0 +1,141 @@
+"""채팅 뷰 — ChatGPT 스타일: 대화 목록/멀티턴/RAG 토글/피드백/원본 다운로드."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import date
+
+from django.contrib.auth.decorators import login_required
+from django.http import FileResponse, Http404, JsonResponse
+from django.shortcuts import render
+from django.views.decorators.http import require_POST
+
+from web import bridge
+from web.authz import _email_of, domain_user_context
+
+_HISTORY_TURNS = 10   # 일반 채팅 멀티턴 문맥으로 넣을 최근 메시지 수
+
+
+@login_required
+def chat_page(request):
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import ChatRepository
+        convs = ChatRepository(session).list_conversations(_email_of(request.user))
+    finally:
+        session.close()
+    return render(request, "chat.html", {"conversations": convs,
+                                         "offline": bridge.is_offline()})
+
+
+@login_required
+def history(request, conversation_id: int):
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import ChatRepository
+        msgs = ChatRepository(session).get_messages(
+            conversation_id, user_id=_email_of(request.user))
+    finally:
+        session.close()
+    return JsonResponse({"messages": msgs})
+
+
+def _plain_prompt(history_msgs, text: str) -> str:
+    lines = ["당신은 사내 어시스턴트입니다. 한국어로 간결하고 정확하게 답하세요.\n"]
+    for m in history_msgs:
+        who = "사용자" if m["role"] == "user" else "어시스턴트"
+        lines.append(f"{who}: {m['text']}")
+    lines.append(f"사용자: {text}")
+    lines.append("어시스턴트:")
+    return "\n".join(lines)
+
+
+@login_required
+@require_POST
+def send(request):
+    body = json.loads(request.body or "{}")
+    text = (body.get("text") or "").strip()
+    use_rag = bool(body.get("use_rag"))
+    conv_id = body.get("conversation_id")
+    if not text:
+        return JsonResponse({"error": "질문이 비어 있습니다."}, status=400)
+
+    email = _email_of(request.user)
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import ChatRepository
+        chat = ChatRepository(session)
+        owned = {c["id"] for c in chat.list_conversations(email)}
+        if not conv_id or conv_id not in owned:   # 소유자 검증(남의 대화 차단)
+            conv_id = chat.create_conversation(email)
+
+        sources: list = []
+        if use_rag:
+            user_ctx = domain_user_context(session, request.user)
+            if user_ctx is None:
+                return JsonResponse({"error": f"'{email}' 사용자의 권한 정보가 없습니다. "
+                                     "관리자에게 사용자 등록을 요청하세요."}, status=403)
+            from app.search.present import group_sources
+            pipe = bridge.get_search_pipeline(session)
+            ans = pipe.answer(text, user_ctx, today=date.today())
+            answer_text = ans.text
+            sources = group_sources(ans)
+        else:
+            hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
+            llm = bridge.get_chat_llm()
+            answer_text = llm.complete_text(_plain_prompt(hist, text))
+
+        chat.add_message(conv_id, "user", text, use_rag=use_rag)
+        msg_id = chat.add_message(conv_id, "assistant", answer_text,
+                                  use_rag=use_rag, sources=sources)
+        session.commit()
+        return JsonResponse({"conversation_id": conv_id, "message_id": msg_id,
+                             "text": answer_text, "sources": sources})
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def feedback(request):
+    body = json.loads(request.body or "{}")
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import FeedbackRepository
+        FeedbackRepository(session).record(
+            query_text=body.get("query", ""), rating=body.get("rating", "down"),
+            user_id=_email_of(request.user), answer_text=body.get("answer"),
+            note=body.get("note") or None,
+            cited_doc_ids=body.get("cited_doc_ids") or [])
+        session.commit()
+    finally:
+        session.close()
+    return JsonResponse({"ok": True})
+
+
+@login_required
+def original_file(request, doc_id: str):
+    """원본 파일 다운로드 — 접근권한(그룹·민감도) 재검증 후 제공."""
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository
+        from app.schemas.metadata import doc_level_payload
+        from app.search.access import AccessPolicy
+        repo = DocumentRepository(session)
+        doc = repo.get(doc_id)
+        if doc is None:
+            raise Http404
+        user_ctx = domain_user_context(session, request.user)
+        if user_ctx is None:
+            raise Http404
+        payload = doc_level_payload(doc)
+        if not AccessPolicy.for_user(user_ctx).allows(payload):
+            raise Http404   # 권한 없음도 404로(존재 노출 방지)
+        path = repo.get_original_path(doc_id)
+        if not path or not os.path.exists(path):
+            raise Http404
+        return FileResponse(open(path, "rb"), as_attachment=True,
+                            filename=doc.identification.source_filename)
+    finally:
+        session.close()

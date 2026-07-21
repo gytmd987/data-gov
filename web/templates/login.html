@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}로그인{% endblock %}
+{% block content %}
+<div class="card" style="max-width:380px;margin:80px auto;text-align:center">
+  <h2 style="margin-bottom:6px">🔒 로그인</h2>
+  <p class="msg-note" style="margin-bottom:18px">사내 계정(이메일)으로 로그인하세요.</p>
+  {% if form.errors %}<p style="color:#c0392b;margin-bottom:10px">아이디 또는 비밀번호가 올바르지 않습니다.</p>{% endif %}
+  <form method="post">{% csrf_token %}
+    <input name="username" placeholder="이메일" autofocus style="margin-bottom:8px">
+    <input name="password" type="password" placeholder="비밀번호" style="margin-bottom:14px">
+    <button class="btn" style="width:100%">로그인</button>
+  </form>
+</div>
+{% endblock %}

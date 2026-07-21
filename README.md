@@ -150,7 +150,21 @@ python -m scripts.ask --user hr_analyst                          # 대화형 모
 > Qdrant 색인·하드필터 배선은 실제 Qdrant 엔진(in-memory 로컬 모드)으로 회귀 테스트됨
 > (`tests/test_qdrant_integration.py`) — 서버 없이도 CI에서 검증된다.
 
-## 관리 UI 실행 (멀티페이지)
+## 웹 UI 실행 (Django — 채팅 + 관리 콘솔)
+
+```bash
+pip install -e ".[ingest,web,postgres]"
+python web/manage.py migrate && python web/manage.py createsuperuser
+python web/manage.py runserver 0.0.0.0:8500
+```
+
+- **💬 채팅**(`/`): ChatGPT 스타일 — 대화 저장·멀티턴, **[팀 데이터 기반] 토글**로
+  RAG(권한별 문서 검색+출처+원본 다운로드) ↔ 일반 질문 전환, 👍/👎 피드백.
+- **관리 콘솔**(관리자 전용): 문서 검토/문서 관리/사용자 관리.
+- 서비스 없이 UI 확인: `WEB_OFFLINE=1 python web/manage.py runserver` · 자동 검증 `python -m scripts.web_smoke`
+- 상세: [`docs/장고_실행.md`](docs/장고_실행.md)
+
+## (구) Streamlit UI — Django 검증 후 삭제 예정
 
 ```bash
 pip install -e ".[ingest,ui,postgres]"

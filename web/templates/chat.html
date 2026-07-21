@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}채팅 · 인사 어시스턴트{% endblock %}
+{% block head %}
+<style>
+.layout{display:flex;height:calc(100vh - 49px)}
+.side{width:250px;background:var(--panel);border-right:1px solid var(--line);
+      display:flex;flex-direction:column}
+.side .new{margin:12px}
+.side .list{overflow-y:auto;flex:1}
+.side .item{padding:10px 14px;font-size:14px;cursor:pointer;color:var(--sub);
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side .item:hover,.side .item.on{background:#eef2ff;color:var(--txt)}
+.main{flex:1;display:flex;flex-direction:column;max-width:900px;margin:0 auto;width:100%}
+.stream{flex:1;overflow-y:auto;padding:24px 16px}
+.row{display:flex;margin-bottom:14px}
+.row.user{justify-content:flex-end}
+.bubble{max-width:75%;padding:12px 16px;border-radius:16px;font-size:15px;
+        line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.row.user .bubble{background:var(--user);color:#fff;border-bottom-right-radius:4px}
+.row.asst .bubble{background:var(--asst);border-bottom-left-radius:4px}
+.srcs{margin-top:8px}
+.src{border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff;font-size:13px}
+.src summary{padding:8px 10px;cursor:pointer;color:var(--sub)}
+.src .body{padding:8px 12px;border-top:1px solid var(--line)}
+.src .body p{margin-bottom:8px}
+.fb{margin-top:6px;font-size:13px;color:var(--sub)}
+.fb button{border:none;background:none;cursor:pointer;font-size:15px}
+.composer{padding:12px 16px 20px}
+.composer .box{display:flex;gap:8px;align-items:flex-end;background:var(--panel);
+               border:1px solid var(--line);border-radius:14px;padding:10px}
+.composer textarea{border:none;resize:none;outline:none;max-height:140px}
+.toggle{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:14px;color:var(--sub)}
+.switch{position:relative;width:40px;height:22px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#ccc;border-radius:22px;cursor:pointer;transition:.2s}
+.slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;
+               background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked + .slider{background:var(--accent)}
+.switch input:checked + .slider:before{transform:translateX(18px)}
+.hint{font-size:12px;color:var(--sub);text-align:center;margin-top:6px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="layout">
+  <div class="side">
+    <button class="btn ghost new" onclick="newChat()">＋ 새 대화</button>
+    <div class="list" id="convs">
+      {% for c in conversations %}
+      <div class="item" data-id="{{ c.id }}" onclick="openChat({{ c.id }}, this)">{{ c.title }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="main">
+    <div class="stream" id="stream">
+      <div style="text-align:center;color:var(--sub);margin-top:120px" id="empty">
+        <h2 style="margin-bottom:8px">무엇을 도와드릴까요?</h2>
+        <p>아래 <b>팀 데이터 기반</b>을 켜면 사내 문서에서 근거를 찾아 출처와 함께 답합니다.<br>
+           끄면 일반 질문(문서 검색 없이)에 답합니다.</p>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="toggle">
+        <label class="switch"><input type="checkbox" id="useRag" checked><span class="slider"></span></label>
+        <span>팀 데이터 기반 답변 <span id="ragState">(켜짐 — 사내 문서에서 근거 검색)</span></span>
+      </div>
+      <div class="box">
+        <textarea id="input" rows="1" placeholder="메시지를 입력하세요…"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+        <button class="btn" onclick="sendMsg()" id="sendBtn">보내기</button>
+      </div>
+      <div class="hint">{% if offline %}⚠️ 오프라인 데모 모드(외부 서비스 미연결){% else %}Enter 전송 · Shift+Enter 줄바꿈{% endif %}</div>
+    </div>
+  </div>
+</div>
+<script>
+let convId = null;
+const stream = document.getElementById('stream');
+const csrft = '{{ csrf_token }}';
+
+document.getElementById('useRag').addEventListener('change', e => {
+  document.getElementById('ragState').textContent =
+    e.target.checked ? '(켜짐 — 사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
+});
+
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+function bubble(role, text, sources, meta){
+  document.getElementById('empty')?.remove();
+  const row = document.createElement('div');
+  row.className = 'row ' + (role==='user'?'user':'asst');
+  let html = `<div class="bubble">${esc(text)}`;
+  if (role !== 'user' && sources && sources.length){
+    html += `<div class="srcs">`;
+    sources.forEach((s,i)=>{
+      const marks = s.markers.map(m=>`[${m}]`).join(' ');
+      let passages = s.passages.map(p=>
+        `<p><b>[${p.marker}]</b>${p.page?` · p.${p.page}`:''}<br>${esc(p.text)}</p>`).join('');
+      const dl = s.doc_id ? `<a href="/docs/original/${s.doc_id}">📄 원본 파일 다운로드</a>` : '';
+      html += `<details class="src"><summary>📎 출처 ${i+1}. ${esc(s.label||'')} ${marks}</summary>
+               <div class="body">${passages}${dl}</div></details>`;
+    });
+    html += `</div>`;
+  }
+  if (role !== 'user' && meta){
+    html += `<div class="fb">이 답변이 정확한가요?
+      <button onclick='fb("up", ${JSON.stringify(meta)})'>👍</button>
+      <button onclick='fbBad(${JSON.stringify(meta)})'>👎</button>
+      <span class="fbdone"></span></div>`;
+  }
+  html += `</div>`;
+  row.innerHTML = html;
+  stream.appendChild(row);
+  stream.scrollTop = stream.scrollHeight;
+  return row;
+}
+
+async function sendMsg(){
+  const inp = document.getElementById('input');
+  const text = inp.value.trim();
+  if (!text) return;
+  const useRag = document.getElementById('useRag').checked;
+  inp.value = '';
+  bubble('user', text);
+  const thinking = bubble('asst', useRag ? '문서를 검색하는 중…' : '생각하는 중…');
+  document.getElementById('sendBtn').disabled = true;
+  try {
+    const r = await fetch('/chat/send', {method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
+      body: JSON.stringify({conversation_id: convId, text, use_rag: useRag})});
+    const d = await r.json();
+    thinking.remove();
+    if (!r.ok){ bubble('asst', '⚠️ ' + (d.error || '오류가 발생했습니다.')); return; }
+    if (!convId){ convId = d.conversation_id; addConvItem(text, convId); }
+    bubble('asst', d.text, d.sources, {query:text, answer:d.text,
+      cited: (d.sources||[]).map(s=>s.doc_id).filter(Boolean)});
+  } catch(e){ thinking.remove(); bubble('asst', '⚠️ 서버에 연결할 수 없습니다.'); }
+  document.getElementById('sendBtn').disabled = false;
+}
+
+async function fb(rating, meta, note){
+  await fetch('/chat/feedback', {method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
+    body: JSON.stringify({rating, query:meta.query, answer:meta.answer,
+                          note: note||null, cited_doc_ids: meta.cited})});
+  event.target.closest('.fb').querySelector('.fbdone').textContent =
+    rating==='up' ? ' 감사합니다!' : ' 기록되었습니다(관리자 검토).';
+}
+function fbBad(meta){
+  const note = prompt('무엇이 틀렸나요? (정답을 알면 함께 적어주세요)');
+  if (note !== null) fb('down', meta, note);
+}
+
+function addConvItem(title, id){
+  const el = document.createElement('div');
+  el.className = 'item on'; el.dataset.id = id;
+  el.textContent = title.slice(0,60);
+  el.onclick = ()=>openChat(id, el);
+  document.getElementById('convs').prepend(el);
+}
+
+async function openChat(id, el){
+  convId = id;
+  document.querySelectorAll('.side .item').forEach(i=>i.classList.remove('on'));
+  el.classList.add('on');
+  stream.innerHTML = '';
+  const r = await fetch('/chat/history/'+id);
+  const d = await r.json();
+  d.messages.forEach(m=>{
+    bubble(m.role, m.text, m.sources,
+      m.role==='assistant' ? {query:'', answer:m.text,
+        cited:(m.sources||[]).map(s=>s.doc_id).filter(Boolean)} : null);
+  });
+}
+
+function newChat(){
+  convId = null; stream.innerHTML =
+    '<div style="text-align:center;color:var(--sub);margin-top:120px" id="empty"><h2>무엇을 도와드릴까요?</h2></div>';
+  document.querySelectorAll('.side .item').forEach(i=>i.classList.remove('on'));
+}
+</script>
+{% endblock %}
