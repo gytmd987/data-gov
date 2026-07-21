@@ -255,3 +255,60 @@ class FeedbackRepository:
         if fb is not None:
             fb.resolved = True
             self.session.flush()
+
+
+class ChatRepository:
+    """채팅 대화·메시지 저장/조회 (ChatGPT 스타일 멀티턴)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_conversation(self, user_id: str, title: str | None = None) -> int:
+        from app.db.models import Conversation
+        conv = Conversation(user_id=user_id, title=title)
+        self.session.add(conv)
+        self.session.flush()
+        return conv.id
+
+    def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
+        from app.db.models import Conversation
+        rows = self.session.execute(
+            select(Conversation).where(Conversation.user_id == user_id)
+            .order_by(Conversation.updated_at.desc())
+        ).scalars()
+        return [{"id": c.id, "title": c.title or "(새 대화)",
+                 "updated_at": c.updated_at.isoformat() if c.updated_at else None}
+                for c in rows]
+
+    def add_message(self, conversation_id: int, role: str, text: str,
+                    use_rag: bool = False, sources: list | None = None) -> int:
+        from app.db.models import ChatMessage, Conversation
+        msg = ChatMessage(conversation_id=conversation_id, role=role, text=text,
+                          use_rag=use_rag, sources_json=sources or [])
+        self.session.add(msg)
+        # 제목이 없으면 첫 사용자 질문으로 자동 설정 + updated_at 갱신
+        conv = self.session.get(Conversation, conversation_id)
+        if conv is not None:
+            if conv.title is None and role == "user":
+                conv.title = text[:60]
+            from datetime import datetime, timezone
+            conv.updated_at = datetime.now(timezone.utc)
+        self.session.flush()
+        return msg.id
+
+    def get_messages(self, conversation_id: int, user_id: str | None = None,
+                     limit: int | None = None) -> list[dict[str, Any]]:
+        """대화 메시지(오래된 순). user_id 지정 시 소유자 검증(남의 대화 차단)."""
+        from app.db.models import ChatMessage, Conversation
+        conv = self.session.get(Conversation, conversation_id)
+        if conv is None or (user_id is not None and conv.user_id != user_id):
+            return []
+        stmt = (select(ChatMessage)
+                .where(ChatMessage.conversation_id == conversation_id)
+                .order_by(ChatMessage.id))
+        rows = list(self.session.execute(stmt).scalars())
+        if limit is not None:
+            rows = rows[-limit:]
+        return [{"id": m.id, "role": m.role, "text": m.text,
+                 "use_rag": m.use_rag, "sources": m.sources_json or []}
+                for m in rows]

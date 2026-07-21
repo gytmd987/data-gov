@@ -146,3 +146,37 @@ class Feedback(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)   # 무엇이 틀렸는지/정답
     cited_doc_ids: Mapped[list] = mapped_column(JSON, default=list)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)  # 관리자 처리 완료 여부
+
+
+class Conversation(Base):
+    """채팅 대화(ChatGPT 스타일 대화 목록의 한 항목)."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)  # 첫 질문으로 자동
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan",
+        order_by="ChatMessage.id")
+
+
+class ChatMessage(Base):
+    """대화 내 메시지 1건 (user 또는 assistant)."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(16))       # "user" | "assistant"
+    text: Mapped[str] = mapped_column(Text)
+    use_rag: Mapped[bool] = mapped_column(Boolean, default=False)  # 팀 데이터 기반 여부
+    sources_json: Mapped[list] = mapped_column(JSON, default=list)  # group_sources 결과
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
