@@ -150,16 +150,22 @@ python -m scripts.ask --user hr_analyst                          # 대화형 모
 > Qdrant 색인·하드필터 배선은 실제 Qdrant 엔진(in-memory 로컬 모드)으로 회귀 테스트됨
 > (`tests/test_qdrant_integration.py`) — 서버 없이도 CI에서 검증된다.
 
-## 적재 검토 UI 실행
+## 관리 UI 실행 (멀티페이지)
 
 ```bash
 pip install -e ".[ingest,ui,postgres]"
 streamlit run app/review/streamlit_app.py
 ```
 
-사이드바에서 문서 업로드 → 자동 채움(LLM) → 화면에서 신뢰도 확인·거버넌스 필수 필드 입력 →
-"검증 후 색인". 필수 필드 미충족 시 차단(BLOCKED) 사유가 표시된다. 로직은 `ReviewService`에 있어
-UI 없이도 단위 테스트된다(`tests/test_review.py`).
+한 앱에 4개 화면:
+- **문서 검토** — 업로드 → AI 자동채움 → 신뢰도 확인·접근/보안 입력 → 검증 후 색인.
+  유사 문서가 있으면 "새 버전으로 처리"를 선택할 수 있다(옛 문서 검색 제외).
+- **문서 관리** — 색인된 문서 목록·메타데이터 수정·**수동 버전연결(낮은 유사도 개정판)**·보관·삭제.
+  변경은 Qdrant 검색 필터에 즉시 반영된다.
+- **질문하기** — 사용자 권한대로 질의·답변·출처 + **👍/👎 피드백**.
+- **사용자 관리** — **직책·직무**로 사용자 생성 → 권한(그룹·등급) 자동 부여.
+
+로직은 서비스 계층(`ReviewService`, `DocumentManager`)에 있어 UI 없이도 단위 테스트된다.
 
 ## 적재 파이프라인 흐름
 
