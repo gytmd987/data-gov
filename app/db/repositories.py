@@ -115,6 +115,16 @@ class DocumentRepository:
         row = self.session.get(Document, doc_id)
         return list(row.similar_candidates) if row and row.similar_candidates else []
 
+    def set_original_path(self, doc_id: str, path: str) -> None:
+        row = self.session.get(Document, doc_id)
+        if row is not None:
+            row.original_path = path
+            self.session.flush()
+
+    def get_original_path(self, doc_id: str) -> Optional[str]:
+        row = self.session.get(Document, doc_id)
+        return row.original_path if row else None
+
 
 class UserRepository:
     def __init__(self, session: Session) -> None:

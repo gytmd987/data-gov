@@ -41,6 +41,7 @@ class Document(Base):
     file_format: Mapped[str] = mapped_column(String(16))
     file_hash: Mapped[str] = mapped_column(String(64), index=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    original_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # 원본 파일 경로
 
     # 적재 상태 머신
     status: Mapped[str] = mapped_column(String(32), index=True)

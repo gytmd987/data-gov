@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import streamlit as st
@@ -44,19 +45,39 @@ if st.button("질문하기", type="primary") and query:
     pipe = build_search_pipeline(session)
     ans = pipe.answer(query, user, today=date.today())
     session.commit()
+    used_by_id = {c.chunk_id: c for c in ans.used_chunks}
+    sources = []
+    for cit in ans.citations:
+        uc = used_by_id.get(cit.chunk_id)
+        sources.append({"marker": cit.marker, "label": cit.label,
+                        "doc_id": cit.doc_id, "page": cit.page_no,
+                        "passage": uc.text if uc else ""})
     st.session_state.last_qa = {
-        "query": query, "text": ans.text,
-        "files": sorted({c.source_filename for c in ans.used_chunks if c.source_filename}),
-        "cited": [c.doc_id for c in ans.citations],
-        "cites": [f"[{c.marker}] {c.title or c.doc_id}" for c in ans.citations],
-    }
+        "query": query, "text": ans.text, "cited": [c.doc_id for c in ans.citations],
+        "sources": sources}
 
 qa = st.session_state.get("last_qa")
 if qa:
     st.markdown(f"**답변:** {qa['text']}")
-    st.caption(f"검색된 문서: {qa['files'] or '(권한 내 근거 없음)'}")
-    if qa["cites"]:
-        st.caption("출처: " + " ; ".join(qa["cites"]))
+
+    if qa["sources"]:
+        st.subheader("📎 출처 (답변 근거)")
+        from app.db.repositories import DocumentRepository
+        docs_repo = DocumentRepository(session)
+        for s in qa["sources"]:
+            page = f" · p.{s['page']}" if s["page"] else ""
+            with st.expander(f"[{s['marker']}] {s['label']}{page}"):
+                st.write(s["passage"] or "(본문 미리보기 없음)")
+                path = docs_repo.get_original_path(s["doc_id"]) if s["doc_id"] else None
+                if path and os.path.exists(path):
+                    with open(path, "rb") as f:
+                        st.download_button("📄 원본 파일 열기/다운로드", f.read(),
+                                           file_name=os.path.basename(path),
+                                           key=f"dl_{s['marker']}")
+                else:
+                    st.caption("원본 파일이 보관돼 있지 않습니다.")
+    else:
+        st.caption("권한 내 근거 문서를 찾지 못했습니다.")
 
     st.write("이 답변이 정확한가요?")
     c1, c2 = st.columns(2)

@@ -51,6 +51,7 @@ def parse_citations(text: str, chunks: list[RetrievedChunk]) -> list[Citation]:
         c = chunks[n - 1]
         citations.append(Citation(
             marker=n, doc_id=c.doc_id, title=c.title,
+            source_filename=c.source_filename,
             page_no=c.page_no, chunk_id=c.chunk_id))
     return sorted(citations, key=lambda c: c.marker)
 

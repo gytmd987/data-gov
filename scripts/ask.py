@@ -44,7 +44,7 @@ def ask_once(pipe: SearchPipeline, session, user, query: str):
     print(f"\nA: {ans.text}")
     print(f"검색된 문서: {files or '(권한 내 근거 없음)'}")
     if ans.citations:
-        cites = "; ".join(f"[{c.marker}] {c.title or c.doc_id} p.{c.page_no}"
+        cites = "; ".join(f"[{c.marker}] {c.label} p.{c.page_no}"
                           for c in ans.citations)
         print(f"출처: {cites}")
     return ans

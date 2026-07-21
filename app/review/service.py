@@ -94,10 +94,26 @@ class ReviewService:
             hash_lookup=persistent_hash_lookup(repo),
         )
         save_ingestion(repo, ctx)
+        # 원본 파일 보관(열람/다운로드용)
+        self._store_original(path, ctx.doc.identification.doc_id,
+                             ctx.doc.identification.file_format.value)
         # 유사(개정판 가능) 문서 자동 탐지 → 검토 화면에서 사람이 판단
         self._detect_similar(ctx)
         self.session.commit()
         return ctx.doc.identification.doc_id
+
+    def _store_original(self, src_path: str, doc_id: str, ext: str) -> None:
+        try:
+            import shutil
+            from pathlib import Path
+            from app.config import settings
+            dest_dir = Path(settings.storage_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / f"{doc_id}.{ext}"
+            shutil.copyfile(src_path, dest)
+            self.docs.set_original_path(doc_id, str(dest))
+        except Exception:
+            pass  # 원본 보관 실패해도 적재는 계속(열람만 불가)
 
     def _detect_similar(self, ctx) -> None:
         client = getattr(self.indexer, "client", None)

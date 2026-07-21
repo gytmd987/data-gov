@@ -35,8 +35,14 @@ class Citation(BaseModel):
     marker: int                 # 본문 각주 번호 [1], [2] ...
     doc_id: Optional[str] = None
     title: Optional[str] = None
+    source_filename: Optional[str] = None
     page_no: Optional[int] = None
     chunk_id: str
+
+    @property
+    def label(self) -> str:
+        """화면 표시용: 제목 > 파일명 > doc_id 순."""
+        return self.title or self.source_filename or self.doc_id or self.chunk_id
 
 
 class Answer(BaseModel):
