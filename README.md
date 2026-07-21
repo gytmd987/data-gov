@@ -182,4 +182,15 @@ SearchPipeline.answer(query, user)
 접근통제는 이중 적용: **① Qdrant 쿼리 필터**(후보 단계 배제) + **② 파이썬 allows() 재검증**(인용 직전 방어).
 외부 서비스(vLLM/TEI/Qdrant/OCR/해시조회)는 모두 Protocol/콜백으로 주입 → 서비스 없이 단위 테스트 가능.
 
+## 가이드 문서
+
+| 문서 | 내용 |
+|---|---|
+| [`docs/설정_가이드.md`](docs/설정_가이드.md) | **한 파일(config/system.yaml)로** 메타데이터·거버넌스·권한(직책×직무) 설정하는 법, UI 자동 반영 여부, 사용자 생성 |
+| [`docs/중복문서_처리.md`](docs/중복문서_처리.md) | 완전 동일(자동 차단) vs 유사 문서(개정판 → 사람이 새버전/별개 선택) |
+| [`docs/답변_피드백.md`](docs/답변_피드백.md) | 틀린 답변 피드백·교정(원문 오류/검색 실패/생성 오류 구분) |
+| [`docs/smoke_test.md`](docs/smoke_test.md) | 실서비스 스모크 + GPU/CPU·Blackwell 트러블슈팅 |
+| [`docs/offline_models.md`](docs/offline_models.md) | 폐쇄망 모델 반입 |
+| [`docs/vram.md`](docs/vram.md) | 단일 GPU VRAM 배치 |
+
 전체 실행 계획은 설계 문서를 참고.

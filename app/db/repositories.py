@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
-from app.db.models import AuditLog, Chunk, Document, Group, User, UserGroup
+from app.db.models import AuditLog, Chunk, Document, Feedback, Group, User, UserGroup
 from app.schemas.enums import SensitivityLevel
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
@@ -164,3 +164,33 @@ class AuditRepository:
             event=event,
         ))
         self.session.flush()
+
+
+class FeedbackRepository:
+    """답변 피드백 저장·조회 (틀린 답변 교정 워크플로우의 시작점)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def record(self, query_text: str, rating: str, user_id: str | None = None,
+               answer_text: str | None = None, note: str | None = None,
+               cited_doc_ids: list[str] | None = None) -> int:
+        fb = Feedback(
+            user_id=user_id, query_text=query_text, answer_text=answer_text,
+            rating=rating, note=note, cited_doc_ids=cited_doc_ids or [])
+        self.session.add(fb)
+        self.session.flush()
+        return fb.id
+
+    def list_unresolved(self) -> list[Feedback]:
+        return list(self.session.execute(
+            select(Feedback).where(Feedback.rating == "down",
+                                   Feedback.resolved.is_(False))
+            .order_by(Feedback.ts)
+        ).scalars())
+
+    def mark_resolved(self, feedback_id: int) -> None:
+        fb = self.session.get(Feedback, feedback_id)
+        if fb is not None:
+            fb.resolved = True
+            self.session.flush()

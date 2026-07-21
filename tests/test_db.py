@@ -10,7 +10,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.models import Base
 from app.db.persistence import persistent_hash_lookup, save_ingestion
-from app.db.repositories import AuditRepository, DocumentRepository, UserRepository
+from app.db.repositories import (
+    AuditRepository,
+    DocumentRepository,
+    FeedbackRepository,
+    UserRepository,
+)
 from app.ingestion.intake import DuplicateError, intake
 from app.ingestion.pipeline import apply_review, run_auto_stages
 from app.schemas.enums import DocType, SensitivityLevel
@@ -139,3 +144,18 @@ def test_audit_record(session):
     assert len(rows) == 1
     assert rows[0].action == "query"
     assert rows[0].event["cited_doc_ids"] == ["d1"]
+
+
+def test_feedback_record_and_list(session):
+    fb = FeedbackRepository(session)
+    fb.record("연차 며칠?", rating="down", user_id="u1",
+              answer_text="10일", note="정답은 15일", cited_doc_ids=["d1"])
+    session.commit()
+
+    unresolved = fb.list_unresolved()
+    assert len(unresolved) == 1
+    assert unresolved[0].note == "정답은 15일"
+
+    fb.mark_resolved(unresolved[0].id)
+    session.commit()
+    assert fb.list_unresolved() == []

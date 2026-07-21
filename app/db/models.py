@@ -126,3 +126,19 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(32), index=True)
     query_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     event: Mapped[dict] = mapped_column(JSON, default=dict)   # 상세(필터/검색·인용 id 등)
+
+
+class Feedback(Base):
+    """답변 피드백 — 사용자가 답변이 맞았는지/틀렸는지 + 교정 메모."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    query_text: Mapped[str] = mapped_column(Text)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rating: Mapped[str] = mapped_column(String(8))            # "up" | "down"
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)   # 무엇이 틀렸는지/정답
+    cited_doc_ids: Mapped[list] = mapped_column(JSON, default=list)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)  # 관리자 처리 완료 여부
