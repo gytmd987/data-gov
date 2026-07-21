@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import httpx
 
+from app.clients.sanitize import clean_texts
 from app.config import settings
 
 
@@ -20,6 +21,7 @@ class TEIEmbedder:
         if not texts:
             return []
         with httpx.Client(timeout=self._timeout) as client:
-            resp = client.post(f"{self.base_url}/embed", json={"inputs": texts})
+            resp = client.post(f"{self.base_url}/embed",
+                               json={"inputs": clean_texts(texts)})
             resp.raise_for_status()
             return resp.json()

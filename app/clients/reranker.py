@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import httpx
 
+from app.clients.sanitize import clean_texts, strip_surrogates
 from app.config import settings
 
 
@@ -22,7 +23,8 @@ class TEIReranker:
         with httpx.Client(timeout=self._timeout) as client:
             resp = client.post(
                 f"{self.base_url}/rerank",
-                json={"query": query, "texts": texts, "return_text": False},
+                json={"query": strip_surrogates(query),
+                      "texts": clean_texts(texts), "return_text": False},
             )
             resp.raise_for_status()
             results = resp.json()  # [{"index": i, "score": s}, ...]

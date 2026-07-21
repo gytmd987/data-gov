@@ -50,6 +50,12 @@ def extract_json(text: str) -> dict[str, Any]:
     if s.startswith("```"):
         s = _FENCE_CLOSE_RE.sub("", _FENCE_OPEN_RE.sub("", s)).strip()
 
+    # 일부 모델이 중괄호를 이중으로 출력({{ ... }}) → 단일로 정규화
+    if s.startswith("{{"):
+        s = "{" + s[2:]
+    if s.endswith("}}"):
+        s = s[:-2] + "}"
+
     candidates = [s]
     start, end = s.find("{"), s.rfind("}")
     if 0 <= start < end:

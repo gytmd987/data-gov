@@ -67,6 +67,10 @@ def test_extract_single_quoted_in_fence_with_prose():
     assert extract_json(text) == {"doc_type": "payroll"}
 
 
+def test_extract_double_braces():
+    assert extract_json('{{"doc_type": "policy"}}') == {"doc_type": "policy"}
+
+
 def test_extract_raises_when_no_json():
     with pytest.raises(ValueError):
         extract_json("JSON이 전혀 없는 응답")
