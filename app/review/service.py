@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy.orm import Session
 
+from app import system_config
 from app.db.persistence import load_context, persistent_hash_lookup, save_ingestion
 from app.db.repositories import DocumentRepository, UserRepository
 from app.governance.validator import ValidationResult
@@ -194,9 +195,14 @@ class ReviewService:
                 "access_groups": gov.access_groups,
                 "owner": gov.owner,
             },
-            known_groups=self.users.known_access_groups(),
+            known_groups=self._known_groups(),
             similar_candidates=repo.get_similar_candidates(doc_id),
         )
+
+    def _known_groups(self) -> list[str]:
+        """선택/검증 가능한 접근 그룹 = config 어휘 ∪ DB에 실재하는 그룹."""
+        return sorted(set(system_config.access_groups())
+                      | set(self.users.known_access_groups()))
 
     # ── 검토 제출(검증·차단·색인) ────────────────────────────────────────────
     def submit_review(
@@ -216,7 +222,7 @@ class ReviewService:
             ctx, governance=governance,
             classification_overrides=classification_overrides,
             lifecycle_overrides=lifecycle_overrides,
-            known_access_groups=self.users.known_access_groups(),
+            known_access_groups=self._known_groups(),
             allowed_topics=None,
         )
         save_ingestion(repo, ctx)

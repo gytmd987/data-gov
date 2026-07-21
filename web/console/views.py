@@ -44,6 +44,7 @@ def review(request):
         view = svc.get_review(doc_id) if doc_id else None
         return render(request, "console/review.html", {
             "pending": pending, "view": view, "opts": ENUM_OPTIONS,
+            "departments": system_config.departments(),
         })
     finally:
         session.close()
@@ -98,9 +99,12 @@ def docs(request):
         doc_list = mgr.list_documents(text=q)
         sel = request.GET.get("doc")
         doc = mgr.get(sel) if sel else None
+        from app.db.repositories import UserRepository
+        known = set(system_config.access_groups()) | \
+            set(UserRepository(session).known_access_groups())
         return render(request, "console/docs.html", {
             "docs": doc_list, "sel": sel, "doc": doc, "q": q or "",
-            "opts": ENUM_OPTIONS,
+            "opts": ENUM_OPTIONS, "known_groups": sorted(known),
         })
     finally:
         session.close()
@@ -120,7 +124,7 @@ def docs_action(request, doc_id: str):
             new_gov = GovernanceBlock(
                 sensitivity_level=SensitivityLevel(p["sensitivity"]),
                 contains_pii=gov.contains_pii, pii_types=gov.pii_types,
-                access_groups=[g.strip() for g in p.get("groups", "").split(",") if g.strip()],
+                access_groups=p.getlist("groups"),
                 owner=p.get("owner") or None)
             mgr.update_metadata(doc_id, governance=new_gov,
                                 lifecycle_overrides={"status": p.get("lifecycle_status")})
@@ -165,7 +169,8 @@ def users(request):
                 if p.get("password"):
                     dj.set_password(p["password"])
                     dj.save()
-                messages.success(request, f"'{uid}' 저장 → 그룹 {sorted(groups)} · 등급 {clearance}"
+                g_names = ", ".join(system_config.label(g) for g in sorted(groups))
+                messages.success(request, f"'{uid}' 저장 → 그룹 [{g_names}] · 등급 {system_config.label(clearance)}"
                                  + (" (로그인 계정 생성됨)" if created else ""))
             return redirect("console_users")
 

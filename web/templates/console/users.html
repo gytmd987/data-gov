@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load klabels %}
 {% block title %}사용자 관리{% endblock %}
 {% block content %}
 <div style="max-width:900px;margin:0 auto;padding:0 16px">
@@ -22,7 +23,7 @@
   <tr><th>ID</th><th>이름</th><th>직책</th><th>직무</th><th>열람등급</th><th>그룹</th></tr>
   {% for u in users %}
   <tr><td>{{ u.user_id }}</td><td>{{ u.display_name }}</td><td>{{ u.position }}</td>
-      <td>{{ u.job }}</td><td>{{ u.clearance }}</td><td>{{ u.groups|join:", " }}</td></tr>
+      <td>{{ u.job }}</td><td>{{ u.clearance|klabel }}</td><td>{{ u.groups|klabel_join }}</td></tr>
   {% endfor %}
 </table>
 </div>

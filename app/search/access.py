@@ -1,7 +1,7 @@
 """접근통제: 사용자 컨텍스트 → 검색 하드 필터.
 
 하드 필터 조건(검색 후보에서 원천 제외):
-  1. access_groups ∩ 사용자 그룹 ≠ ∅
+  1. access_groups ∩ 사용자 그룹 ≠ ∅ (문서에 "*" 가 있으면 전체 공개 — 그룹 검사 통과)
   2. sensitivity_rank ≤ 사용자 clearance
   3. status == active
   4. expiry_date 없음 또는 오늘 이후(만료 제외)
@@ -39,9 +39,9 @@ class AccessPolicy:
 
     # ── 파이썬 재검증(방어적 이중 체크) ────────────────────────────────────
     def allows(self, payload: dict[str, Any]) -> bool:
-        # 1. 그룹 교집합
+        # 1. 그룹 교집합 ("*" = 전체 공개 — 그룹 제한 없음, 민감도 등급 등은 계속 적용)
         groups = payload.get("access_groups") or []
-        if not (set(groups) & self.user.groups):
+        if "*" not in groups and not (set(groups) & self.user.groups):
             return False
         # 2. 민감도
         rank = payload.get("sensitivity_rank")
@@ -77,7 +77,7 @@ class AccessPolicy:
             must=[
                 qm.FieldCondition(
                     key="access_groups",
-                    match=qm.MatchAny(any=list(self.user.groups)),
+                    match=qm.MatchAny(any=[*self.user.groups, "*"]),
                 ),
                 qm.FieldCondition(
                     key="sensitivity_rank",

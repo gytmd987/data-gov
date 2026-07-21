@@ -53,6 +53,21 @@ def topics() -> list[str]:
     return list(_load()["metadata"].get("topics") or [])
 
 
+def departments() -> list[str]:
+    return list(_load()["metadata"].get("departments") or [])
+
+
+# ── 화면 표시용 한글 라벨 ────────────────────────────────────────────────────
+def labels() -> dict[str, str]:
+    return dict(_load().get("labels") or {})
+
+
+def label(value: Any) -> str:
+    """값의 한글 표시 라벨. 매핑에 없으면 원값 그대로."""
+    key = getattr(value, "value", value)
+    return labels().get(key, key)
+
+
 def sensitivity_rank(level: str | None) -> int:
     """민감도 등급의 순위(0=가장 낮음). 없는 값은 -1."""
     if level is None:

@@ -17,9 +17,26 @@ a{color:var(--accent);text-decoration:none}
 .topbar .nav a.on{color:var(--accent);font-weight:600}
 .topbar .me{margin-left:auto;color:var(--sub);font-size:13px}
 .btn{display:inline-block;padding:8px 14px;border:none;border-radius:8px;background:var(--accent);
-     color:#fff;cursor:pointer;font-size:14px}
+     color:#fff;cursor:pointer;font-size:14px;white-space:nowrap;flex-shrink:0}
 .btn.ghost{background:transparent;color:var(--sub);border:1px solid var(--line)}
-input,select,textarea{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;width:100%}
+input,select,textarea{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;width:100%;
+                      background:#fff}
+.field{margin:10px 0}
+.field>label{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+/* 체크박스 드롭다운(다중 선택) — <details class="dd"> */
+.dd{position:relative}
+.dd>summary{list-style:none;cursor:pointer;padding:8px;border:1px solid var(--line);border-radius:8px;
+            background:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+            padding-right:26px}
+.dd>summary::-webkit-details-marker{display:none}
+.dd>summary::after{content:"▾";position:absolute;right:10px;color:var(--sub)}
+.dd .menu{position:absolute;z-index:20;left:0;right:0;margin-top:4px;background:#fff;
+          border:1px solid var(--line);border-radius:8px;max-height:220px;overflow-y:auto;
+          box-shadow:0 4px 14px rgba(0,0,0,.1);padding:4px}
+.dd .menu label{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;
+                cursor:pointer;font-size:14px;white-space:nowrap}
+.dd .menu label:hover{background:#eef2ff}
+.dd .menu input[type=checkbox]{width:auto;margin:0}
 table{border-collapse:collapse;width:100%;background:var(--panel)}
 th,td{border:1px solid var(--line);padding:8px 10px;font-size:14px;text-align:left}
 th{background:#fafafa}
@@ -47,5 +64,30 @@ th{background:#fafafa}
   </span>
 </div>
 {% block content %}{% endblock %}
+<script>
+// 체크박스 드롭다운: 요약 텍스트 갱신 + 상호 배타(data-exclusive) + 바깥 클릭 시 닫기
+document.querySelectorAll('details.dd').forEach(dd => {
+  const refresh = () => {
+    const names = [...dd.querySelectorAll('input:checked')]
+      .map(i => i.closest('label').textContent.trim());
+    dd.querySelector('summary').textContent =
+      names.length ? names.join(', ') : (dd.dataset.placeholder || '(선택 안 함)');
+  };
+  dd.addEventListener('change', e => {
+    const t = e.target;
+    if (t.checked && 'exclusive' in t.dataset)
+      dd.querySelectorAll('input:checked').forEach(i => { if (i !== t) i.checked = false; });
+    else if (t.checked)
+      dd.querySelectorAll('input[data-exclusive]:checked').forEach(i => i.checked = false);
+    refresh();
+  });
+  refresh();
+});
+document.addEventListener('click', e => {
+  document.querySelectorAll('details.dd[open]').forEach(dd => {
+    if (!dd.contains(e.target)) dd.removeAttribute('open');
+  });
+});
+</script>
 </body>
 </html>

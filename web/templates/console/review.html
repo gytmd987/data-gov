@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load klabels %}
 {% block title %}문서 검토{% endblock %}
 {% block content %}
 <div style="max-width:1100px;margin:0 auto;padding:0 16px">
@@ -51,32 +52,58 @@
   <div style="display:flex;gap:24px;margin-top:14px">
     <div style="flex:1">
       <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>
-      <p>문서 유형 <select name="doc_type">{% for o in opts.doc_type %}
-        <option {% if o == view.classification.doc_type %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>언어 <select name="language">{% for o in opts.language %}
-        <option {% if o == view.classification.language %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>제목 <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></p>
-      <p>요약 <textarea name="summary" rows="2">{{ view.classification.summary|default_if_none:'' }}</textarea></p>
-      <p>담당 부서 <input name="department" value="{{ view.classification.department|default_if_none:'' }}"></p>
-      <p>주제 태그(쉼표) <input name="topics" value="{{ view.classification.topics|join:', ' }}"></p>
+      <div class="field"><label>문서 유형</label>
+        <select name="doc_type">{% for o in opts.doc_type %}
+          <option value="{{ o }}" {% if o == view.classification.doc_type %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>언어</label>
+        <select name="language">{% for o in opts.language %}
+          <option value="{{ o }}" {% if o == view.classification.language %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>제목</label>
+        <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></div>
+      <div class="field"><label>요약</label>
+        <textarea name="summary" rows="2">{{ view.classification.summary|default_if_none:'' }}</textarea></div>
+      <div class="field"><label>담당 부서</label>
+        <select name="department"><option value="">(미설정)</option>
+          {% if view.classification.department and view.classification.department not in departments %}
+          <option selected>{{ view.classification.department }}</option>{% endif %}
+          {% for d in departments %}<option {% if d == view.classification.department %}selected{% endif %}>{{ d }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label>주제 태그 (자유 입력, 쉼표로 구분)</label>
+        <input name="topics" value="{{ view.classification.topics|join:', ' }}"></div>
     </div>
     <div style="flex:1">
       <h4>② 접근·보안 <span style="color:#c0392b">(필수)</span></h4>
-      <p>민감도 등급 * <select name="sensitivity"><option value="">(미설정)</option>
-        {% for o in opts.sensitivity_level %}<option {% if o == view.governance.sensitivity_level %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>개인정보 포함? *
-        <label><input type="radio" name="pii" value="yes" {% if view.governance.contains_pii %}checked{% endif %}> 예</label>
-        <label><input type="radio" name="pii" value="no" {% if view.governance.contains_pii == False %}checked{% endif %}> 아니오</label></p>
-      <p>개인정보 유형 <select name="pii_types" multiple size="4">
-        {% for o in opts.pii_types %}<option {% if o in view.governance.pii_types %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>열람 가능 그룹 * <select name="groups" multiple size="4">
-        {% for g in view.known_groups %}<option {% if g in view.governance.access_groups %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></p>
-      <p>문서 책임자 * <input name="owner" value="{{ view.governance.owner|default_if_none:'' }}"></p>
+      <div class="field"><label>민감도 등급 *</label>
+        <select name="sensitivity"><option value="">(미설정)</option>
+          {% for o in opts.sensitivity_level %}<option value="{{ o }}" {% if o == view.governance.sensitivity_level %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>개인정보 포함? *</label>
+        <select name="pii"><option value="">(미설정)</option>
+          <option value="yes" {% if view.governance.contains_pii %}selected{% endif %}>예</option>
+          <option value="no" {% if view.governance.contains_pii == False %}selected{% endif %}>아니오</option></select></div>
+      <div class="field"><label>개인정보 유형</label>
+        <details class="dd" data-placeholder="(해당 없음)"><summary></summary><div class="menu">
+          {% for o in opts.pii_types %}
+          <label><input type="checkbox" name="pii_types" value="{{ o }}" {% if o in view.governance.pii_types %}checked{% endif %}> {{ o|klabel }}</label>
+          {% endfor %}
+        </div></details></div>
+      <div class="field"><label>열람 가능 그룹 *</label>
+        <details class="dd" data-placeholder="(선택하세요)"><summary></summary><div class="menu">
+          <label><input type="checkbox" name="groups" value="*" data-exclusive {% if '*' in view.governance.access_groups %}checked{% endif %}> 🌐 전체 공개(제한 없음)</label>
+          {% for g in view.known_groups %}
+          <label><input type="checkbox" name="groups" value="{{ g }}" {% if g in view.governance.access_groups %}checked{% endif %}> {{ g|klabel }}</label>
+          {% endfor %}
+        </div></details>
+        <span class="msg-note">전체 공개여도 민감도 등급·상태·만료 검사는 그대로 적용됩니다.</span></div>
+      <div class="field"><label>문서 책임자 *</label>
+        <input name="owner" value="{{ view.governance.owner|default_if_none:'' }}"></div>
       <h4 style="margin-top:10px">③ 생애주기</h4>
-      <p>상태 <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
-        <option {% if o == view.lifecycle.lifecycle_status %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>시행일 <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></p>
-      <p>만료일 <input name="expiry_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></p>
+      <div class="field"><label>상태</label>
+        <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+          <option value="{{ o }}" {% if o == view.lifecycle.lifecycle_status %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>시행일</label>
+        <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></div>
+      <div class="field"><label>만료일</label>
+        <input name="expiry_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></div>
     </div>
   </div>
   <button class="btn" style="margin-top:12px">✅ 확인 완료 → 검증 후 색인</button>

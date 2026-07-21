@@ -53,11 +53,26 @@ def test_allows_denies_non_active_expired_superseded():
     assert not pol.allows(_chunk("d::0", superseded="newdoc").payload)
 
 
+def test_allows_wildcard_open_to_all_groups():
+    # "*" = 전체 공개 — 그룹이 전혀 안 겹치는 사용자도 통과
+    pol = AccessPolicy.for_user(_user(groups=("payroll",)), today=date(2026, 7, 16))
+    assert pol.allows(_chunk("d::0", groups=("*",)).payload)
+
+
+def test_allows_wildcard_still_checks_clearance():
+    # 전체 공개여도 민감도 등급은 그대로 적용
+    pol = AccessPolicy.for_user(_user(clearance=SensitivityLevel.INTERNAL),
+                                today=date(2026, 7, 16))
+    assert not pol.allows(_chunk("d::0", groups=("*",), rank=3).payload)
+
+
 def test_to_qdrant_filter_builds():
     pol = AccessPolicy.for_user(_user())
     f = pol.to_qdrant_filter()
     # must 조건 3개(groups/sensitivity/status)
     assert len(f.must) == 3
+    # 그룹 필터에 전체 공개 센티널 "*" 포함(전체 공개 문서도 후보에 들어오도록)
+    assert "*" in f.must[0].match.any
 
 
 # ── RRF 융합 ─────────────────────────────────────────────────────────────────

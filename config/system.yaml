@@ -42,16 +42,63 @@ metadata:
     - account         # 계좌/금융
     - other
 
-  # ── 주제 태그(controlled) ── 비워두면([]) 자유 태그 허용(검증 안 함).
-  topics:
-    - 연차
-    - 급여
-    - 평가
-    - 채용
-    - 근태
-    - 교육
-    - 복리후생
-    - 규정
+  # ── 주제 태그 ── 비워두면([]) 자유 태그 허용(검증 안 함).
+  #    값을 채우면 controlled tag 검증이 다시 활성화됩니다(목록 밖 태그는 적재 차단).
+  topics: []
+
+  # ── 담당 부서 (검토 UI 드롭다운) ── 자유롭게 편집하세요.
+  departments:
+    - 인사팀
+    - 경영지원팀
+    - 재무팀
+    - 총무팀
+    - 법무팀
+    - 기타
+
+# ── 화면 표시용 한글 라벨 ── 값(영문)→한글. 폼 전송 값은 영문 그대로 유지되고
+#    UI에 보이는 글자만 여기서 바뀝니다. 목록에 없는 값은 원값 그대로 표시.
+labels:
+  # 문서 유형
+  policy: 정책·규정
+  contract: 계약
+  payroll: 급여
+  evaluation: 평가
+  recruiting: 채용
+  training: 교육
+  attendance: 근태
+  org_chart: 조직도·인원현황
+  meeting_note: 회의록
+  report: 보고서·통계
+  form_template: 양식·서식
+  other: 기타
+  unknown: 미분류(확인 필요)
+  # 민감도 등급
+  public: 전사 공개
+  internal: 사내 일반
+  confidential: 대외비
+  restricted: 극비(급여·평가·개인정보)
+  # 개인정보 유형
+  name: 이름
+  resident_id: 주민등록번호
+  contact: 연락처·이메일·주소
+  salary: 급여·보상
+  health: 건강·의료
+  family: 가족관계
+  account: 계좌·금융
+  # 언어
+  ko: 한국어
+  en: 영어
+  mixed: 혼합
+  # 생애주기 상태
+  draft: 초안(색인 불가)
+  active: 사용 중
+  superseded: 대체됨
+  expired: 만료
+  archived: 보관
+  # 접근 그룹
+  "*": 전체 공개(제한 없음)
+  hr_core: 인사팀 공통
+  # (payroll·recruiting·evaluation 은 위 문서유형 라벨과 동일 값을 공유)
 
 governance:
   # ── 색인 전 사람이 반드시 확정해야 하는 필드 ── 미충족 시 적재 차단(BLOCKED).

@@ -6,7 +6,7 @@
 필수 거버넌스 필드:
   - sensitivity_level (enum, 값 존재)
   - contains_pii (bool 명시), contains_pii=True 이면 pii_types 최소 1개
-  - access_groups (최소 1개, 알려진 그룹이어야 함)
+  - access_groups (최소 1개, 알려진 그룹이어야 함; "*" 는 전체 공개 센티널로 항상 허용)
   - owner (값 존재)
   - lifecycle.status (draft 가 아니어야 색인 가능)
 
@@ -69,9 +69,9 @@ def validate_governance(
     if gov.contains_pii is True and not gov.pii_types:
         errors.append("contains_pii=True 인데 pii_types 가 비어 있음")
 
-    # 3) access_groups 실재 여부
+    # 3) access_groups 실재 여부 ("*" 는 전체 공개 센티널 — 항상 유효)
     if known_access_groups is not None and gov.access_groups:
-        known = set(known_access_groups)
+        known = set(known_access_groups) | {"*"}
         unknown = [g for g in gov.access_groups if g not in known]
         if unknown:
             errors.append(f"알 수 없는 access_groups: {unknown}")

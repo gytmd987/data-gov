@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load klabels %}
 {% block title %}문서 관리{% endblock %}
 {% block content %}
 <div style="max-width:1100px;margin:0 auto;padding:0 16px">
@@ -13,8 +14,8 @@
   {% for d in docs %}
   <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
     <td>{{ d.filename }}{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
-    <td>{{ d.doc_type }}</td><td>{{ d.sensitivity_level }}</td>
-    <td>{{ d.lifecycle_status }}</td><td>{{ d.access_groups|join:", " }}</td>
+    <td>{{ d.doc_type|klabel }}</td><td>{{ d.sensitivity_level|klabel }}</td>
+    <td>{{ d.lifecycle_status|klabel }}</td><td>{{ d.access_groups|klabel_join }}</td>
     <td>{{ d.owner }}</td>
     <td><a href="?doc={{ d.doc_id }}{% if q %}&q={{ q }}{% endif %}">관리</a></td>
   </tr>
@@ -28,12 +29,21 @@
     <form method="post" action="/console/docs/{{ sel }}/action" style="flex:1">
       {% csrf_token %}<input type="hidden" name="action" value="save">
       <h4>메타데이터 수정</h4>
-      <p>민감도 <select name="sensitivity">{% for o in opts.sensitivity_level %}
-        <option {% if doc.governance.sensitivity_level.value == o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
-      <p>열람 그룹(쉼표) <input name="groups" value="{{ doc.governance.access_groups|join:', ' }}"></p>
-      <p>책임자 <input name="owner" value="{{ doc.governance.owner|default_if_none:'' }}"></p>
-      <p>상태 <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
-        <option {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></p>
+      <div class="field"><label>민감도</label>
+        <select name="sensitivity">{% for o in opts.sensitivity_level %}
+          <option value="{{ o }}" {% if doc.governance.sensitivity_level.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>열람 가능 그룹</label>
+        <details class="dd" data-placeholder="(선택하세요)"><summary></summary><div class="menu">
+          <label><input type="checkbox" name="groups" value="*" data-exclusive {% if '*' in doc.governance.access_groups %}checked{% endif %}> 🌐 전체 공개(제한 없음)</label>
+          {% for g in known_groups %}
+          <label><input type="checkbox" name="groups" value="{{ g }}" {% if g in doc.governance.access_groups %}checked{% endif %}> {{ g|klabel }}</label>
+          {% endfor %}
+        </div></details></div>
+      <div class="field"><label>책임자</label>
+        <input name="owner" value="{{ doc.governance.owner|default_if_none:'' }}"></div>
+      <div class="field"><label>상태</label>
+        <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+          <option value="{{ o }}" {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
       <button class="btn">💾 저장</button>
     </form>
     <div style="flex:1">

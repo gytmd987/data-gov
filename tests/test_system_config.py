@@ -24,6 +24,18 @@ def test_sensitivity_rank_by_order():
     assert system_config.sensitivity_rank("nonexistent") == -1
 
 
+def test_labels_and_departments():
+    assert system_config.label("policy") == "정책·규정"
+    assert system_config.label("*") == "전체 공개(제한 없음)"
+    assert system_config.label("없는값") == "없는값"      # 매핑 없으면 원값
+    assert system_config.departments()                    # 부서 목록 존재
+
+
+def test_topics_empty_means_free_tags():
+    # topics 를 비워두면 자유 태그 허용(validator 가 검증 생략)
+    assert system_config.topics() == []
+
+
 def test_required_fields():
     req = system_config.required_governance_fields()
     assert "owner" in req and "access_groups" in req

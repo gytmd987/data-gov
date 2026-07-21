@@ -116,6 +116,12 @@ def test_unknown_access_group_errors():
     assert any("access_groups" in e for e in result.errors)
 
 
+def test_wildcard_access_group_is_always_valid():
+    # "*" = 전체 공개 센티널 — known 목록에 없어도 유효
+    result = validate_governance(_base_doc(access_groups=["*"]), known_access_groups=["hr_core"])
+    assert result.ok
+
+
 def test_draft_status_cannot_index():
     doc = _base_doc()
     doc.lifecycle.status = DocStatus.DRAFT
