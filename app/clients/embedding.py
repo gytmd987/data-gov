@@ -20,8 +20,14 @@ class TEIEmbedder:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        clean = [t or " " for t in clean_texts(texts)]
+        batch = settings.tei_max_batch  # TEI 최대 배치(기본 32) 초과 시 나눠서 요청
+        out: list[list[float]] = []
         with httpx.Client(timeout=self._timeout) as client:
-            resp = client.post(f"{self.base_url}/embed",
-                               json={"inputs": clean_texts(texts)})
-            resp.raise_for_status()
-            return resp.json()
+            for start in range(0, len(clean), batch):
+                resp = client.post(f"{self.base_url}/embed",
+                                   json={"inputs": clean[start:start + batch]})
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"TEI embed {resp.status_code}: {resp.text[:400]}")
+                out.extend(resp.json())
+        return out

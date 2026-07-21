@@ -26,6 +26,9 @@ from app.schemas.metadata import GovernanceBlock
 
 st.set_page_config(page_title="인사 RAG 적재 검토", layout="wide")
 
+from app.review.auth import require_admin
+require_admin()   # 문서 검토·색인은 관리자 전용
+
 
 def _service():
     if "service" not in st.session_state:

@@ -23,7 +23,8 @@ postgres = [
     "psycopg[binary]>=3.1",  # 운영 DB 드라이버(테스트는 SQLite라 불필요)
 ]
 ui = [
-    "streamlit>=1.36",       # 적재 검토 UI
+    "streamlit>=1.42",       # 관리 UI + 내장 OIDC 로그인(st.login)
+    "Authlib>=1.3",          # Streamlit OIDC 로그인 백엔드
 ]
 dev = [
     "pytest>=8.0",

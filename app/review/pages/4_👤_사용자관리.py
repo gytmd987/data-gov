@@ -9,6 +9,10 @@ from app.db.repositories import UserRepository
 from app.review.factory import new_session
 
 st.set_page_config(page_title="사용자 관리", layout="wide")
+
+from app.review.auth import require_admin
+require_admin()   # 관리자 전용
+
 st.header("👤 사용자 관리")
 st.caption("직책·직무를 고르면 config/system.yaml 규칙에 따라 **열람 그룹과 등급이 자동 부여**됩니다.")
 

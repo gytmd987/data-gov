@@ -72,6 +72,11 @@ def access_groups() -> list[str]:
     return list(_load()["permissions"]["access_groups"])
 
 
+def admin_emails() -> list[str]:
+    """관리자(문서관리·사용자관리 접근 허용) 이메일 목록."""
+    return list(_load()["permissions"].get("admins") or [])
+
+
 def positions() -> list[str]:
     return list(_load()["permissions"]["positions"])
 

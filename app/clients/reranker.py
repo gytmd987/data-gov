@@ -23,15 +23,17 @@ class TEIReranker:
         # 빈 문자열은 TEI가 거부(422) → 공백으로 대체. 긴 입력은 truncate.
         clean_query = strip_surrogates(query) or " "
         clean = [t or " " for t in clean_texts(texts)]
+        batch = settings.tei_max_batch  # TEI 최대 배치(기본 32) 초과 시 나눠서 요청
+        scores = [0.0] * len(clean)
         with httpx.Client(timeout=self._timeout) as client:
-            resp = client.post(
-                f"{self.base_url}/rerank",
-                json={"query": clean_query, "texts": clean, "truncate": True},
-            )
-            if resp.status_code >= 400:
-                raise RuntimeError(f"TEI rerank {resp.status_code}: {resp.text[:400]}")
-            results = resp.json()  # [{"index": i, "score": s}, ...]
-        scores = [0.0] * len(texts)
-        for item in results:
-            scores[item["index"]] = float(item["score"])
+            for start in range(0, len(clean), batch):
+                chunk = clean[start:start + batch]
+                resp = client.post(
+                    f"{self.base_url}/rerank",
+                    json={"query": clean_query, "texts": chunk, "truncate": True},
+                )
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"TEI rerank {resp.status_code}: {resp.text[:400]}")
+                for item in resp.json():   # [{"index": i, "score": s}, ...] (배치 내 상대 index)
+                    scores[start + item["index"]] = float(item["score"])
         return scores

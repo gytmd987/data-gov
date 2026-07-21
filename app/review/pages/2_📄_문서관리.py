@@ -10,6 +10,10 @@ from app.schemas.enums import DocStatus, SensitivityLevel
 from app.schemas.metadata import GovernanceBlock
 
 st.set_page_config(page_title="문서 관리", layout="wide")
+
+from app.review.auth import require_admin
+require_admin()   # 관리자 전용
+
 st.header("📄 문서 관리")
 st.caption("이미 등록된 문서를 관리합니다. 메타데이터 수정, **다른 문서의 새 버전으로 연결**, 보관/삭제.")
 

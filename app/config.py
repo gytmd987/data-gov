@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024                     # KURE-v1(BGE-M3 계열) dense 차원. 모델 바꾸면 조정
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 대안: dragonkue/bge-reranker-v2-m3-ko
     reranker_port: int = 8082
+    tei_max_batch: int = 32   # TEI 기본 최대 클라이언트 배치. 초과하면 나눠서 요청
 
     # 파싱 / OCR
     # 스캔·이미지 OCR 백엔드: "vllm"(기본, 이미 뜬 Qwen3.6-27B 멀티모달 재사용, 추가 배포 0)

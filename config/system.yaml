@@ -62,6 +62,11 @@ governance:
     - owner
 
 permissions:
+  # ── 관리자 이메일 ── SSO 로그인 이메일 기준. 이 목록의 사람만 문서관리·사용자관리 접근.
+  #   비어 있으면 인증 미설정(개발) 시 전체 허용. 운영에서는 반드시 채우세요.
+  admins:
+    - admin@company.com
+
   # ── 접근 그룹 ── 문서에 붙는 라벨이자 사용자에게 부여되는 권한 단위.
   access_groups:
     - hr_core         # 인사팀 공통
