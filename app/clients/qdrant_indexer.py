@@ -56,3 +56,31 @@ class QdrantIndexer:
             for vec, pl, cid in zip(vectors, payloads, ids)
         ]
         self.client.upsert(collection_name=self.collection, points=points)
+
+    def _doc_filter(self, parent_doc_id: str):
+        from qdrant_client import models as qm
+        return qm.Filter(must=[qm.FieldCondition(
+            key="parent_doc_id", match=qm.MatchValue(value=parent_doc_id))])
+
+    def set_doc_payload(self, parent_doc_id: str, fields: dict[str, Any]) -> None:
+        """한 문서의 모든 청크 payload를 부분 갱신(상태·대체·접근통제 변경 반영).
+
+        문서 관리에서 메타데이터/상태가 바뀌면 이걸로 Qdrant를 동기화해야 검색 하드필터가 맞는다.
+        """
+        if not self.client.collection_exists(self.collection):
+            return
+        self.client.set_payload(
+            collection_name=self.collection,
+            payload=fields,
+            points=self._doc_filter(parent_doc_id),
+        )
+
+    def delete_doc(self, parent_doc_id: str) -> None:
+        """한 문서의 모든 청크 포인트를 Qdrant에서 삭제(하드 삭제)."""
+        from qdrant_client import models as qm
+        if not self.client.collection_exists(self.collection):
+            return
+        self.client.delete(
+            collection_name=self.collection,
+            points_selector=qm.FilterSelector(filter=self._doc_filter(parent_doc_id)),
+        )

@@ -109,26 +109,33 @@ class ChunkMetadata(BaseModel):
     page_no: Optional[int] = None
 
     def to_qdrant_payload(self, doc: DocumentMetadata) -> dict:
-        """청크 payload에 부모 문서의 접근통제·생애주기 필드를 상속시켜,
-        Qdrant 검색 시 하드 필터링(권한/민감도/만료/대체)에 바로 사용한다."""
-        gov = doc.governance
-        life = doc.lifecycle
+        """청크 payload = 청크 고유 필드 + 부모 문서에서 상속한 doc-level 필드."""
         return {
             "chunk_id": self.chunk_id,
             "parent_doc_id": self.parent_doc_id,
             "chunk_type": self.chunk_type.value,
             "section_title": self.section_title,
             "page_no": self.page_no,
-            # 접근통제 (하드 필터)
-            "access_groups": gov.access_groups,
-            "sensitivity_rank": (system_config.sensitivity_rank(gov.sensitivity_level)
-                                 if gov.sensitivity_level else None),
-            # 생애주기 (기본 검색 제외 조건)
-            "status": life.status.value,
-            "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,
-            "superseded_by": life.superseded_by,
-            # 인용·평가용
-            "doc_type": doc.classification.doc_type.value,
-            "title": doc.classification.title_normalized,
-            "source_filename": doc.identification.source_filename,
+            **doc_level_payload(doc),
         }
+
+
+def doc_level_payload(doc: DocumentMetadata) -> dict:
+    """문서 단위 payload 필드(접근통제·생애주기·인용용). 모든 청크가 공유하며,
+    문서 관리에서 메타데이터/상태가 바뀌면 이 필드만 Qdrant에 set_payload 로 갱신한다."""
+    gov = doc.governance
+    life = doc.lifecycle
+    return {
+        # 접근통제 (하드 필터)
+        "access_groups": gov.access_groups,
+        "sensitivity_rank": (system_config.sensitivity_rank(gov.sensitivity_level)
+                             if gov.sensitivity_level else None),
+        # 생애주기 (기본 검색 제외 조건)
+        "status": life.status.value,
+        "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,
+        "superseded_by": life.superseded_by,
+        # 인용·평가용
+        "doc_type": doc.classification.doc_type.value,
+        "title": doc.classification.title_normalized,
+        "source_filename": doc.identification.source_filename,
+    }

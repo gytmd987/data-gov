@@ -75,6 +75,36 @@ class DocumentRepository:
             select(Document.doc_id).where(Document.status == status.value)
         ).scalars())
 
+    def get_status(self, doc_id: str) -> Optional[str]:
+        return self.session.execute(
+            select(Document.status).where(Document.doc_id == doc_id)
+        ).scalar_one_or_none()
+
+    def list_documents(self, text: Optional[str] = None) -> list[dict[str, Any]]:
+        """문서 목록(관리용 요약). text가 주어지면 파일명/제목 부분일치 필터."""
+        stmt = select(Document).order_by(Document.updated_at.desc())
+        if text:
+            like = f"%{text}%"
+            stmt = stmt.where(
+                (Document.source_filename.ilike(like)) | (Document.title.ilike(like)))
+        out = []
+        for r in self.session.execute(stmt).scalars():
+            out.append({
+                "doc_id": r.doc_id, "filename": r.source_filename,
+                "doc_type": r.doc_type, "title": r.title,
+                "status": r.status, "lifecycle_status": r.lifecycle_status,
+                "sensitivity_level": r.sensitivity_level,
+                "access_groups": r.access_groups, "owner": r.owner,
+                "superseded_by": r.superseded_by,
+            })
+        return out
+
+    def delete(self, doc_id: str) -> None:
+        row = self.session.get(Document, doc_id)
+        if row is not None:
+            self.session.delete(row)   # chunks는 cascade 삭제
+            self.session.flush()
+
 
 class UserRepository:
     def __init__(self, session: Session) -> None:
