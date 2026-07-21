@@ -39,8 +39,12 @@ def _session_factory():
     return _SessionFactory
 
 
+def new_session() -> Session:
+    return _session_factory()()
+
+
 def build_service(session: Session | None = None) -> ReviewService:
-    session = session or _session_factory()()
+    session = session or new_session()
     return ReviewService(
         session=session,
         llm=VLLMClient(),
@@ -48,4 +52,26 @@ def build_service(session: Session | None = None) -> ReviewService:
         embedder=TEIEmbedder(),
         indexer=QdrantIndexer(vector_size=settings.embedding_dim),
         ocr=build_ocr(),   # 기본: Qwen3.6-27B 멀티모달 OCR (설정 ocr_backend)
+    )
+
+
+def build_document_manager(session: Session | None = None):
+    from app.manage.service import DocumentManager
+    session = session or new_session()
+    return DocumentManager(
+        session, indexer=QdrantIndexer(vector_size=settings.embedding_dim))
+
+
+def build_search_pipeline(session: Session | None = None):
+    from app.clients.qdrant_search import QdrantDenseSearch
+    from app.clients.reranker import TEIReranker
+    from app.db.repositories import AuditRepository
+    from app.search.pipeline import SearchPipeline
+    from app.search.retriever import HybridRetriever
+    session = session or new_session()
+    return SearchPipeline(
+        retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder())),
+        reranker=TEIReranker(),
+        llm=VLLMClient(),
+        audit=AuditRepository(session),
     )

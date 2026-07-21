@@ -92,6 +92,18 @@ if view.auto_filled:
         for a in view.auto_filled:
             st.write(f"- **{a['field']}**: {_conf_badge(a['confidence'])}")
 
+# 유사(개정판 가능) 문서 경고 + 새 버전 처리 옵션
+supersede_old = None
+if view.similar_candidates:
+    st.warning("⚠️ 이 문서와 유사한 기존 문서가 있습니다(개정판일 수 있습니다).")
+    opts = {f"{c['filename']} (유사도 {c['score']})": c["doc_id"]
+            for c in view.similar_candidates}
+    pick = st.selectbox(
+        "이 문서를 아래 문서의 **새 버전**으로 처리할까요? (선택하면 옛 문서는 검색에서 제외)",
+        ["아니오 — 별개 문서로 등록"] + list(opts.keys()))
+    if pick in opts:
+        supersede_old = opts[pick]
+
 col1, col2 = st.columns(2)
 
 # ── 내용 분류(LLM 추론 → 사람 확인) ─────────────────────────────────────────
@@ -162,6 +174,10 @@ if st.button("✅ 확인 완료 → 검증 후 색인", type="primary"):
                                lifecycle_overrides=life_over, do_index=True)
     if result.ok:
         st.success("✅ 검증 통과 → 색인 완료(INDEXED). 검색에 노출됩니다.")
+        if supersede_old:
+            from app.review.factory import build_document_manager
+            build_document_manager(svc.session).supersede(supersede_old, doc_id)
+            st.info("🔗 선택한 옛 버전을 검색에서 제외했습니다.")
     else:
         st.error("⛔ 거버넌스 미충족 → 적재 차단(BLOCKED)")
         if result.missing_fields:

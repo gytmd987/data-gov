@@ -22,7 +22,7 @@ from app.clients.embedding import TEIEmbedder
 from app.clients.llm import VLLMClient
 from app.clients.qdrant_search import QdrantDenseSearch
 from app.clients.reranker import TEIReranker
-from app.db.repositories import AuditRepository, UserRepository
+from app.db.repositories import AuditRepository, FeedbackRepository, UserRepository
 from app.db.session import create_all, make_engine, make_session_factory
 from app.search.pipeline import SearchPipeline
 from app.search.retriever import HybridRetriever
@@ -37,7 +37,7 @@ def build_pipeline(session) -> SearchPipeline:
     )
 
 
-def ask_once(pipe: SearchPipeline, session, user, query: str) -> None:
+def ask_once(pipe: SearchPipeline, session, user, query: str):
     ans = pipe.answer(query, user, today=date.today())
     session.commit()
     files = sorted({c.source_filename for c in ans.used_chunks if c.source_filename})
@@ -47,6 +47,17 @@ def ask_once(pipe: SearchPipeline, session, user, query: str) -> None:
         cites = "; ".join(f"[{c.marker}] {c.title or c.doc_id} p.{c.page_no}"
                           for c in ans.citations)
         print(f"출처: {cites}")
+    return ans
+
+
+def _record_feedback(session, user, query, ans, rating, note=None):
+    FeedbackRepository(session).record(
+        query_text=query, rating=rating, user_id=user.user_id,
+        answer_text=ans.text if ans else None, note=note,
+        cited_doc_ids=[c.doc_id for c in ans.citations] if ans else [])
+    session.commit()
+    print("  피드백 기록됨. 감사합니다." if rating == "up"
+          else "  오답 피드백 기록됨(관리자 검토 대상).")
 
 
 def main() -> int:
@@ -73,15 +84,25 @@ def main() -> int:
         ask_once(pipe, session, user, " ".join(args.query))
         return 0
 
-    print("대화형 모드 — 질문 입력(빈 줄 또는 'exit' 로 종료)")
+    print("대화형 모드 — 질문 입력(빈 줄/exit 로 종료).")
+    print("답변 후 피드백:  !good  또는  !bad <무엇이 틀렸는지/정답>")
+    last_q, last_ans = None, None
     while True:
         try:
-            q = input("\nQ> ").strip()
+            line = input("\nQ> ").strip()
         except (EOFError, KeyboardInterrupt):
             break
-        if not q or q.lower() in {"exit", "quit"}:
+        if not line or line.lower() in {"exit", "quit"}:
             break
-        ask_once(pipe, session, user, q)
+        if line.startswith("!good"):
+            _record_feedback(session, user, last_q, last_ans, "up")
+            continue
+        if line.startswith("!bad"):
+            _record_feedback(session, user, last_q, last_ans, "down",
+                             note=line[4:].strip() or None)
+            continue
+        last_q = line
+        last_ans = ask_once(pipe, session, user, line)
     return 0
 
 

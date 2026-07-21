@@ -176,6 +176,17 @@ class UserRepository:
     def known_access_groups(self) -> list[str]:
         return list(self.session.execute(select(Group.group_name)).scalars())
 
+    def list_users(self) -> list[dict[str, Any]]:
+        out = []
+        for u in self.session.execute(select(User).order_by(User.user_id)).scalars():
+            groups = list(self.session.execute(
+                select(UserGroup.group_name).where(UserGroup.user_id == u.user_id)
+            ).scalars())
+            out.append({"user_id": u.user_id, "display_name": u.display_name,
+                        "position": u.position, "job": u.job,
+                        "clearance": u.clearance, "groups": groups})
+        return out
+
     def get_user_context(self, user_id: str) -> Optional[UserContext]:
         user = self.session.get(User, user_id)
         if user is None:
