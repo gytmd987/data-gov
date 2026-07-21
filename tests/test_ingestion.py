@@ -6,6 +6,7 @@ import docx
 import openpyxl
 import pytest
 
+from app import system_config
 from app.ingestion.chunking import chunk_elements
 from app.ingestion.enrichment import enrich
 from app.ingestion.intake import DuplicateError, detect_format, intake
@@ -180,7 +181,7 @@ def test_full_pipeline_happy_path(tmp_path: Path):
     # payload가 접근통제 필드를 상속했는지
     _, payloads, _ = indexer.upserted
     assert payloads[0]["access_groups"] == ["hr_core"]
-    assert payloads[0]["sensitivity_rank"] == SensitivityLevel.INTERNAL.rank
+    assert payloads[0]["sensitivity_rank"] == system_config.sensitivity_rank(SensitivityLevel.INTERNAL)
 
 
 def test_full_pipeline_blocks_on_missing_governance(tmp_path: Path):

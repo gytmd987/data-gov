@@ -105,6 +105,34 @@ class UserRepository:
             self.session.add(UserGroup(user_id=user_id, group_name=group_name))
             self.session.flush()
 
+    def upsert_user_with_role(
+        self, user_id: str, position: str, job: str, display_name: str | None = None,
+    ) -> tuple[set[str], str]:
+        """직책·직무로부터 config/system.yaml 규칙에 따라 그룹·clearance를 계산해 사용자 생성.
+
+        같은 직책이라도 직무에 따라, 같은 직무라도 직책에 따라 권한이 달라진다.
+        반환: (부여된 access_groups, clearance)
+        """
+        from app import system_config
+
+        groups, clearance = system_config.resolve_access(position, job)
+        # 그룹 레코드 보장
+        for g in groups:
+            self.upsert_group(g)
+        row = self.session.get(User, user_id)
+        if row is None:
+            self.session.add(User(user_id=user_id, clearance=clearance,
+                                  display_name=display_name, position=position, job=job))
+        else:
+            row.clearance = clearance
+            row.display_name = display_name
+            row.position = position
+            row.job = job
+        self.session.flush()
+        for g in groups:
+            self.add_user_to_group(user_id, g)
+        return groups, clearance
+
     def known_access_groups(self) -> list[str]:
         return list(self.session.execute(select(Group.group_name)).scalars())
 

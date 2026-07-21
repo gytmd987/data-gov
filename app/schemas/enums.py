@@ -1,16 +1,36 @@
-"""Controlled vocabularies (enums) for document metadata.
+"""문서 메타데이터용 vocabulary(enum).
 
-설계 원칙: LLM 자동 채움은 **이 고정 enum 안에서만** 값을 채울 수 있다(자유 텍스트 필드 금지).
-enum 밖 후보나 낮은 신뢰도는 값을 비워두고(UNKNOWN) 사람이 검토 단계에서 확정한다.
+편집 가능한 어휘(doc_type / sensitivity_level / pii_type)는 **config/system.yaml에서
+동적으로 생성**된다 → YAML만 편집하면 값이 추가/삭제되고 UI·검증에 자동 반영.
+구조적 enum(file_format / language / doc_status / chunk_type)은 코드에 고정.
 
-허용값(vocabulary)은 Phase 0에서 인사팀과 함께 최종 확정한다. 아래는 초안이다.
+설계 원칙: LLM 자동 채움은 이 vocabulary 안에서만 값을 채운다(자유 텍스트 금지).
 """
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 
+from app import system_config
 
+
+def _str_enum(name: str, values: list[str]) -> type[Enum]:
+    """문자열 값 리스트로 str-enum을 생성. 멤버명은 값의 대문자(비식별자 문자는 _)."""
+    members: dict[str, str] = {}
+    for v in values:
+        key = re.sub(r"\W", "_", str(v)).upper()
+        members.setdefault(key, v)
+    return Enum(name, members, type=str)
+
+
+# ── 설정 기반(편집 가능) ─────────────────────────────────────────────────────
+DocType = _str_enum("DocType", system_config.doc_types())
+SensitivityLevel = _str_enum("SensitivityLevel", system_config.sensitivity_levels())
+PiiType = _str_enum("PiiType", system_config.pii_types())
+
+
+# ── 구조적(코드 고정) ────────────────────────────────────────────────────────
 class FileFormat(str, Enum):
     DOCX = "docx"
     PPTX = "pptx"
@@ -28,62 +48,12 @@ class Language(str, Enum):
     UNKNOWN = "unknown"
 
 
-class DocType(str, Enum):
-    """인사 문서 유형(초안). Phase 0에서 확정."""
-
-    POLICY = "policy"                 # 인사 규정/정책
-    CONTRACT = "contract"             # 근로계약/각종 계약
-    PAYROLL = "payroll"               # 급여/보상 자료
-    EVALUATION = "evaluation"         # 인사평가/성과
-    RECRUITING = "recruiting"         # 채용/지원자
-    TRAINING = "training"             # 교육/연수
-    ATTENDANCE = "attendance"         # 근태/휴가
-    ORG_CHART = "org_chart"           # 조직도/인원 현황
-    MEETING_NOTE = "meeting_note"     # 회의록
-    REPORT = "report"                 # 보고서/통계
-    FORM_TEMPLATE = "form_template"   # 양식/서식
-    OTHER = "other"
-    UNKNOWN = "unknown"               # LLM이 확신 못 함 → 사람 확인 필요
-
-
-class SensitivityLevel(str, Enum):
-    """민감도 등급. 숫자가 클수록 민감. 접근통제 하드 필터의 clearance 비교에 사용."""
-
-    PUBLIC = "public"                 # 사내 전체 공개
-    INTERNAL = "internal"             # 인사팀 등 특정 그룹
-    CONFIDENTIAL = "confidential"     # 제한된 담당자
-    RESTRICTED = "restricted"         # 급여/평가/개인정보 등 최고 민감
-
-    @property
-    def rank(self) -> int:
-        return {
-            "public": 0,
-            "internal": 1,
-            "confidential": 2,
-            "restricted": 3,
-        }[self.value]
-
-
-class PiiType(str, Enum):
-    """개인정보 유형(초안)."""
-
-    NAME = "name"
-    RESIDENT_ID = "resident_id"       # 주민등록번호
-    CONTACT = "contact"               # 연락처/이메일/주소
-    SALARY = "salary"                 # 급여/보상
-    EVALUATION = "evaluation"         # 평가 결과
-    HEALTH = "health"                 # 건강/의료
-    FAMILY = "family"                 # 가족관계
-    ACCOUNT = "account"               # 계좌/금융
-    OTHER = "other"
-
-
 class DocStatus(str, Enum):
     """문서 생애주기 상태. 기본 검색은 active 만 노출."""
 
     DRAFT = "draft"
     ACTIVE = "active"
-    SUPERSEDED = "superseded"         # 다른 문서로 대체됨
+    SUPERSEDED = "superseded"     # 다른 문서로 대체됨
     EXPIRED = "expired"
     ARCHIVED = "archived"
 

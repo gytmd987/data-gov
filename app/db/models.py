@@ -104,6 +104,8 @@ class User(Base):
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     clearance: Mapped[str] = mapped_column(String(16))   # SensitivityLevel value
+    position: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 직책
+    job: Mapped[str | None] = mapped_column(String(64), nullable=True)        # 직무
 
 
 class UserGroup(Base):

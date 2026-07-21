@@ -19,6 +19,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app import system_config
+
 from .enums import (
     ChunkType,
     DocStatus,
@@ -119,7 +121,8 @@ class ChunkMetadata(BaseModel):
             "page_no": self.page_no,
             # 접근통제 (하드 필터)
             "access_groups": gov.access_groups,
-            "sensitivity_rank": gov.sensitivity_level.rank if gov.sensitivity_level else None,
+            "sensitivity_rank": (system_config.sensitivity_rank(gov.sensitivity_level)
+                                 if gov.sensitivity_level else None),
             # 생애주기 (기본 검색 제외 조건)
             "status": life.status.value,
             "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Optional
 
+from app import system_config
 from app.schemas.enums import SensitivityLevel
 
 
@@ -44,7 +45,7 @@ class AccessPolicy:
             return False
         # 2. 민감도
         rank = payload.get("sensitivity_rank")
-        if rank is None or rank > self.user.clearance.rank:
+        if rank is None or rank > system_config.sensitivity_rank(self.user.clearance):
             return False
         # 3. 상태
         if payload.get("status") != "active":
@@ -80,7 +81,7 @@ class AccessPolicy:
                 ),
                 qm.FieldCondition(
                     key="sensitivity_rank",
-                    range=qm.Range(lte=self.user.clearance.rank),
+                    range=qm.Range(lte=system_config.sensitivity_rank(self.user.clearance)),
                 ),
                 qm.FieldCondition(key="status", match=qm.MatchValue(value="active")),
             ],

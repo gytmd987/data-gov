@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
+from app import system_config
 from app.schemas.enums import (
     ChunkType,
     DocStatus,
@@ -135,6 +136,6 @@ def test_chunk_payload_inherits_access_control():
     )
     payload = chunk.to_qdrant_payload(doc)
     assert payload["access_groups"] == ["hr_core"]
-    assert payload["sensitivity_rank"] == SensitivityLevel.RESTRICTED.rank == 3
+    assert payload["sensitivity_rank"] == system_config.sensitivity_rank(SensitivityLevel.RESTRICTED) == 3
     assert payload["status"] == "active"
     assert payload["chunk_type"] == "table"

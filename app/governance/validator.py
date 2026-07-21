@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from app import system_config
 from app.schemas.enums import DocStatus
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
@@ -46,28 +47,36 @@ def validate_governance(
     gov = doc.governance
     life = doc.lifecycle
 
-    # 1) 필수 거버넌스 필드 존재 여부
-    if gov.sensitivity_level is None:
+    # 필수 필드 목록은 config/system.yaml(governance.required_fields)에서 온다.
+    required = set(system_config.required_governance_fields())
+    # 사전이 안 주어지면 config의 값을 기본값으로 사용.
+    if known_access_groups is None:
+        known_access_groups = system_config.access_groups()
+    if allowed_topics is None:
+        allowed_topics = system_config.topics() or None  # 비어 있으면 검증 생략
+
+    # 1) 필수 거버넌스 필드 존재 여부 (config에 나열된 것만)
+    if "sensitivity_level" in required and gov.sensitivity_level is None:
         missing.append("governance.sensitivity_level")
-    if gov.contains_pii is None:
+    if "contains_pii" in required and gov.contains_pii is None:
         missing.append("governance.contains_pii")
-    if not gov.access_groups:
+    if "access_groups" in required and not gov.access_groups:
         missing.append("governance.access_groups")
-    if not gov.owner:
+    if "owner" in required and not gov.owner:
         missing.append("governance.owner")
 
     # 2) PII 일관성: PII 포함이면 유형 최소 1개
     if gov.contains_pii is True and not gov.pii_types:
         errors.append("contains_pii=True 인데 pii_types 가 비어 있음")
 
-    # 3) access_groups 실재 여부 (사전이 주어진 경우)
+    # 3) access_groups 실재 여부
     if known_access_groups is not None and gov.access_groups:
         known = set(known_access_groups)
         unknown = [g for g in gov.access_groups if g not in known]
         if unknown:
             errors.append(f"알 수 없는 access_groups: {unknown}")
 
-    # 4) topics controlled tag 검증 (사전이 주어진 경우)
+    # 4) topics controlled tag 검증
     if allowed_topics is not None and doc.classification.topics:
         allowed = set(allowed_topics)
         invalid = [t for t in doc.classification.topics if t not in allowed]
