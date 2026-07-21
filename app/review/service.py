@@ -109,7 +109,7 @@ class ReviewService:
             from app.config import settings
             dest_dir = Path(settings.storage_dir)
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / f"{doc_id}.{ext}"
+            dest = (dest_dir / f"{doc_id}.{ext}").resolve()   # 절대경로로 보관
             shutil.copyfile(src_path, dest)
             self.docs.set_original_path(doc_id, str(dest))
         except Exception:

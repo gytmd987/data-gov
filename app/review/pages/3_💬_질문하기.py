@@ -64,18 +64,30 @@ if qa:
         st.subheader("📎 출처 (답변 근거)")
         from app.db.repositories import DocumentRepository
         docs_repo = DocumentRepository(session)
+        # 같은 파일이면 하나로 묶고, 인용된 여러 청크(구절)를 합쳐서 보여준다
+        groups: dict = {}
         for s in qa["sources"]:
-            page = f" · p.{s['page']}" if s["page"] else ""
-            with st.expander(f"[{s['marker']}] {s['label']}{page}"):
-                st.write(s["passage"] or "(본문 미리보기 없음)")
-                path = docs_repo.get_original_path(s["doc_id"]) if s["doc_id"] else None
+            key = s["doc_id"] or s["label"]
+            g = groups.setdefault(key, {"label": s["label"], "doc_id": s["doc_id"],
+                                        "markers": set(), "passages": []})
+            g["markers"].add(s["marker"])
+            if s["passage"]:
+                g["passages"].append((s["marker"], s["page"], s["passage"]))
+        for i, g in enumerate(groups.values(), start=1):
+            marks = ", ".join(f"[{m}]" for m in sorted(g["markers"]))
+            with st.expander(f"출처 {i}. {g['label']}  (본문 인용 {marks})"):
+                for m, page, passage in sorted(g["passages"]):
+                    pg = f" · p.{page}" if page else ""
+                    st.markdown(f"**[{m}]**{pg}")
+                    st.write(passage)
+                path = docs_repo.get_original_path(g["doc_id"]) if g["doc_id"] else None
                 if path and os.path.exists(path):
                     with open(path, "rb") as f:
                         st.download_button("📄 원본 파일 열기/다운로드", f.read(),
-                                           file_name=os.path.basename(path),
-                                           key=f"dl_{s['marker']}")
+                                           file_name=os.path.basename(path), key=f"dl_{i}")
                 else:
-                    st.caption("원본 파일이 보관돼 있지 않습니다.")
+                    st.caption("원본 파일이 보관돼 있지 않습니다 "
+                               "(원본 저장 기능 도입 전에 적재된 문서 → 다시 올리면 열람 가능).")
     else:
         st.caption("권한 내 근거 문서를 찾지 못했습니다.")
 
