@@ -10,4 +10,5 @@ urlpatterns = [
     path("docs/sweep", views.docs_sweep, name="console_docs_sweep"),
     path("docs/<str:doc_id>/action", views.docs_action, name="console_docs_action"),
     path("users/", views.users, name="console_users"),
+    path("org/", views.org_console, name="console_org"),
 ]

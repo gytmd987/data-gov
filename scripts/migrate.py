@@ -18,6 +18,8 @@ _COLUMNS = [
     ("documents", "original_path", "VARCHAR(1024)"),
     ("users", "position", "VARCHAR(64)"),
     ("users", "job", "VARCHAR(64)"),
+    ("users", "org_node_id", "INTEGER"),
+    ("users", "org_role", "VARCHAR(16)"),
 ]
 
 

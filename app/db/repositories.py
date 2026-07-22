@@ -5,11 +5,21 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
-from app.db.models import AuditLog, Chunk, Document, Feedback, Group, User, UserGroup
+from app.db.models import (
+    AuditLog,
+    Chunk,
+    Document,
+    Feedback,
+    Group,
+    OrgNode,
+    User,
+    UserGroup,
+)
+from app.org.tree import OrgNodeView, OrgTree
 from app.schemas.enums import SensitivityLevel
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
@@ -248,8 +258,25 @@ class UserRepository:
             ).scalars())
             out.append({"user_id": u.user_id, "display_name": u.display_name,
                         "position": u.position, "job": u.job,
-                        "clearance": u.clearance, "groups": groups})
+                        "clearance": u.clearance, "groups": groups,
+                        "org_node_id": u.org_node_id, "org_role": u.org_role})
         return out
+
+    def set_org(self, user_id: str, node_id: Optional[int], role: Optional[str],
+                display_name: Optional[str] = None) -> User:
+        """사용자를 조직 노드·역할에 배정(없으면 생성). 접근제어의 근거."""
+        from app import system_config
+        row = self.session.get(User, user_id)
+        if row is None:
+            row = User(user_id=user_id, display_name=display_name,
+                       clearance=system_config.sensitivity_levels()[0])
+            self.session.add(row)
+        if display_name is not None:
+            row.display_name = display_name
+        row.org_node_id = node_id
+        row.org_role = role
+        self.session.flush()
+        return row
 
     def get_user_context(self, user_id: str) -> Optional[UserContext]:
         user = self.session.get(User, user_id)
@@ -263,6 +290,67 @@ class UserRepository:
             groups=frozenset(groups),
             clearance=SensitivityLevel(user.clearance),
         )
+
+
+class OrgRepository:
+    """조직도(OrgNode) CRUD + 트리 로드. 관리자만 사용(뷰에서 admin_required)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_node(self, name: str, node_type: str, parent_id: Optional[int] = None,
+                    sort_order: int = 0) -> OrgNode:
+        node = OrgNode(name=name, node_type=node_type, parent_id=parent_id,
+                       sort_order=sort_order)
+        self.session.add(node)
+        self.session.flush()
+        return node
+
+    def rename_node(self, node_id: int, name: str) -> None:
+        node = self.session.get(OrgNode, node_id)
+        if node is not None:
+            node.name = name
+            self.session.flush()
+
+    def delete_node(self, node_id: int) -> None:
+        """노드 + 하위 전체 삭제. 배정된 사용자는 소속 해제(포터블하게 ORM에서 처리).
+
+        SQLite는 기본적으로 FK cascade 를 강제하지 않으므로 파이썬에서 subtree 를
+        직접 지운다(Postgres/SQLite 동일 동작 보장).
+        """
+        ids = self.load_tree().subtree(node_id)
+        if not ids:
+            return
+        self.session.execute(
+            update(User).where(User.org_node_id.in_(ids))
+            .values(org_node_id=None, org_role=None))
+        for nid in reversed(ids):        # 하위(자식)부터 삭제
+            node = self.session.get(OrgNode, nid)
+            if node is not None:
+                self.session.delete(node)
+        self.session.flush()
+
+    def get(self, node_id: int) -> Optional[OrgNode]:
+        return self.session.get(OrgNode, node_id)
+
+    def list_nodes(self) -> list[OrgNode]:
+        return list(self.session.execute(
+            select(OrgNode).order_by(OrgNode.sort_order, OrgNode.id)).scalars())
+
+    def load_tree(self) -> OrgTree:
+        views = [OrgNodeView(id=n.id, name=n.name, node_type=n.node_type,
+                             parent_id=n.parent_id) for n in self.list_nodes()]
+        return OrgTree(views)
+
+    def members(self, node_id: int) -> list[dict[str, Any]]:
+        """이 노드에 직접 배정된 사용자 목록."""
+        out = []
+        for u in self.session.execute(
+            select(User).where(User.org_node_id == node_id).order_by(User.user_id)
+        ).scalars():
+            out.append({"user_id": u.user_id, "display_name": u.display_name,
+                        "org_role": u.org_role})
+        return out
 
 
 class AuditRepository:

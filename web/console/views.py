@@ -238,16 +238,17 @@ def docs_action(request, doc_id: str):
 def users(request):
     session = bridge.open_session()
     try:
-        from app.db.repositories import UserRepository
+        from app.db.repositories import OrgRepository, UserRepository
         repo = UserRepository(session)
+        org = OrgRepository(session)
 
         if request.method == "POST":
             p = request.POST
             uid = (p.get("user_id") or "").strip()
             if uid:
-                groups, clearance = repo.upsert_user_with_role(
-                    uid, position=p["position"], job=p["job"],
-                    display_name=p.get("name") or None)
+                node_id = int(p["org_node_id"]) if p.get("org_node_id") else None
+                role = p.get("org_role") or None
+                repo.set_org(uid, node_id, role, display_name=p.get("name") or None)
                 session.commit()
                 # Django 로그인 계정도 함께 생성/갱신
                 from django.contrib.auth.models import User as DjUser
@@ -256,15 +257,93 @@ def users(request):
                 if p.get("password"):
                     dj.set_password(p["password"])
                     dj.save()
-                g_names = ", ".join(system_config.label(g) for g in sorted(groups))
-                messages.success(request, f"'{uid}' 저장 → 그룹 [{g_names}] · 등급 {system_config.label(clearance)}"
+                node = org.get(node_id) if node_id else None
+                where = f"{node.name}/{role}" if node else (role or "미배정")
+                messages.success(request, f"'{uid}' 저장 → {where}"
                                  + (" (로그인 계정 생성됨)" if created else ""))
             return redirect("console_users")
 
+        # 노드 드롭다운(들여쓰기 표시용 depth 포함)
+        node_opts = _org_options(org)
+        node_names = {n["id"]: n["name"] for n in node_opts}
+        user_list = repo.list_users()
+        for u in user_list:
+            u["org_node_name"] = node_names.get(u["org_node_id"], "—")
         return render(request, "console/users.html", {
-            "users": repo.list_users(),
-            "positions": system_config.positions(),
-            "jobs": system_config.jobs(),
+            "users": user_list,
+            "node_opts": node_opts,
+            "roles": system_config.org_roles(),
+        })
+    finally:
+        session.close()
+
+
+# ── 조직도 관리 ──────────────────────────────────────────────────────────────
+def _org_options(org) -> list[dict]:
+    """조직도를 트리 순서(깊이 포함)로 평탄화 — 드롭다운·표 들여쓰기용."""
+    tree = org.load_tree()
+    nodes = {n.id: n for n in org.list_nodes()}
+    children: dict = {}
+    roots = []
+    for n in org.list_nodes():
+        if n.parent_id and n.parent_id in nodes:
+            children.setdefault(n.parent_id, []).append(n)
+        else:
+            roots.append(n)
+    out: list[dict] = []
+
+    def walk(node, depth):
+        out.append({"id": node.id, "name": node.name, "node_type": node.node_type,
+                    "parent_id": node.parent_id, "depth": depth,
+                    "indent": "  " * depth})
+        for c in children.get(node.id, []):
+            walk(c, depth + 1)
+
+    for r in roots:
+        walk(r, 0)
+    return out
+
+
+@admin_required
+def org_console(request):
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository
+        from app.org.tree import NODE_TYPES
+        repo = OrgRepository(session)
+
+        if request.method == "POST":
+            p = request.POST
+            action = p.get("action")
+            if action == "create":
+                name = (p.get("name") or "").strip()
+                node_type = p.get("node_type")
+                parent_id = int(p["parent_id"]) if p.get("parent_id") else None
+                if name and node_type in NODE_TYPES:
+                    repo.create_node(name, node_type, parent_id)
+                    session.commit()
+                    messages.success(request, f"'{name}' 추가됨.")
+                else:
+                    messages.error(request, "이름·유형을 확인하세요.")
+            elif action == "rename":
+                name = (p.get("name") or "").strip()
+                if name:
+                    repo.rename_node(int(p["node_id"]), name)
+                    session.commit()
+                    messages.success(request, "이름을 변경했습니다.")
+            elif action == "delete":
+                repo.delete_node(int(p["node_id"]))
+                session.commit()
+                messages.warning(request, "노드를 삭제했습니다(하위 포함, 배정 사용자는 해제).")
+            return redirect("console_org")
+
+        rows = _org_options(repo)
+        for r in rows:
+            r["members"] = repo.members(r["id"])
+        return render(request, "console/org.html", {
+            "rows": rows, "node_opts": rows,
+            "node_types": [{"value": t, "label": system_config.label(t)}
+                           for t in ["team", "group", "part"]],
         })
     finally:
         session.close()

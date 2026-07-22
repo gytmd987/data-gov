@@ -4,7 +4,8 @@
 {% block content %}
 <div style="max-width:900px;margin:0 auto;padding:0 16px">
 <h2 style="margin:18px 0 4px">👤 사용자 관리</h2>
-<p class="msg-note">직책·직무를 고르면 config/system.yaml 규칙에 따라 열람 그룹·등급이 자동 부여되고, 로그인 계정도 함께 만들어집니다.</p>
+<p class="msg-note">조직도 노드와 역할을 배정하면 그 소속에 맞는 문서 접근 권한이 부여되고, 로그인 계정도 함께 만들어집니다.
+  노드는 <a href="/console/org/">조직도 관리</a>에서 먼저 만들어 주세요.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
 <div class="card">
@@ -12,18 +13,25 @@
     {% csrf_token %}
     <input name="user_id" placeholder="사용자 ID (이메일 권장)" required>
     <input name="name" placeholder="이름">
-    <select name="position">{% for p in positions %}<option>{{ p }}</option>{% endfor %}</select>
-    <select name="job">{% for j in jobs %}<option>{{ j }}</option>{% endfor %}</select>
+    <select name="org_node_id">
+      <option value="">(소속 노드 선택)</option>
+      {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
+    </select>
+    <select name="org_role">
+      <option value="">(역할 선택)</option>
+      {% for r in roles %}<option>{{ r }}</option>{% endfor %}
+    </select>
     <input name="password" type="password" placeholder="초기 비밀번호 (신규/변경 시)">
     <button class="btn">저장</button>
   </form>
 </div>
 
 <table>
-  <tr><th>ID</th><th>이름</th><th>직책</th><th>직무</th><th>열람등급</th><th>그룹</th></tr>
+  <tr><th>ID</th><th>이름</th><th>소속</th><th>역할</th></tr>
   {% for u in users %}
-  <tr><td>{{ u.user_id }}</td><td>{{ u.display_name }}</td><td>{{ u.position }}</td>
-      <td>{{ u.job }}</td><td>{{ u.clearance|klabel }}</td><td>{{ u.groups|klabel_join }}</td></tr>
+  <tr><td>{{ u.user_id }}</td><td>{{ u.display_name }}</td>
+      <td>{{ u.org_node_name }}</td>
+      <td>{{ u.org_role|default:"—" }}</td></tr>
   {% endfor %}
 </table>
 </div>

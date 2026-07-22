@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load klabels %}
+{% block title %}조직도 관리{% endblock %}
+{% block content %}
+<div style="max-width:900px;margin:0 auto;padding:0 16px">
+<h2 style="margin:18px 0 4px">🏢 조직도 관리</h2>
+<p class="msg-note">People팀 &gt; 그룹 &gt; 파트 계층을 만듭니다. 여기서 만든 노드로 사용자 소속과 문서 접근 권한이 정해집니다.
+  노드를 삭제하면 하위 노드도 함께 삭제되고, 배정된 사용자는 소속이 해제됩니다.</p>
+{% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
+
+<div class="card">
+  <h4 style="margin-bottom:8px">노드 추가</h4>
+  <form method="post" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {% csrf_token %}<input type="hidden" name="action" value="create">
+    <input name="name" placeholder="이름 (예: People팀 / 채용그룹 / 인터뷰파트)" required style="flex:1;min-width:220px">
+    <select name="node_type" style="width:auto">
+      {% for t in node_types %}<option value="{{ t.value }}">{{ t.label }}</option>{% endfor %}
+    </select>
+    <select name="parent_id" style="width:auto">
+      <option value="">(최상위 — 상위 없음)</option>
+      {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
+    </select>
+    <button class="btn">＋ 추가</button>
+  </form>
+</div>
+
+{% if rows %}
+<table>
+  <tr><th>조직</th><th>유형</th><th>구성원</th><th style="width:220px"></th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><span style="display:inline-block;width:{{ r.depth }}0px"></span>{% if r.depth %}└ {% endif %}<b>{{ r.name }}</b></td>
+    <td>{{ r.node_type|klabel }}</td>
+    <td>{% for m in r.members %}{{ m.display_name|default:m.user_id }}<span class="msg-note"> ({{ m.org_role|default:"?" }})</span>{% if not forloop.last %}, {% endif %}{% empty %}<span class="msg-note">—</span>{% endfor %}</td>
+    <td>
+      <form method="post" style="display:inline-flex;gap:4px">
+        {% csrf_token %}<input type="hidden" name="action" value="rename"><input type="hidden" name="node_id" value="{{ r.id }}">
+        <input name="name" value="{{ r.name }}" style="width:120px;padding:4px 6px">
+        <button class="btn ghost" style="padding:4px 8px">이름변경</button>
+      </form>
+      <form method="post" style="display:inline" onsubmit="return confirm('이 노드와 하위 노드를 모두 삭제할까요?')">
+        {% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="node_id" value="{{ r.id }}">
+        <button class="btn ghost" style="padding:4px 8px;color:#c0392b">삭제</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card">아직 조직도가 없습니다. 위에서 최상위 팀(예: People팀)부터 추가하세요.</div>
+{% endif %}
+</div>
+{% endblock %}

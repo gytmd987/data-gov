@@ -100,6 +100,12 @@ def jobs() -> list[str]:
     return list(_load()["permissions"]["jobs"])
 
 
+def org_roles() -> list[str]:
+    """조직 역할 목록(팀장/그룹장/파트장/파트원). 없으면 코드 기본값."""
+    from app.org.tree import ROLES
+    return list(_load()["permissions"].get("org_roles") or ROLES)
+
+
 def _matches(value: str, patterns: list[str]) -> bool:
     return "*" in patterns or value in patterns
 

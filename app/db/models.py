@@ -102,14 +102,34 @@ class Group(Base):
     description: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
+class OrgNode(Base):
+    """조직도 노드 — People팀(team) > 그룹(group) > 파트(part) 계층.
+
+    관리자만 생성한다(임의 생성 금지). parent_id 로 트리를 구성.
+    """
+
+    __tablename__ = "org_nodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128))
+    node_type: Mapped[str] = mapped_column(String(16))   # team | group | part
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("org_nodes.id", ondelete="CASCADE"), nullable=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class User(Base):
     __tablename__ = "users"
 
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     clearance: Mapped[str] = mapped_column(String(16))   # SensitivityLevel value
-    position: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 직책
-    job: Mapped[str | None] = mapped_column(String(64), nullable=True)        # 직무
+    position: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 직책(레거시)
+    job: Mapped[str | None] = mapped_column(String(64), nullable=True)        # 직무(레거시)
+    # 조직도 배정 — 접근제어의 근거
+    org_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("org_nodes.id", ondelete="SET NULL"), nullable=True, index=True)
+    org_role: Mapped[str | None] = mapped_column(String(16), nullable=True)   # 팀장|그룹장|파트장|파트원
 
 
 class UserGroup(Base):

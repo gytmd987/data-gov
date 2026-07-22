@@ -126,6 +126,28 @@ def main() -> int:
         "과거 포함 검색에서 보관 문서(is_past)가 나와야 함"
     print(f"[과거검색] 보관 문서 포함 검색 · 과거 배지 {len(d3['sources'])}건 ✅")
 
+    # 10) 조직도 관리(관리자 전용): 팀>그룹>파트 생성 + 사용자 배정
+    c.force_login(admin)
+    assert c.get("/console/org/").status_code == 200
+    from app.db.repositories import OrgRepository
+    s2 = bridge.open_session()
+    try:
+        org = OrgRepository(s2)
+        t = org.create_node("People팀", "team")
+        g = org.create_node("채용그룹", "group", parent_id=t.id)
+        p = org.create_node("인터뷰파트", "part", parent_id=g.id)
+        s2.commit()
+        tid, gid, pid = t.id, g.id, p.id
+    finally:
+        s2.close()
+    # 사용자 관리 화면에서 노드·역할 배정
+    resp = c.post("/console/users/", {"user_id": "hong@company.com", "name": "홍파트원",
+                  "org_node_id": str(pid), "org_role": "파트원"})
+    assert resp.status_code == 302
+    body = c.get("/console/org/").content.decode()
+    assert "People팀" in body and "인터뷰파트" in body and "홍파트원" in body
+    print("[조직도 ] 팀>그룹>파트 생성 · 사용자 배정 · 계층 표시 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

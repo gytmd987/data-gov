@@ -56,6 +56,7 @@ th{background:#fafafa}
     {% if is_admin %}
     <a href="/console/review/" class="{% if '/console/review' in request.path %}on{% endif %}">📝 문서 검토</a>
     <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}">📄 문서 관리</a>
+    <a href="/console/org/" class="{% if '/console/org' in request.path %}on{% endif %}">🏢 조직도</a>
     <a href="/console/users/" class="{% if '/console/users' in request.path %}on{% endif %}">👤 사용자 관리</a>
     {% endif %}
   </span>
