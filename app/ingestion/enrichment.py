@@ -26,6 +26,29 @@ from app.schemas.metadata import (
 DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
 
+class ReadError(Exception):
+    """AI 필수 필드(요약/키워드/예상 Q&A)를 채우지 못함 → 파일 읽기 실패로 판단."""
+
+
+def assert_ai_mandatory(doc) -> None:
+    """요약·핵심 키워드·예상 Q&A 가 모두 채워졌는지 확인. 하나라도 비면 ReadError.
+
+    이들은 문서 내용이 실제로 추출됐을 때만 생성 가능하므로, 비어 있으면 파일을
+    읽지 못한 것으로 간주한다(스캔 이미지·빈 문서·파싱 실패 등)."""
+    cls = doc.classification
+    missing = []
+    if not (cls.summary and cls.summary.strip()):
+        missing.append("요약")
+    if not cls.keywords:
+        missing.append("핵심 키워드")
+    if not cls.expected_qa:
+        missing.append("예상 Q&A")
+    if missing:
+        raise ReadError(
+            "파일 내용을 읽지 못했습니다(추출 실패). AI가 다음을 생성하지 못함: "
+            + ", ".join(missing) + ". 스캔 문서면 OCR 가능한 형식으로 다시 올려주세요.")
+
+
 class LLMClient(Protocol):
     def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]: ...
 

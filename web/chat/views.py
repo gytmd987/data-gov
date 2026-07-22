@@ -20,6 +20,7 @@ from django.views.decorators.http import require_POST
 from web import bridge
 from web.authz import _email_of, domain_user_context
 
+from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
 
 _HISTORY_TURNS = 10   # 일반 채팅 멀티턴 문맥으로 넣을 최근 메시지 수
@@ -141,6 +142,8 @@ def submit_document(request):
                 messages.success(request, f"'{f.name}' 업로드 완료 — 관리자 검토 후 검색에 반영됩니다.")
             except DuplicateError:
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
+            except ReadError as e:
+                messages.error(request, f"⚠️ '{f.name}' {e}")
         finally:
             session.close()
         return redirect("submit_document")

@@ -14,6 +14,7 @@ from web import bridge
 from web.authz import _email_of, admin_required
 
 from app import system_config
+from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
 from app.review.service import ENUM_OPTIONS
@@ -42,6 +43,8 @@ def review(request):
                 messages.success(request, f"'{f.name}' 업로드 완료 — AI 자동 채움 후 검토 대기에 추가됨")
             except DuplicateError:
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
+            except ReadError as e:
+                messages.error(request, f"⚠️ '{f.name}' {e}")
             return redirect("console_review")
 
         from app.db.repositories import OrgRepository

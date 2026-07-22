@@ -72,6 +72,13 @@ def intake(
         if existing is not None:
             raise DuplicateError(existing)
 
+    # 최종 수정일: 파일시스템 mtime(오피스 내부 속성이 있으면 파서가 보정 가능)
+    last_modified = None
+    try:
+        last_modified = datetime.fromtimestamp(Path(path).stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        pass
+
     return IdentificationBlock(
         doc_id=str(uuid.uuid4()),
         source_filename=filename,
@@ -80,4 +87,5 @@ def intake(
         ingested_at=datetime.now(timezone.utc),
         ingested_by=ingested_by,
         page_count=page_count,
+        last_modified=last_modified,
     )

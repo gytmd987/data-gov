@@ -26,7 +26,7 @@ from app.schemas.metadata import (
 )
 
 from .chunking import Chunk, chunk_elements
-from .enrichment import LLMClient, enrich
+from .enrichment import LLMClient, assert_ai_mandatory, enrich
 from .intake import HashLookup, intake
 from .parsers import build_parser_content, get_parser
 from .parsers.base import ParseResult
@@ -89,6 +89,8 @@ def run_auto_stages(
     # AUTO_ENRICHED: LLM 자동 채움(거버넌스 제외)
     content = build_parser_content(result)
     enrich(ctx.doc, content, client=llm, model_name=llm_model)
+    # 요약·키워드·예상 Q&A 는 필수 — 못 채우면 파일 읽기 실패로 간주(ReadError)
+    assert_ai_mandatory(ctx.doc)
     ctx._to(IngestionStatus.AUTO_ENRICHED)
 
     # 사람 검토 대기

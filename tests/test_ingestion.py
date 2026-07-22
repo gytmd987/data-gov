@@ -183,6 +183,17 @@ def test_full_pipeline_happy_path(tmp_path: Path):
     assert payloads[0]["access_groups"] == ["n:1"]
 
 
+def test_read_error_when_ai_cannot_fill_mandatory(tmp_path: Path):
+    from app.ingestion.enrichment import ReadError
+    p = tmp_path / "scan.txt"
+    p.write_text("x", encoding="utf-8")
+    # summary/keywords/expected_qa 를 못 주는 LLM → 파일 읽기 실패로 판단
+    poor = FakeLLM({"doc_type": {"value": "unknown", "confidence": 0.2},
+                    "language": {"value": "unknown", "confidence": 0.2}})
+    with pytest.raises(ReadError):
+        run_auto_stages(str(p), ingested_by="a", llm=poor, llm_model="m")
+
+
 def test_full_pipeline_blocks_on_draft_status(tmp_path: Path):
     p = tmp_path / "doc.txt"
     p.write_text("내용입니다.", encoding="utf-8")
