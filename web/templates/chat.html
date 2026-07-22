@@ -30,6 +30,9 @@
                border:1px solid var(--line);border-radius:14px;padding:10px}
 .composer textarea{flex:1;width:auto;border:none;resize:none;outline:none;max-height:140px;background:none}
 .toggle{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:14px;color:var(--sub)}
+.toggle.disabled{opacity:.4;pointer-events:none}
+.badge-past{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:10px;
+            background:#fbe7c6;color:#8a6d1a;font-size:12px}
 .switch{position:relative;width:40px;height:22px}
 .switch input{opacity:0;width:0;height:0}
 .slider{position:absolute;inset:0;background:#ccc;border-radius:22px;cursor:pointer;transition:.2s}
@@ -63,6 +66,10 @@
         <label class="switch"><input type="checkbox" id="useRag" checked><span class="slider"></span></label>
         <span>팀 데이터 기반 답변 <span id="ragState">(켜짐 — 사내 문서에서 근거 검색)</span></span>
       </div>
+      <div class="toggle" id="pastToggle">
+        <label class="switch"><input type="checkbox" id="includePast"><span class="slider"></span></label>
+        <span>과거 문서 포함 <span class="msg-note">(만료·이전 버전 문서까지 검색 — 과거 자료로 표시)</span></span>
+      </div>
       <div class="box">
         <textarea id="input" rows="1" placeholder="메시지를 입력하세요…"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
@@ -80,6 +87,8 @@ const csrft = '{{ csrf_token }}';
 document.getElementById('useRag').addEventListener('change', e => {
   document.getElementById('ragState').textContent =
     e.target.checked ? '(켜짐 — 사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
+  // 과거 문서 포함은 팀 데이터 기반(RAG)일 때만 의미 있음
+  document.getElementById('pastToggle').classList.toggle('disabled', !e.target.checked);
 });
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
@@ -96,7 +105,8 @@ function bubble(role, text, sources, meta){
       let passages = s.passages.map(p=>
         `<p><b>[${p.marker}]</b>${p.page?` · p.${p.page}`:''}<br>${esc(p.text)}</p>`).join('');
       const dl = s.doc_id ? `<a href="/docs/original/${s.doc_id}">📄 원본 파일 다운로드</a>` : '';
-      html += `<details class="src"><summary>📎 출처 ${i+1}. ${esc(s.label||'')} ${marks}</summary>
+      const pastBadge = s.is_past ? `<span class="badge-past">⚠️ 과거/만료 자료</span>` : '';
+      html += `<details class="src"><summary>📎 출처 ${i+1}. ${esc(s.label||'')} ${marks}${pastBadge}</summary>
                <div class="body">${passages}${dl}</div></details>`;
     });
     html += `</div>`;
@@ -119,6 +129,7 @@ async function sendMsg(){
   const text = inp.value.trim();
   if (!text) return;
   const useRag = document.getElementById('useRag').checked;
+  const includePast = useRag && document.getElementById('includePast').checked;
   inp.value = '';
   bubble('user', text);
   const thinking = bubble('asst', useRag ? '문서를 검색하는 중…' : '생각하는 중…');
@@ -126,7 +137,8 @@ async function sendMsg(){
   try {
     const r = await fetch('/chat/send', {method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
-      body: JSON.stringify({conversation_id: convId, text, use_rag: useRag})});
+      body: JSON.stringify({conversation_id: convId, text, use_rag: useRag,
+                            include_past: includePast})});
     const d = await r.json();
     thinking.remove();
     if (!r.ok){ bubble('asst', '⚠️ ' + (d.error || '오류가 발생했습니다.')); return; }

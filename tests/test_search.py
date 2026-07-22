@@ -75,6 +75,32 @@ def test_to_qdrant_filter_builds():
     assert "*" in f.must[0].match.any
 
 
+# ── 과거 문서 포함(include_past) ──────────────────────────────────────────────
+def test_include_past_permits_expired_superseded_archived():
+    pol = AccessPolicy.for_user(_user(), today=date(2026, 7, 16), include_past=True)
+    assert pol.allows(_chunk("d::0", status="archived").payload)
+    assert pol.allows(_chunk("d::0", expiry="2020-01-01").payload)
+    assert pol.allows(_chunk("d::0", superseded="newdoc").payload)
+
+
+def test_include_past_still_enforces_group_and_clearance():
+    # 과거 포함이어도 그룹 불일치는 거부
+    pol = AccessPolicy.for_user(_user(groups=("payroll",)),
+                                today=date(2026, 7, 16), include_past=True)
+    assert not pol.allows(_chunk("d::0", groups=("hr_core",), status="expired").payload)
+    # 민감도 초과도 거부
+    pol2 = AccessPolicy.for_user(_user(clearance=SensitivityLevel.INTERNAL),
+                                 today=date(2026, 7, 16), include_past=True)
+    assert not pol2.allows(_chunk("d::0", rank=3, status="expired").payload)
+
+
+def test_to_qdrant_filter_include_past_drops_status():
+    pol = AccessPolicy.for_user(_user(), include_past=True)
+    f = pol.to_qdrant_filter()
+    # status==active 조건이 빠져 groups/sensitivity 2개만 남음
+    assert len(f.must) == 2
+
+
 # ── RRF 융합 ─────────────────────────────────────────────────────────────────
 def test_rrf_merges_and_dedups():
     dense = [_chunk("a"), _chunk("b"), _chunk("c")]

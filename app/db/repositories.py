@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
@@ -80,13 +81,36 @@ class DocumentRepository:
             select(Document.status).where(Document.doc_id == doc_id)
         ).scalar_one_or_none()
 
-    def list_documents(self, text: Optional[str] = None) -> list[dict[str, Any]]:
-        """문서 목록(관리용 요약). text가 주어지면 파일명/제목 부분일치 필터."""
-        stmt = select(Document).order_by(Document.updated_at.desc())
+    @staticmethod
+    def _doc_filters(text: Optional[str], lifecycle_status: Optional[str],
+                     doc_type: Optional[str]) -> list:
+        conds: list = []
         if text:
             like = f"%{text}%"
-            stmt = stmt.where(
+            conds.append(
                 (Document.source_filename.ilike(like)) | (Document.title.ilike(like)))
+        if lifecycle_status:
+            conds.append(Document.lifecycle_status == lifecycle_status)
+        if doc_type:
+            conds.append(Document.doc_type == doc_type)
+        return conds
+
+    def list_documents(
+        self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
+        doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """문서 목록(관리용 요약). 필터(파일명·제목/상태/유형) + 페이징.
+
+        limit=None 이면 전체 반환(소규모·테스트용). 대량(수만 건)에서는 limit을 지정해
+        화면이 한 번에 모든 행을 로드하지 않도록 한다.
+        """
+        stmt = select(Document)
+        conds = self._doc_filters(text, lifecycle_status, doc_type)
+        if conds:
+            stmt = stmt.where(and_(*conds))
+        stmt = stmt.order_by(Document.updated_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         out = []
         for r in self.session.execute(stmt).scalars():
             out.append({
@@ -95,9 +119,39 @@ class DocumentRepository:
                 "status": r.status, "lifecycle_status": r.lifecycle_status,
                 "sensitivity_level": r.sensitivity_level,
                 "access_groups": r.access_groups, "owner": r.owner,
+                "expiry_date": r.expiry_date.isoformat() if r.expiry_date else None,
                 "superseded_by": r.superseded_by,
             })
         return out
+
+    def count_documents(
+        self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
+        doc_type: Optional[str] = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(Document)
+        conds = self._doc_filters(text, lifecycle_status, doc_type)
+        if conds:
+            stmt = stmt.where(and_(*conds))
+        return self.session.scalar(stmt) or 0
+
+    # ── 생애주기(만료) 조회 ──────────────────────────────────────────────────
+    def doc_ids_to_expire(self, today: date) -> list[str]:
+        """만료일이 지났는데도 아직 active 인 문서 id 목록(자동 만료 대상)."""
+        return list(self.session.execute(
+            select(Document.doc_id).where(
+                Document.lifecycle_status == "active",
+                Document.expiry_date.is_not(None),
+                Document.expiry_date < today)
+        ).scalars())
+
+    def count_expiring_soon(self, today: date, until: date) -> int:
+        """[today, until] 사이에 만료 예정인 active 문서 수(임박 알림용)."""
+        return self.session.scalar(
+            select(func.count()).select_from(Document).where(
+                Document.lifecycle_status == "active",
+                Document.expiry_date.is_not(None),
+                Document.expiry_date >= today,
+                Document.expiry_date <= until)) or 0
 
     def delete(self, doc_id: str) -> None:
         row = self.session.get(Document, doc_id)

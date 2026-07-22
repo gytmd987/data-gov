@@ -1,18 +1,26 @@
-"""채팅 뷰 — ChatGPT 스타일: 대화 목록/멀티턴/RAG 토글/피드백/원본 다운로드."""
+"""채팅 뷰 — ChatGPT 스타일: 대화 목록/멀티턴/RAG 토글/피드백/원본 다운로드.
+
+문서 등록(submit)은 일반 사용자도 가능하다(업로드 → 관리자 검토 → 색인).
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 from datetime import date
+from pathlib import Path
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from web import bridge
 from web.authz import _email_of, domain_user_context
+
+from app.ingestion.intake import DuplicateError
 
 _HISTORY_TURNS = 10   # 일반 채팅 멀티턴 문맥으로 넣을 최근 메시지 수
 
@@ -57,6 +65,7 @@ def send(request):
     body = json.loads(request.body or "{}")
     text = (body.get("text") or "").strip()
     use_rag = bool(body.get("use_rag"))
+    include_past = bool(body.get("include_past"))
     conv_id = body.get("conversation_id")
     if not text:
         return JsonResponse({"error": "질문이 비어 있습니다."}, status=400)
@@ -78,9 +87,10 @@ def send(request):
                                      "관리자에게 사용자 등록을 요청하세요."}, status=403)
             from app.search.present import group_sources
             pipe = bridge.get_search_pipeline(session)
-            ans = pipe.answer(text, user_ctx, today=date.today())
+            today = date.today()
+            ans = pipe.answer(text, user_ctx, today=today, include_past=include_past)
             answer_text = ans.text
-            sources = group_sources(ans)
+            sources = group_sources(ans, today=today)
         else:
             hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
             llm = bridge.get_chat_llm()
@@ -112,6 +122,29 @@ def feedback(request):
     finally:
         session.close()
     return JsonResponse({"ok": True})
+
+
+@login_required
+def submit_document(request):
+    """일반 사용자 문서 등록 — 업로드하면 검토 대기에 올라가고, 관리자 검토 후 색인된다."""
+    if request.method == "POST" and request.FILES.get("file"):
+        f = request.FILES["file"]
+        session = bridge.open_session()
+        try:
+            svc = bridge.get_review_service(session)
+            dest = Path(tempfile.gettempdir()) / f.name
+            with open(dest, "wb") as out:
+                for chunk in f.chunks():
+                    out.write(chunk)
+            try:
+                svc.start_ingestion(str(dest), ingested_by=_email_of(request.user))
+                messages.success(request, f"'{f.name}' 업로드 완료 — 관리자 검토 후 검색에 반영됩니다.")
+            except DuplicateError:
+                messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
+        finally:
+            session.close()
+        return redirect("submit_document")
+    return render(request, "submit.html", {"offline": bridge.is_offline()})
 
 
 @login_required

@@ -102,6 +102,30 @@ def main() -> int:
     assert resp.status_code in (200, 404)
     print(f"[다운로드] 권한 검증 경로 동작(status={resp.status_code}) ✅")
 
+    # 7) 일반 사용자 문서 등록 페이지 접근(관리자 아님)
+    assert c.get("/submit/").status_code == 200
+    print("[등록   ] 일반 사용자 문서 등록 페이지 접근 ✅")
+
+    # 8) 관리 콘솔: 필터·페이징·일괄작업·만료 정리
+    c.force_login(admin)
+    assert c.get("/console/docs/?status=active&doc_type=policy&page=1").status_code == 200
+    resp = c.post("/console/docs/bulk", {"doc_ids": [doc_id], "bulk_action": "archived"})
+    assert resp.status_code == 302
+    resp = c.post("/console/docs/sweep", {})
+    assert resp.status_code == 302
+    print("[콘솔+  ] 필터·페이징·일괄 보관·만료 정리 동작 ✅")
+
+    # 9) 과거 문서 포함 검색: 방금 보관한 문서도 include_past 로 검색됨
+    c.force_login(staffer)
+    resp = c.post("/chat/send", json.dumps({"text": "연차는 며칠인가요?",
+                  "use_rag": True, "include_past": True}),
+                  content_type="application/json")
+    d3 = resp.json()
+    assert resp.status_code == 200
+    assert d3["sources"] and any(s.get("is_past") for s in d3["sources"]), \
+        "과거 포함 검색에서 보관 문서(is_past)가 나와야 함"
+    print(f"[과거검색] 보관 문서 포함 검색 · 과거 배지 {len(d3['sources'])}건 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

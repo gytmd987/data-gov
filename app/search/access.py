@@ -7,6 +7,9 @@
   4. expiry_date 없음 또는 오늘 이후(만료 제외)
   5. superseded_by 없음(대체된 문서 제외)
 
+include_past=True 이면 3~5(상태/만료/대체)를 완화해 과거·만료 문서도 검색된다.
+단 1~2(그룹·민감도)는 항상 적용되어 권한 없는 문서가 과거라고 뚫리지 않는다.
+
 - to_qdrant_filter(): Qdrant 검색 쿼리에 주입할 필터(후보 단계에서 배제).
 - allows(payload): 동일 규칙의 파이썬 재검증 → 답변 인용 직전 방어적 이중 체크에 사용.
 """
@@ -32,10 +35,12 @@ class UserContext:
 class AccessPolicy:
     user: UserContext
     today: date
+    include_past: bool = False   # True 면 만료/대체/비active 문서도 허용(권한·민감도는 유지)
 
     @classmethod
-    def for_user(cls, user: UserContext, today: Optional[date] = None) -> "AccessPolicy":
-        return cls(user=user, today=today or date.today())
+    def for_user(cls, user: UserContext, today: Optional[date] = None,
+                 include_past: bool = False) -> "AccessPolicy":
+        return cls(user=user, today=today or date.today(), include_past=include_past)
 
     # ── 파이썬 재검증(방어적 이중 체크) ────────────────────────────────────
     def allows(self, payload: dict[str, Any]) -> bool:
@@ -47,6 +52,9 @@ class AccessPolicy:
         rank = payload.get("sensitivity_rank")
         if rank is None or rank > system_config.sensitivity_rank(self.user.clearance):
             return False
+        # 과거 문서 포함 모드: 상태/만료/대체 검사는 생략(권한·민감도는 위에서 이미 적용)
+        if self.include_past:
+            return True
         # 3. 상태
         if payload.get("status") != "active":
             return False
@@ -73,16 +81,17 @@ class AccessPolicy:
         """
         from qdrant_client import models as qm
 
-        return qm.Filter(
-            must=[
-                qm.FieldCondition(
-                    key="access_groups",
-                    match=qm.MatchAny(any=[*self.user.groups, "*"]),
-                ),
-                qm.FieldCondition(
-                    key="sensitivity_rank",
-                    range=qm.Range(lte=system_config.sensitivity_rank(self.user.clearance)),
-                ),
-                qm.FieldCondition(key="status", match=qm.MatchValue(value="active")),
-            ],
-        )
+        must = [
+            qm.FieldCondition(
+                key="access_groups",
+                match=qm.MatchAny(any=[*self.user.groups, "*"]),
+            ),
+            qm.FieldCondition(
+                key="sensitivity_rank",
+                range=qm.Range(lte=system_config.sensitivity_rank(self.user.clearance)),
+            ),
+        ]
+        # 과거 문서 포함 모드가 아니면 active 상태만 후보로(기본 동작)
+        if not self.include_past:
+            must.append(qm.FieldCondition(key="status", match=qm.MatchValue(value="active")))
+        return qm.Filter(must=must)

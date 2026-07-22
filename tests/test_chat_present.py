@@ -75,3 +75,26 @@ def test_group_sources_merges_same_file():
     a = next(g for g in groups if g["doc_id"] == "a.txt")
     assert a["markers"] == [1, 2]                        # 마커 병합
     assert [p["text"] for p in a["passages"]] == ["구절1", "구절2"]
+    assert a["is_past"] is False                         # 현행 문서 → 과거 아님
+
+
+def test_group_sources_flags_past_documents():
+    from datetime import date
+
+    def past_chunk(cid, fn, **payload):
+        return RetrievedChunk(chunk_id=cid, text="본문", score=1.0,
+                              payload={"parent_doc_id": fn, "source_filename": fn,
+                                       "title": None, "page_no": 1, **payload})
+
+    chunks = [past_chunk("exp::0", "expired.txt", status="expired"),
+              past_chunk("old::0", "old.txt", superseded_by="new"),
+              past_chunk("cur::0", "current.txt", status="active")]
+    ans = Answer(text="답 [1][2][3]", used_chunks=chunks, citations=[
+        Citation(marker=1, doc_id="expired.txt", chunk_id="exp::0"),
+        Citation(marker=2, doc_id="old.txt", chunk_id="old::0"),
+        Citation(marker=3, doc_id="current.txt", chunk_id="cur::0"),
+    ])
+    groups = {g["doc_id"]: g for g in group_sources(ans, today=date(2026, 7, 20))}
+    assert groups["expired.txt"]["is_past"] is True      # 만료 상태
+    assert groups["old.txt"]["is_past"] is True          # 대체됨
+    assert groups["current.txt"]["is_past"] is False     # 현행

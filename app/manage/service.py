@@ -37,8 +37,20 @@ class DocumentManager:
         self.indexer = indexer
 
     # ── 조회 ─────────────────────────────────────────────────────────────────
-    def list_documents(self, text: Optional[str] = None) -> list[dict[str, Any]]:
-        return self.repo.list_documents(text=text)
+    def list_documents(
+        self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
+        doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return self.repo.list_documents(
+            text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
+            limit=limit, offset=offset)
+
+    def count_documents(
+        self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
+        doc_type: Optional[str] = None,
+    ) -> int:
+        return self.repo.count_documents(
+            text=text, lifecycle_status=lifecycle_status, doc_type=doc_type)
 
     def get(self, doc_id: str) -> Optional[DocumentMetadata]:
         return self.repo.get(doc_id)

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}문서 등록{% endblock %}
+{% block content %}
+<div style="max-width:640px;margin:24px auto;padding:0 16px">
+<h2 style="margin:0 0 4px">📤 문서 등록</h2>
+<p class="msg-note">사내 문서를 올리면 <b>관리자 검토를 거쳐</b> 검색에 반영됩니다. 등록 즉시 검색되지는 않습니다.</p>
+{% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center">
+    {% csrf_token %}
+    <input type="file" name="file" required style="flex:1">
+    <button class="btn">올리기</button>
+  </form>
+  <p class="msg-note" style="margin-top:10px">지원 형식: PDF · Word(docx) · PowerPoint(pptx) · Excel(xlsx) · 이미지 · 텍스트.
+    올린 문서의 민감도·열람 권한은 관리자가 검토 단계에서 지정합니다.</p>
+</div>
+{% if offline %}<p class="hint" style="text-align:left">⚠️ 오프라인 데모 모드(외부 서비스 미연결)</p>{% endif %}
+</div>
+{% endblock %}
