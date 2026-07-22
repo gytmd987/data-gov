@@ -18,7 +18,7 @@ from app.db.repositories import (
 )
 from app.ingestion.intake import DuplicateError, intake
 from app.ingestion.pipeline import apply_review, run_auto_stages
-from app.schemas.enums import DocType, SensitivityLevel
+from app.schemas.enums import DocType
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
 
@@ -39,9 +39,12 @@ def session():
 class FakeLLM:
     def complete_json(self, prompt, schema):
         return {
-            "doc_type": {"value": "policy", "confidence": 0.95},
+            "doc_type": {"value": "report", "confidence": 0.95},
             "language": {"value": "ko", "confidence": 0.99},
             "status": {"value": "active", "confidence": 0.9},
+            "summary": {"value": "요약", "confidence": 0.9},
+            "keywords": ["연차"],
+            "expected_qa": [{"question": "연차?", "answer": "15일"}],
         }
 
 
@@ -62,7 +65,7 @@ def test_document_roundtrip_and_hash_lookup(session, tmp_path: Path):
     # 메타데이터 roundtrip
     loaded = repo.get(doc_id)
     assert loaded is not None
-    assert loaded.classification.doc_type == DocType.POLICY
+    assert loaded.classification.doc_type == DocType.REPORT
     assert loaded.identification.source_filename == "a.txt"
     # 상태 조회
     assert repo.list_by_status(IngestionStatus.PENDING_REVIEW) == [doc_id]
@@ -89,12 +92,9 @@ def test_chunks_marked_indexed_after_index(session, tmp_path: Path):
     repo = DocumentRepository(session)
     ctx = run_auto_stages(str(p), ingested_by="admin", llm=FakeLLM(), llm_model="m")
 
-    gov = GovernanceBlock(sensitivity_level=SensitivityLevel.INTERNAL,
-                          contains_pii=False, access_groups=["hr_core"],
-                          owner="hr.manager")
+    gov = GovernanceBlock(access_tokens=["n:1"], author_name="hr.manager")
     apply_review(ctx, governance=gov,
-                 lifecycle_overrides={"status": "active"},
-                 known_access_groups=["hr_core"])
+                 lifecycle_overrides={"status": "active"})
 
     class FakeEmbedder:
         def embed(self, texts): return [[0.0] * 4 for _ in texts]
@@ -114,20 +114,23 @@ def test_chunks_marked_indexed_after_index(session, tmp_path: Path):
     assert repo.get(ctx.doc.identification.doc_id) is not None
 
 
-# ── User/Group 리포지토리 ───────────────────────────────────────────────────
-def test_user_context_and_known_groups(session):
+# ── User/조직 리포지토리 ────────────────────────────────────────────────────
+def test_user_context_from_org(session):
+    from app.db.repositories import OrgRepository
+    org = OrgRepository(session)
+    team = org.create_node("People팀", "team")
+    part = org.create_node("파트A", "part", parent_id=team.id)
+    session.commit()
+
     repo = UserRepository(session)
-    repo.upsert_group("hr_core", "인사팀 코어")
-    repo.upsert_group("hr_lead")
-    repo.upsert_user("u1", SensitivityLevel.CONFIDENTIAL, "홍길동")
-    repo.add_user_to_group("u1", "hr_core")
+    repo.set_org("u1", part.id, "파트장", "홍길동")   # 부서장 → n:+h: 토큰
+    repo.set_org("u2", part.id, "파트원", "김파트원")  # 파트원 → n: 토큰만
     session.commit()
 
     ctx = repo.get_user_context("u1")
     assert ctx is not None
-    assert ctx.clearance == SensitivityLevel.CONFIDENTIAL
-    assert ctx.groups == frozenset({"hr_core"})
-    assert set(repo.known_access_groups()) == {"hr_core", "hr_lead"}
+    assert ctx.groups == frozenset({f"n:{part.id}", f"h:{part.id}"})
+    assert repo.get_user_context("u2").groups == frozenset({f"n:{part.id}"})
     assert repo.get_user_context("ghost") is None
 
 

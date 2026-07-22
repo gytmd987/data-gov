@@ -6,7 +6,6 @@ from app.eval.goldset import GoldItem, GoldSet
 from app.eval.judge import judge_answer
 from app.eval.metrics import ndcg_at_k, recall_at_k, reciprocal_rank
 from app.eval.runner import run_eval
-from app.schemas.enums import SensitivityLevel
 from app.search.access import UserContext
 from app.search.types import Answer, Citation, RetrievedChunk
 
@@ -58,7 +57,7 @@ class FakePipeline:
 
 
 def _resolver(user_id):
-    return UserContext(user_id, frozenset(["hr_core"]), SensitivityLevel.INTERNAL)
+    return UserContext(user_id, frozenset(["n:1"]))
 
 
 def test_run_eval_metrics_and_answer_ok():

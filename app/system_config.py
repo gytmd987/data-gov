@@ -40,19 +40,6 @@ def doc_types() -> list[str]:
     return list(_load()["metadata"]["doc_types"])
 
 
-def sensitivity_levels() -> list[str]:
-    """낮음→높음 순서."""
-    return list(_load()["metadata"]["sensitivity_levels"])
-
-
-def pii_types() -> list[str]:
-    return list(_load()["metadata"]["pii_types"])
-
-
-def topics() -> list[str]:
-    return list(_load()["metadata"].get("topics") or [])
-
-
 def departments() -> list[str]:
     return list(_load()["metadata"].get("departments") or [])
 
@@ -68,65 +55,13 @@ def label(value: Any) -> str:
     return labels().get(key, key)
 
 
-def sensitivity_rank(level: str | None) -> int:
-    """민감도 등급의 순위(0=가장 낮음). 없는 값은 -1."""
-    if level is None:
-        return -1
-    levels = sensitivity_levels()
-    key = getattr(level, "value", level)
-    return levels.index(key) if key in levels else -1
-
-
-# ── 거버넌스 ─────────────────────────────────────────────────────────────────
-def required_governance_fields() -> list[str]:
-    return list(_load()["governance"]["required_fields"])
-
-
-# ── 권한 (직책 × 직무) ───────────────────────────────────────────────────────
-def access_groups() -> list[str]:
-    return list(_load()["permissions"]["access_groups"])
-
-
+# ── 관리자 · 조직 역할 ───────────────────────────────────────────────────────
 def admin_emails() -> list[str]:
-    """관리자(문서관리·사용자관리 접근 허용) 이메일 목록."""
+    """관리자(관리 콘솔 접근 허용) 이메일 목록."""
     return list(_load()["permissions"].get("admins") or [])
-
-
-def positions() -> list[str]:
-    return list(_load()["permissions"]["positions"])
-
-
-def jobs() -> list[str]:
-    return list(_load()["permissions"]["jobs"])
 
 
 def org_roles() -> list[str]:
     """조직 역할 목록(팀장/그룹장/파트장/파트원). 없으면 코드 기본값."""
     from app.org.tree import ROLES
     return list(_load()["permissions"].get("org_roles") or ROLES)
-
-
-def _matches(value: str, patterns: list[str]) -> bool:
-    return "*" in patterns or value in patterns
-
-
-def resolve_access(position: str, job: str) -> tuple[set[str], str]:
-    """(직책, 직무) → (접근그룹 집합, 최대 열람 민감도 clearance).
-
-    매칭되는 모든 규칙의 groups를 합치고 clearance는 가장 높은 등급을 취한다.
-    매칭 규칙이 없으면 접근그룹 없음 + 가장 낮은 등급.
-    """
-    perms = _load()["permissions"]
-    groups: set[str] = set()
-    best_rank = -1
-    clearance = sensitivity_levels()[0]
-
-    for rule in perms.get("rules", []):
-        if _matches(position, rule.get("positions", [])) and \
-           _matches(job, rule.get("jobs", [])):
-            groups.update(rule.get("groups", []))
-            c = rule.get("clearance")
-            if c is not None and sensitivity_rank(c) > best_rank:
-                best_rank = sensitivity_rank(c)
-                clearance = c
-    return groups, clearance

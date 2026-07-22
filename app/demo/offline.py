@@ -93,11 +93,23 @@ class ExtractiveLLM:
         if "groundedness" in props:
             denied = "확인할 수 없습니다" in prompt
             return {"groundedness": 1.0, "relevance": 0.3 if denied else 0.9}
-        doc_type = "payroll" if "급여" in prompt or "연봉" in prompt else "policy"
+        doc_type = "notice" if "급여" in prompt or "연봉" in prompt else "report"
+        # 본문 첫 문장 몇 개를 요약/키워드 소재로(오프라인 휴리스틱)
+        body = prompt.split('"""')[-2] if '"""' in prompt else prompt
+        words = [w for w in re.split(r"\s+", body) if len(w) >= 2][:40]
+        summary = " ".join(words[:20]) or "요약 없음"
+        keywords = list(dict.fromkeys(words[:5])) or ["문서"]
         result = {
             "doc_type": {"value": doc_type, "confidence": 0.9},
             "language": {"value": "ko", "confidence": 0.99},
             "status": {"value": "active", "confidence": 0.9},
+            "summary": {"value": summary, "confidence": 0.9},
+            "keywords": keywords,
+            "expected_qa": [
+                {"question": "이 문서는 무엇에 대한 것인가요?", "answer": summary[:120]},
+                {"question": f"'{keywords[0]}' 관련 내용이 있나요?", "answer": "네, 본문을 참고하세요."},
+            ],
+            "related_parties": [],
         }
         fm = self._FILENAME.search(prompt)
         if fm:

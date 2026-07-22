@@ -14,27 +14,29 @@ from app.demo.offline import (
     build_offline_search_pipeline,
     make_offline_engine,
 )
-from app.db.repositories import UserRepository
+from app.db.repositories import OrgRepository, UserRepository
 from app.manage.service import DocumentManager
-from app.schemas.enums import SensitivityLevel
 from app.schemas.metadata import GovernanceBlock
-from app.search.access import UserContext
 
 
 @pytest.fixture
 def env(tmp_path: Path):
     session = Session(make_offline_engine(), expire_on_commit=False)
     qdrant = QdrantClient(location=":memory:")
-    UserRepository(session).upsert_group("hr_core")
+    # 조직도 + 사용자(파트B 파트원)
+    org = OrgRepository(session)
+    team = org.create_node("People팀", "team")
+    org.create_node("파트B", "part", parent_id=team.id)
+    partB = org.list_nodes()[-1]
+    UserRepository(session).set_org("u", partB.id, "파트원")
     session.commit()
     svc = build_offline_review_service(session, qdrant)
 
-    def ingest(name, text):
+    def ingest(name, text, selections=None):
         p = tmp_path / name
         p.write_text(text, encoding="utf-8")
         doc_id = svc.start_ingestion(str(p), ingested_by="t")
-        gov = GovernanceBlock(sensitivity_level=SensitivityLevel.INTERNAL,
-                              contains_pii=False, access_groups=["hr_core"], owner="mgr")
+        gov = GovernanceBlock(access_selections=selections or [])  # 빈=팀 전체
         svc.submit_review(doc_id, governance=gov, lifecycle_overrides={"status": "active"})
         return doc_id
 
@@ -43,7 +45,7 @@ def env(tmp_path: Path):
     pipe = build_offline_search_pipeline(session, qdrant)
     manager = DocumentManager(session, indexer=QdrantIndexer(
         collection="hr_chunks", vector_size=EMBED_DIM, client=qdrant))
-    user = UserContext("u", frozenset(["hr_core"]), SensitivityLevel.INTERNAL)
+    user = UserRepository(session).get_user_context("u")   # n:{partB}
     return session, pipe, manager, user, a, b
 
 
@@ -65,10 +67,11 @@ def test_supersede_excludes_old_from_search(env):
 
 def test_update_metadata_syncs_access(env):
     session, pipe, manager, user, a, b = env
-    # 접근그룹을 payroll로 바꾸면 hr_core 사용자는 더 이상 못 봄
+    # 접근을 사용자가 속하지 않은 노드로 제한하면 더 이상 못 봄
+    secret = OrgRepository(session).create_node("비밀파트", "part")
+    session.commit()
     manager.update_metadata(a, governance=GovernanceBlock(
-        sensitivity_level=SensitivityLevel.RESTRICTED, contains_pii=True,
-        pii_types=[], access_groups=["payroll"], owner="mgr"))
+        access_selections=[f"node:{secret.id}"]))
     files = _files(pipe, user)
     assert "leave_2025.txt" not in files               # 권한 변경이 검색에 반영 ✅
 

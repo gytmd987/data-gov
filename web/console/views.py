@@ -11,13 +11,13 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from web import bridge
-from web.authz import admin_required
+from web.authz import _email_of, admin_required
 
 from app import system_config
 from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
 from app.review.service import ENUM_OPTIONS
-from app.schemas.enums import DocStatus, PiiType, SensitivityLevel
+from app.schemas.enums import DocStatus
 from app.schemas.metadata import GovernanceBlock
 
 _PAGE_SIZE = 50            # 문서 관리 목록 한 페이지 행 수(대량에서도 화면이 안 먹통)
@@ -44,12 +44,14 @@ def review(request):
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
             return redirect("console_review")
 
+        from app.db.repositories import OrgRepository
         pending = svc.list_pending()
         doc_id = request.GET.get("doc") or (pending[0]["doc_id"] if pending else None)
         view = svc.get_review(doc_id) if doc_id else None
         return render(request, "console/review.html", {
             "pending": pending, "view": view, "opts": ENUM_OPTIONS,
             "departments": system_config.departments(),
+            "node_opts": _org_options(OrgRepository(session)),
         })
     finally:
         session.close()
@@ -63,17 +65,18 @@ def review_submit(request, doc_id: str):
         svc = bridge.get_review_service(session)
         p = request.POST
         gov = GovernanceBlock(
-            sensitivity_level=SensitivityLevel(p["sensitivity"]) if p.get("sensitivity") else None,
-            contains_pii=None if p.get("pii") not in ("yes", "no") else p["pii"] == "yes",
-            pii_types=[PiiType(x) for x in p.getlist("pii_types")],
-            access_groups=p.getlist("groups"),
-            owner=p.get("owner") or None,
+            access_selections=p.getlist("access"),   # "node:N" / "head:N"; 빈 값=팀 전체
+            author_id=p.get("author_id") or _email_of(request.user),
+            author_name=p.get("author_name") or None,
+            reporting_line=[x for x in p.getlist("reporting_line") if x],
         )
         cls = {"doc_type": p.get("doc_type"), "language": p.get("language"),
                "title_normalized": p.get("title") or None,
                "summary": p.get("summary") or None,
                "department": p.get("department") or None,
-               "topics": [t.strip() for t in (p.get("topics") or "").split(",") if t.strip()]}
+               "keywords": [k.strip() for k in (p.get("keywords") or "").split(",") if k.strip()],
+               "related_parties": [x.strip() for x in (p.get("related_parties") or "").split(",") if x.strip()]}
+        # expected_qa 는 AI가 채운 값을 유지(폼에서 덮어쓰지 않음)
         life = {"status": p.get("lifecycle_status"),
                 "effective_date": p.get("effective_date") or None,
                 "expiry_date": p.get("expiry_date") or None}
@@ -128,9 +131,13 @@ def docs(request):
                     doc_type=doc.classification.doc_type.value, limit=200)
                 if d["doc_id"] != sel]
 
-        from app.db.repositories import UserRepository
-        known = set(system_config.access_groups()) | \
-            set(UserRepository(session).known_access_groups())
+        from app.db.repositories import OrgRepository
+        node_opts = _org_options(OrgRepository(session))
+        if doc is not None:
+            sels = set(doc.governance.access_selections)
+            for n in node_opts:
+                n["sel_node"] = f"node:{n['id']}" in sels
+                n["sel_head"] = f"head:{n['id']}" in sels
 
         today = date.today()
         expiring_soon = mgr.repo.count_expiring_soon(
@@ -144,7 +151,7 @@ def docs(request):
             "docs": doc_list, "sel": sel, "doc": doc,
             "supersede_candidates": supersede_candidates,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
-            "opts": ENUM_OPTIONS, "known_groups": sorted(known),
+            "opts": ENUM_OPTIONS, "node_opts": node_opts,
             "statuses": [s.value for s in DocStatus], "doc_types": ENUM_OPTIONS["doc_type"],
             "total": total, "page": page, "num_pages": num_pages,
             "page_start": offset + 1 if total else 0,
@@ -209,10 +216,9 @@ def docs_action(request, doc_id: str):
             doc = mgr.get(doc_id)
             gov = doc.governance
             new_gov = GovernanceBlock(
-                sensitivity_level=SensitivityLevel(p["sensitivity"]),
-                contains_pii=gov.contains_pii, pii_types=gov.pii_types,
-                access_groups=p.getlist("groups"),
-                owner=p.get("owner") or None)
+                access_selections=p.getlist("access"),
+                author_id=gov.author_id, author_name=gov.author_name,
+                reporting_line=gov.reporting_line)
             mgr.update_metadata(doc_id, governance=new_gov,
                                 lifecycle_overrides={"status": p.get("lifecycle_status")})
             messages.success(request, "저장 완료 — 검색 필터에 즉시 반영되었습니다.")

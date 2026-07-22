@@ -37,22 +37,22 @@ def main() -> int:
     staffer, _ = DjUser.objects.get_or_create(
         username="hong@company.com", defaults={"email": "hong@company.com"})
 
-    # 도메인 권한 사용자 + 샘플 문서 색인 (오프라인)
+    # 조직도 + 사용자 배정 + 샘플 문서 색인 (오프라인)
     session = bridge.open_session()
-    from app.db.repositories import UserRepository
-    from app.schemas.enums import SensitivityLevel
+    from app.db.repositories import OrgRepository, UserRepository
     from app.schemas.metadata import GovernanceBlock
+    org = OrgRepository(session)
+    team = org.create_node("People팀", "team")
+    part = org.create_node("인사파트", "part", parent_id=team.id)
     users = UserRepository(session)
-    users.upsert_user_with_role("hong@company.com", position="사원", job="일반")
-    users.upsert_user_with_role("admin@company.com", position="부장", job="급여")
+    users.set_org("hong@company.com", part.id, "파트원")
+    users.set_org("admin@company.com", team.id, "팀장")
     session.commit()
 
     svc = bridge.get_review_service(session)
     doc_id = svc.start_ingestion("samples/annual_leave_policy.txt", ingested_by="smoke")
-    r = svc.submit_review(doc_id, governance=GovernanceBlock(
-        sensitivity_level=SensitivityLevel.INTERNAL, contains_pii=False,
-        access_groups=["hr_core"], owner="mgr"),
-        lifecycle_overrides={"status": "active"})
+    r = svc.submit_review(doc_id, governance=GovernanceBlock(),   # 팀 전체
+                          lifecycle_overrides={"status": "active"})
     assert r.ok, f"색인 실패: {r.missing_fields}{r.errors}"
     session.close()
 

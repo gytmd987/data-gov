@@ -2,7 +2,6 @@
 
 from datetime import date
 
-from app.schemas.enums import SensitivityLevel
 from app.search.access import AccessPolicy, UserContext
 from app.search.answer import build_answer_prompt, generate_answer, parse_citations
 from app.search.fusion import reciprocal_rank_fusion
@@ -12,38 +11,39 @@ from app.search.retriever import HybridRetriever
 from app.search.types import RetrievedChunk
 
 
-def _chunk(cid, text="본문", *, groups=("hr_core",), rank=1, status="active",
+def _chunk(cid, text="본문", *, groups=("n:1",), status="active",
            expiry=None, superseded=None, title="문서", page=1, score=0.0):
     return RetrievedChunk(
         chunk_id=cid, text=text, score=score,
         payload={
             "chunk_id": cid, "parent_doc_id": cid.split("::")[0],
-            "access_groups": list(groups), "sensitivity_rank": rank,
+            "access_groups": list(groups),
             "status": status, "expiry_date": expiry, "superseded_by": superseded,
             "title": title, "page_no": page,
         })
 
 
-def _user(groups=("hr_core",), clearance=SensitivityLevel.CONFIDENTIAL):
-    return UserContext(user_id="u1", groups=frozenset(groups), clearance=clearance)
+def _user(groups=("n:1",)):
+    # groups = 조직 접근 토큰(n:{노드}, h:{노드})
+    return UserContext(user_id="u1", groups=frozenset(groups))
 
 
-# ── 접근통제 allows() ────────────────────────────────────────────────────────
-def test_allows_permits_matching():
+# ── 접근통제 allows() (조직 토큰) ────────────────────────────────────────────
+def test_allows_permits_matching_token():
     pol = AccessPolicy.for_user(_user(), today=date(2026, 7, 16))
     assert pol.allows(_chunk("d::0").payload)
 
 
-def test_allows_denies_group_mismatch():
-    pol = AccessPolicy.for_user(_user(groups=("payroll",)), today=date(2026, 7, 16))
-    assert not pol.allows(_chunk("d::0", groups=("hr_core",)).payload)
+def test_allows_denies_token_mismatch():
+    pol = AccessPolicy.for_user(_user(groups=("n:2",)), today=date(2026, 7, 16))
+    assert not pol.allows(_chunk("d::0", groups=("n:1",)).payload)
 
 
-def test_allows_denies_over_clearance():
-    pol = AccessPolicy.for_user(_user(clearance=SensitivityLevel.INTERNAL),
-                                today=date(2026, 7, 16))
-    # restricted(rank 3) > internal(rank 1)
-    assert not pol.allows(_chunk("d::0", rank=3).payload)
+def test_allows_head_token_matches_head_scoped_doc():
+    # 부서장(h:1)만 열람 가능한 문서 → 파트원(n:1)은 불가, 부서장(h:1)은 가능
+    doc = _chunk("d::0", groups=("h:1",)).payload
+    assert not AccessPolicy.for_user(_user(groups=("n:1",))).allows(doc)
+    assert AccessPolicy.for_user(_user(groups=("n:1", "h:1"))).allows(doc)
 
 
 def test_allows_denies_non_active_expired_superseded():
@@ -53,25 +53,18 @@ def test_allows_denies_non_active_expired_superseded():
     assert not pol.allows(_chunk("d::0", superseded="newdoc").payload)
 
 
-def test_allows_wildcard_open_to_all_groups():
-    # "*" = 전체 공개 — 그룹이 전혀 안 겹치는 사용자도 통과
-    pol = AccessPolicy.for_user(_user(groups=("payroll",)), today=date(2026, 7, 16))
+def test_allows_wildcard_open_to_all():
+    # "*" = 팀 전체 공개 — 토큰이 전혀 안 겹쳐도 통과
+    pol = AccessPolicy.for_user(_user(groups=("n:2",)), today=date(2026, 7, 16))
     assert pol.allows(_chunk("d::0", groups=("*",)).payload)
-
-
-def test_allows_wildcard_still_checks_clearance():
-    # 전체 공개여도 민감도 등급은 그대로 적용
-    pol = AccessPolicy.for_user(_user(clearance=SensitivityLevel.INTERNAL),
-                                today=date(2026, 7, 16))
-    assert not pol.allows(_chunk("d::0", groups=("*",), rank=3).payload)
 
 
 def test_to_qdrant_filter_builds():
     pol = AccessPolicy.for_user(_user())
     f = pol.to_qdrant_filter()
-    # must 조건 3개(groups/sensitivity/status)
-    assert len(f.must) == 3
-    # 그룹 필터에 전체 공개 센티널 "*" 포함(전체 공개 문서도 후보에 들어오도록)
+    # must 조건 2개(access_groups/status)
+    assert len(f.must) == 2
+    # 그룹 필터에 팀 전체 센티널 "*" 포함(공개 문서도 후보에 들어오도록)
     assert "*" in f.must[0].match.any
 
 
@@ -83,22 +76,18 @@ def test_include_past_permits_expired_superseded_archived():
     assert pol.allows(_chunk("d::0", superseded="newdoc").payload)
 
 
-def test_include_past_still_enforces_group_and_clearance():
-    # 과거 포함이어도 그룹 불일치는 거부
-    pol = AccessPolicy.for_user(_user(groups=("payroll",)),
+def test_include_past_still_enforces_tokens():
+    # 과거 포함이어도 토큰 불일치는 거부
+    pol = AccessPolicy.for_user(_user(groups=("n:2",)),
                                 today=date(2026, 7, 16), include_past=True)
-    assert not pol.allows(_chunk("d::0", groups=("hr_core",), status="expired").payload)
-    # 민감도 초과도 거부
-    pol2 = AccessPolicy.for_user(_user(clearance=SensitivityLevel.INTERNAL),
-                                 today=date(2026, 7, 16), include_past=True)
-    assert not pol2.allows(_chunk("d::0", rank=3, status="expired").payload)
+    assert not pol.allows(_chunk("d::0", groups=("n:1",), status="expired").payload)
 
 
 def test_to_qdrant_filter_include_past_drops_status():
     pol = AccessPolicy.for_user(_user(), include_past=True)
     f = pol.to_qdrant_filter()
-    # status==active 조건이 빠져 groups/sensitivity 2개만 남음
-    assert len(f.must) == 2
+    # status==active 조건이 빠져 access_groups 1개만 남음
+    assert len(f.must) == 1
 
 
 # ── RRF 융합 ─────────────────────────────────────────────────────────────────
@@ -172,9 +161,9 @@ class FakeAudit:
 
 
 def test_pipeline_filters_restricted_and_audits():
-    # 허용 청크 + 권한초과(rank 3) 청크를 dense가 함께 반환 → 후처리에서 배제되어야
-    allowed = _chunk("ok::0", "연차는 15일 [approved]", rank=1, title="연차규정")
-    restricted = _chunk("secret::0", "급여 정보", rank=3, title="급여표")
+    # 허용 청크 + 다른 조직(n:2) 청크를 dense가 함께 반환 → 후처리에서 배제되어야
+    allowed = _chunk("ok::0", "연차는 15일 [approved]", groups=("n:1",), title="연차규정")
+    restricted = _chunk("secret::0", "급여 정보", groups=("n:2",), title="급여표")
     retriever = HybridRetriever(dense=FakeDense([allowed, restricted]))
     reranker = FakeReranker([0.9, 0.8])
     audit = FakeAudit()
@@ -182,7 +171,7 @@ def test_pipeline_filters_restricted_and_audits():
         retriever=retriever, reranker=reranker,
         llm=FakeLLM("연차는 15일입니다 [1]."), audit=audit, top_k=5)
 
-    user = _user(clearance=SensitivityLevel.INTERNAL)   # rank 1 → restricted 제외
+    user = _user(groups=("n:1",))   # n:2 문서는 접근 불가 → 제외
     ans = pipe.answer("연차 며칠?", user, today=date(2026, 7, 16))
 
     used_ids = [c.chunk_id for c in ans.used_chunks]

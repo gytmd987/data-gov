@@ -26,8 +26,6 @@ def _str_enum(name: str, values: list[str]) -> type[Enum]:
 
 # ── 설정 기반(편집 가능) ─────────────────────────────────────────────────────
 DocType = _str_enum("DocType", system_config.doc_types())
-SensitivityLevel = _str_enum("SensitivityLevel", system_config.sensitivity_levels())
-PiiType = _str_enum("PiiType", system_config.pii_types())
 
 
 # ── 구조적(코드 고정) ────────────────────────────────────────────────────────

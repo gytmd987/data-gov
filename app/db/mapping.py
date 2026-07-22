@@ -24,10 +24,8 @@ def document_row_values(doc: DocumentMetadata, status: IngestionStatus) -> dict[
         "status": status.value,
         "doc_type": cls.doc_type.value if cls.doc_type else None,
         "title": cls.title_normalized,
-        "sensitivity_level": gov.sensitivity_level.value if gov.sensitivity_level else None,
-        "contains_pii": gov.contains_pii,
-        "owner": gov.owner,
-        "access_groups": list(gov.access_groups),
+        "owner": gov.author_name or gov.author_id,       # 작성자(레거시 owner 컬럼 재사용)
+        "access_groups": list(gov.access_tokens),        # 조직 열람 토큰
         "lifecycle_status": life.status.value if life.status else None,
         "effective_date": life.effective_date,
         "expiry_date": life.expiry_date,

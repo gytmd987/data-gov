@@ -87,15 +87,13 @@
       <div class="field"><label>민감도</label>
         <select name="sensitivity">{% for o in opts.sensitivity_level %}
           <option value="{{ o }}" {% if doc.governance.sensitivity_level.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
-      <div class="field"><label>열람 가능 그룹</label>
-        <details class="dd" data-placeholder="(선택하세요)"><summary></summary><div class="menu">
-          <label><input type="checkbox" name="groups" value="*" data-exclusive {% if '*' in doc.governance.access_groups %}checked{% endif %}> 🌐 전체 공개(제한 없음)</label>
-          {% for g in known_groups %}
-          <label><input type="checkbox" name="groups" value="{{ g }}" {% if g in doc.governance.access_groups %}checked{% endif %}> {{ g|klabel }}</label>
-          {% endfor %}
+      <div class="field"><label>열람 가능 대상 <span class="msg-note">(기본: 팀 전체)</span></label>
+        <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+          {% for n in node_opts %}
+          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
+          <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
+          {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
         </div></details></div>
-      <div class="field"><label>책임자</label>
-        <input name="owner" value="{{ doc.governance.owner|default_if_none:'' }}"></div>
       <div class="field"><label>상태</label>
         <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
           <option value="{{ o }}" {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>

@@ -9,18 +9,8 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
-from app.db.models import (
-    AuditLog,
-    Chunk,
-    Document,
-    Feedback,
-    Group,
-    OrgNode,
-    User,
-    UserGroup,
-)
+from app.db.models import AuditLog, Chunk, Document, Feedback, OrgNode, User
 from app.org.tree import OrgNodeView, OrgTree
-from app.schemas.enums import SensitivityLevel
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
 from app.search.access import UserContext
@@ -191,85 +181,27 @@ class DocumentRepository:
 
 
 class UserRepository:
+    """사용자 ↔ 조직도 배정 + 접근 컨텍스트. 접근은 조직 노드/역할로만 판정한다."""
+
     def __init__(self, session: Session) -> None:
         self.session = session
-
-    def upsert_group(self, group_name: str, description: str | None = None) -> None:
-        row = self.session.get(Group, group_name)
-        if row is None:
-            self.session.add(Group(group_name=group_name, description=description))
-        else:
-            row.description = description
-        self.session.flush()
-
-    def upsert_user(self, user_id: str, clearance: SensitivityLevel,
-                    display_name: str | None = None) -> None:
-        row = self.session.get(User, user_id)
-        if row is None:
-            self.session.add(User(user_id=user_id, clearance=clearance.value,
-                                  display_name=display_name))
-        else:
-            row.clearance = clearance.value
-            row.display_name = display_name
-        self.session.flush()
-
-    def add_user_to_group(self, user_id: str, group_name: str) -> None:
-        exists = self.session.get(UserGroup, {"user_id": user_id, "group_name": group_name})
-        if exists is None:
-            self.session.add(UserGroup(user_id=user_id, group_name=group_name))
-            self.session.flush()
-
-    def upsert_user_with_role(
-        self, user_id: str, position: str, job: str, display_name: str | None = None,
-    ) -> tuple[set[str], str]:
-        """직책·직무로부터 config/system.yaml 규칙에 따라 그룹·clearance를 계산해 사용자 생성.
-
-        같은 직책이라도 직무에 따라, 같은 직무라도 직책에 따라 권한이 달라진다.
-        반환: (부여된 access_groups, clearance)
-        """
-        from app import system_config
-
-        groups, clearance = system_config.resolve_access(position, job)
-        # 그룹 레코드 보장
-        for g in groups:
-            self.upsert_group(g)
-        row = self.session.get(User, user_id)
-        if row is None:
-            self.session.add(User(user_id=user_id, clearance=clearance,
-                                  display_name=display_name, position=position, job=job))
-        else:
-            row.clearance = clearance
-            row.display_name = display_name
-            row.position = position
-            row.job = job
-        self.session.flush()
-        for g in groups:
-            self.add_user_to_group(user_id, g)
-        return groups, clearance
-
-    def known_access_groups(self) -> list[str]:
-        return list(self.session.execute(select(Group.group_name)).scalars())
 
     def list_users(self) -> list[dict[str, Any]]:
         out = []
         for u in self.session.execute(select(User).order_by(User.user_id)).scalars():
-            groups = list(self.session.execute(
-                select(UserGroup.group_name).where(UserGroup.user_id == u.user_id)
-            ).scalars())
             out.append({"user_id": u.user_id, "display_name": u.display_name,
-                        "position": u.position, "job": u.job,
-                        "clearance": u.clearance, "groups": groups,
                         "org_node_id": u.org_node_id, "org_role": u.org_role})
         return out
+
+    def get_user(self, user_id: str) -> Optional[User]:
+        return self.session.get(User, user_id)
 
     def set_org(self, user_id: str, node_id: Optional[int], role: Optional[str],
                 display_name: Optional[str] = None) -> User:
         """사용자를 조직 노드·역할에 배정(없으면 생성). 접근제어의 근거."""
-        from app import system_config
         row = self.session.get(User, user_id)
         if row is None:
-            row = User(user_id=user_id, display_name=display_name,
-                       clearance=system_config.sensitivity_levels()[0])
+            row = User(user_id=user_id, display_name=display_name)
             self.session.add(row)
         if display_name is not None:
             row.display_name = display_name
@@ -279,16 +211,14 @@ class UserRepository:
         return row
 
     def get_user_context(self, user_id: str) -> Optional[UserContext]:
+        """조직 노드/역할 → 접근 토큰(UserContext.groups)."""
+        from app.org.tree import user_tokens
         user = self.session.get(User, user_id)
         if user is None:
             return None
-        groups = self.session.execute(
-            select(UserGroup.group_name).where(UserGroup.user_id == user_id)
-        ).scalars()
         return UserContext(
             user_id=user_id,
-            groups=frozenset(groups),
-            clearance=SensitivityLevel(user.clearance),
+            groups=frozenset(user_tokens(user.org_node_id, user.org_role)),
         )
 
 

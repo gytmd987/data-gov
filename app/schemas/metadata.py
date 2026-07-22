@@ -19,16 +19,12 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app import system_config
-
 from .enums import (
     ChunkType,
     DocStatus,
     DocType,
     FileFormat,
     Language,
-    PiiType,
-    SensitivityLevel,
 )
 
 
@@ -50,26 +46,30 @@ class IdentificationBlock(BaseModel):
     ingested_at: datetime
     ingested_by: str
     page_count: Optional[int] = None
+    last_modified: Optional[datetime] = None   # 문서 최종 수정일(파일 속성)
 
 
 # ── 블록 2. 내용 분류 (LLM 추론 → 사람 확인) ────────────────────────────────
 class ClassificationBlock(BaseModel):
     doc_type: DocType = DocType.UNKNOWN
     title_normalized: Optional[str] = None
-    summary: Optional[str] = None
-    department: Optional[str] = None
-    team: Optional[str] = None
-    topics: list[str] = Field(default_factory=list)   # controlled tag (사전 검증은 validator에서)
+    summary: Optional[str] = None                        # [AI 필수]
+    keywords: list[str] = Field(default_factory=list)    # [AI 필수] 핵심 키워드(Q&A와 중복 금지)
+    expected_qa: list[dict] = Field(default_factory=list)  # [AI 필수] [{question, answer}, ...]
+    related_parties: list[str] = Field(default_factory=list)  # 유관 조직/임직원(AI 제안)
+    department: Optional[str] = None                     # 작성 부서(조직 노드 이름)
     language: Language = Language.UNKNOWN
 
 
-# ── 블록 3. 거버넌스·접근통제 (사람 필수 확인) ──────────────────────────────
+# ── 블록 3. 접근통제 (조직도 기반) ──────────────────────────────────────────
 class GovernanceBlock(BaseModel):
-    sensitivity_level: Optional[SensitivityLevel] = None   # 필수 (미확정 시 적재 차단)
-    contains_pii: Optional[bool] = None                    # 필수
-    pii_types: list[PiiType] = Field(default_factory=list)
-    access_groups: list[str] = Field(default_factory=list) # 필수 (비어 있으면 차단)
-    owner: Optional[str] = None                            # 필수
+    # access_selections: 사람이 고른 접근 대상. 항목은 "node:<id>"(부서 전체) 또는
+    #   "head:<id>"(부서장만). 빈 값이면 팀 전체 공개. access_tokens 는 그 확장 결과(payload용).
+    access_selections: list[str] = Field(default_factory=list)
+    access_tokens: list[str] = Field(default_factory=list)
+    author_id: Optional[str] = None                      # 작성자 ID(기본값 현재 유저)
+    author_name: Optional[str] = None                    # 작성자 이름
+    reporting_line: list[str] = Field(default_factory=list)  # 보고선(조직도 상위 라인)
 
 
 # ── 블록 4. 생애주기 (LLM 추론 + 사람 확인) ─────────────────────────────────
@@ -125,17 +125,18 @@ def doc_level_payload(doc: DocumentMetadata) -> dict:
     문서 관리에서 메타데이터/상태가 바뀌면 이 필드만 Qdrant에 set_payload 로 갱신한다."""
     gov = doc.governance
     life = doc.lifecycle
+    cls = doc.classification
     return {
-        # 접근통제 (하드 필터)
-        "access_groups": gov.access_groups,
-        "sensitivity_rank": (system_config.sensitivity_rank(gov.sensitivity_level)
-                             if gov.sensitivity_level else None),
+        # 접근통제 (하드 필터) — 조직도 열람 토큰. 빈 값이면 팀 전체("*").
+        "access_groups": list(gov.access_tokens) or ["*"],
         # 생애주기 (기본 검색 제외 조건)
         "status": life.status.value,
         "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,
         "superseded_by": life.superseded_by,
         # 인용·평가용
         "doc_type": doc.classification.doc_type.value,
-        "title": doc.classification.title_normalized,
+        "title": cls.title_normalized,
         "source_filename": doc.identification.source_filename,
+        # 검색 보조(키워드) — 임베딩 텍스트 합류는 pipeline.index 에서 처리
+        "keywords": list(cls.keywords),
     }

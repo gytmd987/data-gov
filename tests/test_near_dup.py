@@ -7,8 +7,6 @@ from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from app.demo.offline import build_offline_review_service, make_offline_engine
-from app.db.repositories import UserRepository
-from app.schemas.enums import SensitivityLevel
 from app.schemas.metadata import GovernanceBlock
 
 
@@ -16,8 +14,6 @@ from app.schemas.metadata import GovernanceBlock
 def svc(tmp_path):
     session = Session(make_offline_engine(), expire_on_commit=False)
     qdrant = QdrantClient(location=":memory:")
-    UserRepository(session).upsert_group("hr_core")
-    session.commit()
     return build_offline_review_service(session, qdrant), tmp_path
 
 
@@ -25,9 +21,8 @@ def _ingest_and_index(svc, tmp_path, name, text):
     p = tmp_path / name
     p.write_text(text, encoding="utf-8")
     doc_id = svc.start_ingestion(str(p), ingested_by="t")
-    gov = GovernanceBlock(sensitivity_level=SensitivityLevel.INTERNAL,
-                          contains_pii=False, access_groups=["hr_core"], owner="mgr")
-    svc.submit_review(doc_id, governance=gov, lifecycle_overrides={"status": "active"})
+    svc.submit_review(doc_id, governance=GovernanceBlock(),
+                      lifecycle_overrides={"status": "active"})
     return doc_id
 
 

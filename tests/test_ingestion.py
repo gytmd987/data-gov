@@ -6,14 +6,13 @@ import docx
 import openpyxl
 import pytest
 
-from app import system_config
 from app.ingestion.chunking import chunk_elements
 from app.ingestion.enrichment import enrich
 from app.ingestion.intake import DuplicateError, detect_format, intake
 from app.ingestion.parsers import get_parser
 from app.ingestion.parsers.base import ParsedElement
 from app.ingestion.pipeline import apply_review, index, run_auto_stages
-from app.schemas.enums import ChunkType, DocStatus, DocType, FileFormat, SensitivityLevel
+from app.schemas.enums import ChunkType, DocStatus, DocType, FileFormat
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata, GovernanceBlock, IdentificationBlock
 
@@ -114,18 +113,21 @@ def _ident(doc_id="doc-1", fmt=FileFormat.TXT):
 def test_enrich_fills_high_conf_and_skips_low_conf():
     doc = DocumentMetadata(identification=_ident())
     llm = FakeLLM({
-        "doc_type": {"value": "policy", "confidence": 0.95},
+        "doc_type": {"value": "report", "confidence": 0.95},
         "language": {"value": "ko", "confidence": 0.99},
         "title_normalized": {"value": "연차 규정", "confidence": 0.9},
         "department": {"value": "인사팀", "confidence": 0.3},  # 낮음 → 미채움
-        "topics": ["연차", "휴가"],
+        "summary": {"value": "연차 규정 요약", "confidence": 0.9},
+        "keywords": ["연차", "휴가"],
+        "expected_qa": [{"question": "연차 며칠?", "answer": "15일"}],
         "status": {"value": "active", "confidence": 0.8},
     })
     enrich(doc, "연차는 15일", client=llm, model_name="qwen3.6-27b")
-    assert doc.classification.doc_type == DocType.POLICY
+    assert doc.classification.doc_type == DocType.REPORT
     assert doc.classification.title_normalized == "연차 규정"
     assert doc.classification.department is None            # 낮은 confidence
-    assert doc.classification.topics == ["연차", "휴가"]
+    assert doc.classification.keywords == ["연차", "휴가"]
+    assert doc.classification.expected_qa == [{"question": "연차 며칠?", "answer": "15일"}]
     assert doc.lifecycle.status == DocStatus.ACTIVE
     # auto_filled 기록에는 낮은 confidence 필드도 남는다
     fields = {a.field for a in doc.provenance.auto_filled}
@@ -147,8 +149,11 @@ class FakeIndexer:
 
 
 _GOOD_LLM = FakeLLM({
-    "doc_type": {"value": "policy", "confidence": 0.95},
+    "doc_type": {"value": "report", "confidence": 0.95},
     "language": {"value": "ko", "confidence": 0.99},
+    "summary": {"value": "요약", "confidence": 0.9},
+    "keywords": ["연차"],
+    "expected_qa": [{"question": "연차?", "answer": "15일"}],
     "status": {"value": "active", "confidence": 0.9},
 })
 
@@ -162,15 +167,10 @@ def test_full_pipeline_happy_path(tmp_path: Path):
     assert ctx.status == IngestionStatus.PENDING_REVIEW
     assert len(ctx.chunks) == 2
 
-    gov = GovernanceBlock(
-        sensitivity_level=SensitivityLevel.INTERNAL,
-        contains_pii=False,
-        access_groups=["hr_core"],
-        owner="hr.manager",
-    )
+    # 접근 토큰은 조직도에서 확장되지만, 직접 apply_review 테스트는 토큰을 직접 지정.
+    gov = GovernanceBlock(access_tokens=["n:1"], author_name="hr.manager")
     result = apply_review(ctx, governance=gov,
-                          lifecycle_overrides={"status": DocStatus.ACTIVE},
-                          known_access_groups=["hr_core"])
+                          lifecycle_overrides={"status": DocStatus.ACTIVE})
     assert result.ok
     assert ctx.status == IngestionStatus.VALIDATED
 
@@ -178,27 +178,23 @@ def test_full_pipeline_happy_path(tmp_path: Path):
     n = index(ctx, embedder=embedder, indexer=indexer)
     assert n == 2
     assert ctx.status == IngestionStatus.INDEXED
-    # payload가 접근통제 필드를 상속했는지
+    # payload가 접근통제 토큰을 상속했는지
     _, payloads, _ = indexer.upserted
-    assert payloads[0]["access_groups"] == ["hr_core"]
-    assert payloads[0]["sensitivity_rank"] == system_config.sensitivity_rank(SensitivityLevel.INTERNAL)
+    assert payloads[0]["access_groups"] == ["n:1"]
 
 
-def test_full_pipeline_blocks_on_missing_governance(tmp_path: Path):
+def test_full_pipeline_blocks_on_draft_status(tmp_path: Path):
     p = tmp_path / "doc.txt"
     p.write_text("내용입니다.", encoding="utf-8")
     ctx = run_auto_stages(str(p), ingested_by="admin",
                           llm=_GOOD_LLM, llm_model="qwen3.6-27b")
 
-    # owner 없음 → 차단
-    gov = GovernanceBlock(
-        sensitivity_level=SensitivityLevel.INTERNAL,
-        contains_pii=False, access_groups=["hr_core"], owner=None)
+    # draft 상태로는 색인 불가 → 차단
+    gov = GovernanceBlock(access_tokens=["n:1"])
     result = apply_review(ctx, governance=gov,
-                          lifecycle_overrides={"status": DocStatus.ACTIVE})
+                          lifecycle_overrides={"status": DocStatus.DRAFT})
     assert not result.ok
     assert ctx.status == IngestionStatus.BLOCKED
-    assert "governance.owner" in result.missing_fields
 
     # 색인 시도 시 차단 상태라 거부
     with pytest.raises(ValueError):
@@ -211,17 +207,11 @@ def test_blocked_then_corrected_indexes(tmp_path: Path):
     ctx = run_auto_stages(str(p), ingested_by="admin",
                           llm=_GOOD_LLM, llm_model="qwen3.6-27b")
 
-    bad_gov = GovernanceBlock(sensitivity_level=None, contains_pii=None,
-                              access_groups=[], owner=None)
-    apply_review(ctx, governance=bad_gov,
-                 lifecycle_overrides={"status": DocStatus.ACTIVE})
+    apply_review(ctx, governance=GovernanceBlock(),
+                 lifecycle_overrides={"status": DocStatus.DRAFT})
     assert ctx.status == IngestionStatus.BLOCKED
 
-    good_gov = GovernanceBlock(
-        sensitivity_level=SensitivityLevel.CONFIDENTIAL, contains_pii=False,
-        access_groups=["hr_core"], owner="hr.manager")
-    result = apply_review(ctx, governance=good_gov,
-                          lifecycle_overrides={"status": DocStatus.ACTIVE},
-                          known_access_groups=["hr_core"])
+    result = apply_review(ctx, governance=GovernanceBlock(access_tokens=["n:1"]),
+                          lifecycle_overrides={"status": DocStatus.ACTIVE})
     assert result.ok
     assert ctx.status == IngestionStatus.VALIDATED

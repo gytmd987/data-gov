@@ -29,8 +29,6 @@ from app.schemas.enums import (
     DocStatus,
     DocType,
     Language,
-    PiiType,
-    SensitivityLevel,
 )
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
@@ -42,10 +40,16 @@ OCRFn = Callable[[bytes], str]
 ENUM_OPTIONS: dict[str, list[str]] = {
     "doc_type": [e.value for e in DocType],
     "language": [e.value for e in Language],
-    "sensitivity_level": [e.value for e in SensitivityLevel],
-    "pii_types": [e.value for e in PiiType],
     "lifecycle_status": [e.value for e in DocStatus],
 }
+
+
+def _expand_access_tokens(session, governance: GovernanceBlock) -> GovernanceBlock:
+    """access_selections(node:/head:) → 조직 트리로 확장한 access_tokens 를 채운다."""
+    from app.db.repositories import OrgRepository
+    tree = OrgRepository(session).load_tree()
+    return governance.model_copy(update={
+        "access_tokens": tree.readable_tokens(governance.access_selections)})
 
 
 @dataclass
@@ -177,9 +181,10 @@ class ReviewService:
                 "doc_type": cls.doc_type.value,
                 "title_normalized": cls.title_normalized,
                 "summary": cls.summary,
+                "keywords": cls.keywords,
+                "expected_qa": cls.expected_qa,
+                "related_parties": cls.related_parties,
                 "department": cls.department,
-                "team": cls.team,
-                "topics": cls.topics,
                 "language": cls.language.value,
             },
             lifecycle={
@@ -189,20 +194,13 @@ class ReviewService:
                 "version": life.version,
             },
             governance={
-                "sensitivity_level": gov.sensitivity_level.value if gov.sensitivity_level else None,
-                "contains_pii": gov.contains_pii,
-                "pii_types": [p.value for p in gov.pii_types],
-                "access_groups": gov.access_groups,
-                "owner": gov.owner,
+                "access_selections": gov.access_selections,
+                "author_id": gov.author_id,
+                "author_name": gov.author_name,
+                "reporting_line": gov.reporting_line,
             },
-            known_groups=self._known_groups(),
             similar_candidates=repo.get_similar_candidates(doc_id),
         )
-
-    def _known_groups(self) -> list[str]:
-        """선택/검증 가능한 접근 그룹 = config 어휘 ∪ DB에 실재하는 그룹."""
-        return sorted(set(system_config.access_groups())
-                      | set(self.users.known_access_groups()))
 
     # ── 검토 제출(검증·차단·색인) ────────────────────────────────────────────
     def submit_review(
@@ -218,12 +216,11 @@ class ReviewService:
         if ctx is None:
             raise ValueError(f"문서 없음: {doc_id}")
 
+        governance = _expand_access_tokens(self.session, governance)
         result = apply_review(
             ctx, governance=governance,
             classification_overrides=classification_overrides,
             lifecycle_overrides=lifecycle_overrides,
-            known_access_groups=self._known_groups(),
-            allowed_topics=None,
         )
         save_ingestion(repo, ctx)
 

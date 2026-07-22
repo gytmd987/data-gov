@@ -74,7 +74,8 @@ class DocumentManager:
         if doc is None:
             raise ValueError(f"문서 없음: {doc_id}")
         if governance is not None:
-            doc.governance = governance
+            from app.review.service import _expand_access_tokens
+            doc.governance = _expand_access_tokens(self.session, governance)
         if classification_overrides:
             data = doc.classification.model_dump()
             data.update(classification_overrides)

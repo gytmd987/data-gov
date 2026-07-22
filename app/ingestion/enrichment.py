@@ -61,18 +61,28 @@ def build_enrichment_schema() -> dict[str, Any]:
             "language": enum_field([e.value for e in Language]),
             "status": enum_field([e.value for e in DocStatus]),
             "title_normalized": free_field(),
-            "summary": free_field(),
-            "department": free_field(),
-            "team": free_field(),
-            "topics": {
-                "type": "array",
-                "items": {"type": "string"},
+            "summary": free_field(),                # [필수] 요약
+            "keywords": {                           # [필수] 핵심 키워드(Q&A와 중복 금지)
+                "type": "array", "items": {"type": "string"},
             },
+            "expected_qa": {                        # [필수] 예상 질의응답
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"question": {"type": "string"},
+                                   "answer": {"type": "string"}},
+                    "required": ["question", "answer"],
+                },
+            },
+            "related_parties": {                    # 유관 조직/임직원(제안)
+                "type": "array", "items": {"type": "string"},
+            },
+            "department": free_field(),
             "effective_date": free_field(),   # ISO date 문자열 or 빈값
             "expiry_date": free_field(),
             "version": free_field(),
         },
-        "required": ["doc_type", "language"],
+        "required": ["doc_type", "language", "summary", "keywords", "expected_qa"],
     }
 
 
@@ -82,7 +92,10 @@ _PROMPT_TEMPLATE = """당신은 인사 문서의 메타데이터를 분류하는
 규칙:
 - doc_type/language/status 는 반드시 제공된 enum 값 중에서만 고르세요.
 - 확신이 없으면 doc_type 은 "unknown", language 는 "unknown" 을 쓰고 confidence 를 낮게 주세요.
-- 민감도, 개인정보, 접근권한, 소유자(owner) 는 절대 추론하지 마세요(사람이 채웁니다).
+- **summary(요약), keywords(핵심 키워드), expected_qa(예상 질의응답) 는 반드시 채우세요.**
+  문서 내용으로 답할 수 있는 실제 질문과 답을 expected_qa 에 3개 이상 만드세요.
+  keywords 는 expected_qa 와 겹치지 않는 핵심 용어로만 고르세요(중복 금지).
+- 접근권한/작성자/보고선 은 절대 추론하지 마세요(사람이 조직도에서 지정합니다).
 - 날짜는 알 수 없으면 value 를 빈 문자열로 두세요.
 
 파일명: {filename}
@@ -156,12 +169,21 @@ def enrich(
         cls.summary = v[0]
     if (v := take("department")) is not None:
         cls.department = v[0]
-    if (v := take("team")) is not None:
-        cls.team = v[0]
 
-    topics = result.get("topics")
-    if isinstance(topics, list):
-        cls.topics = [str(t) for t in topics if str(t).strip()]
+    keywords = result.get("keywords")
+    if isinstance(keywords, list):
+        cls.keywords = [str(t) for t in keywords if str(t).strip()]
+
+    related = result.get("related_parties")
+    if isinstance(related, list):
+        cls.related_parties = [str(t) for t in related if str(t).strip()]
+
+    qa = result.get("expected_qa")
+    if isinstance(qa, list):
+        cls.expected_qa = [
+            {"question": str(x.get("question", "")).strip(),
+             "answer": str(x.get("answer", "")).strip()}
+            for x in qa if isinstance(x, dict) and x.get("question")]
 
     if (v := take("status")) is not None:
         try:

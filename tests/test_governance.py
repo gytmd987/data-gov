@@ -1,17 +1,13 @@
-"""거버넌스 스키마·상태머신·검증/차단 로직 회귀 테스트."""
+"""거버넌스 스키마·상태머신·검증/차단 로직 회귀 테스트 (조직 접근 모델)."""
 
 from datetime import date, datetime
 
 import pytest
 
-from app import system_config
 from app.schemas.enums import (
     ChunkType,
     DocStatus,
-    DocType,
     FileFormat,
-    PiiType,
-    SensitivityLevel,
 )
 from app.schemas.ingestion import (
     IngestionStatus,
@@ -30,13 +26,7 @@ from app.governance.validator import validate_governance
 
 
 def _base_doc(**gov_overrides) -> DocumentMetadata:
-    gov = {
-        "sensitivity_level": SensitivityLevel.RESTRICTED,
-        "contains_pii": True,
-        "pii_types": [PiiType.SALARY],
-        "access_groups": ["hr_core"],
-        "owner": "hr.manager",
-    }
+    gov = {"access_tokens": ["n:1"], "author_name": "hr.manager"}
     gov.update(gov_overrides)
     return DocumentMetadata(
         identification=IdentificationBlock(
@@ -84,41 +74,14 @@ def test_indexed_is_terminal():
 
 # ── 거버넌스 검증 / 차단 ─────────────────────────────────────────────────────
 def test_valid_document_passes():
-    result = validate_governance(_base_doc(), known_access_groups=["hr_core", "hr_lead"])
+    result = validate_governance(_base_doc())
     assert result.ok
     assert result.as_status() == IngestionStatus.VALIDATED
 
 
-def test_missing_required_fields_blocks():
-    doc = _base_doc(sensitivity_level=None, owner=None)
-    result = validate_governance(doc)
-    assert not result.ok
-    assert "governance.sensitivity_level" in result.missing_fields
-    assert "governance.owner" in result.missing_fields
-    assert result.as_status() == IngestionStatus.BLOCKED
-
-
-def test_empty_access_groups_blocks():
-    result = validate_governance(_base_doc(access_groups=[]))
-    assert not result.ok
-    assert "governance.access_groups" in result.missing_fields
-
-
-def test_pii_flag_without_types_errors():
-    result = validate_governance(_base_doc(contains_pii=True, pii_types=[]))
-    assert not result.ok
-    assert any("pii_types" in e for e in result.errors)
-
-
-def test_unknown_access_group_errors():
-    result = validate_governance(_base_doc(access_groups=["ghost"]), known_access_groups=["hr_core"])
-    assert not result.ok
-    assert any("access_groups" in e for e in result.errors)
-
-
-def test_wildcard_access_group_is_always_valid():
-    # "*" = 전체 공개 센티널 — known 목록에 없어도 유효
-    result = validate_governance(_base_doc(access_groups=["*"]), known_access_groups=["hr_core"])
+def test_team_wide_default_is_valid():
+    # 접근 지정 없음(팀 전체) 문서도 유효
+    result = validate_governance(_base_doc(access_tokens=[]))
     assert result.ok
 
 
@@ -131,7 +94,7 @@ def test_draft_status_cannot_index():
 
 
 # ── 청크 payload 상속 (하드 필터 대비) ──────────────────────────────────────
-def test_chunk_payload_inherits_access_control():
+def test_chunk_payload_inherits_access_tokens():
     doc = _base_doc()
     chunk = ChunkMetadata(
         chunk_id="doc-1::0",
@@ -141,7 +104,12 @@ def test_chunk_payload_inherits_access_control():
         page_no=1,
     )
     payload = chunk.to_qdrant_payload(doc)
-    assert payload["access_groups"] == ["hr_core"]
-    assert payload["sensitivity_rank"] == system_config.sensitivity_rank(SensitivityLevel.RESTRICTED) == 3
+    assert payload["access_groups"] == ["n:1"]
     assert payload["status"] == "active"
     assert payload["chunk_type"] == "table"
+
+
+def test_team_wide_doc_payload_is_public_sentinel():
+    doc = _base_doc(access_tokens=[])
+    payload = ChunkMetadata(chunk_id="doc-1::0", parent_doc_id="doc-1").to_qdrant_payload(doc)
+    assert payload["access_groups"] == ["*"]
