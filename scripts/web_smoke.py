@@ -148,6 +148,45 @@ def main() -> int:
     assert "People팀" in body and "인터뷰파트" in body and "홍파트원" in body
     print("[조직도 ] 팀>그룹>파트 생성 · 사용자 배정 · 계층 표시 ✅")
 
+    # 11) 파트원 문서 등록 → 수정/삭제 요청 → 관리자 승인(삭제)
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    c.force_login(staffer)
+    up = SimpleUploadedFile("팀회식_공지.txt",
+                            "회식 공지. 이번 주 금요일 저녁 회식이 있습니다.".encode("utf-8"),
+                            content_type="text/plain")
+    assert c.post("/submit/", {"file": up}).status_code == 302
+    # 파트원의 문서 관리: 자기 소속 문서만, 삭제 요청 버튼
+    dpage = c.get("/console/docs/")
+    assert dpage.status_code == 200 and "요청" in dpage.content.decode()
+    # 방금 올린 문서 id 조회
+    s3 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository
+        mine = [d for d in DocumentRepository(s3).list_documents()
+                if d["filename"] == "팀회식_공지.txt"]
+        assert mine, "파트원 업로드 문서를 찾지 못함"
+        req_doc_id = mine[0]["doc_id"]
+    finally:
+        s3.close()
+    assert c.post(f"/console/docs/{req_doc_id}/request",
+                  {"request_type": "delete", "note": "중복"}).status_code == 302
+    print("[요청   ] 파트원 등록 · 자기부서 목록 · 삭제 요청 ✅")
+
+    # 관리자 승인 큐에서 삭제 승인 → 문서 제거
+    c.force_login(admin)
+    qpage = c.get("/console/requests/")
+    assert qpage.status_code == 200 and "팀회식_공지" in qpage.content.decode()
+    import re as _re
+    m = _re.search(r"/console/requests/(\d+)/resolve", qpage.content.decode())
+    assert m, "요청 승인 링크 없음"
+    assert c.post(f"/console/requests/{m.group(1)}/resolve", {"decision": "approve"}).status_code == 302
+    s4 = bridge.open_session()
+    try:
+        assert DocumentRepository(s4).get(req_doc_id) is None   # 삭제됨
+    finally:
+        s4.close()
+    print("[승인   ] 관리자 삭제 승인 → 문서 영구 삭제 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

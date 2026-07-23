@@ -25,6 +25,7 @@ _EXT_TO_FORMAT = {
     ".jpeg": FileFormat.JPG,
     ".png": FileFormat.PNG,
     ".txt": FileFormat.TXT,
+    ".eml": FileFormat.EMAIL,
 }
 
 

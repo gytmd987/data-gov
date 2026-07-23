@@ -20,6 +20,7 @@ _COLUMNS = [
     ("users", "job", "VARCHAR(64)"),
     ("users", "org_node_id", "INTEGER"),
     ("users", "org_role", "VARCHAR(16)"),
+    ("documents", "author_node_id", "INTEGER"),
 ]
 
 

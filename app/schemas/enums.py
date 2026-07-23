@@ -37,6 +37,8 @@ class FileFormat(str, Enum):
     JPG = "jpg"
     PNG = "png"
     TXT = "txt"
+    EMAIL = "email"    # .eml
+    OTHER = "other"
 
 
 class Language(str, Enum):

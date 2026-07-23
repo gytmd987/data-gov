@@ -9,6 +9,9 @@ urlpatterns = [
     path("docs/bulk", views.docs_bulk, name="console_docs_bulk"),
     path("docs/sweep", views.docs_sweep, name="console_docs_sweep"),
     path("docs/<str:doc_id>/action", views.docs_action, name="console_docs_action"),
+    path("docs/<str:doc_id>/request", views.docs_request, name="console_docs_request"),
+    path("requests/", views.requests_queue, name="console_requests"),
+    path("requests/<int:req_id>/resolve", views.request_resolve, name="console_request_resolve"),
     path("users/", views.users, name="console_users"),
     path("org/", views.org_console, name="console_org"),
 ]

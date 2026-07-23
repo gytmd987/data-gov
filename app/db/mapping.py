@@ -25,6 +25,7 @@ def document_row_values(doc: DocumentMetadata, status: IngestionStatus) -> dict[
         "doc_type": cls.doc_type.value if cls.doc_type else None,
         "title": cls.title_normalized,
         "owner": gov.author_name or gov.author_id,       # 작성자(레거시 owner 컬럼 재사용)
+        "author_node_id": gov.author_node_id,
         "access_groups": list(gov.access_tokens),        # 조직 열람 토큰
         "lifecycle_status": life.status.value if life.status else None,
         "effective_date": life.effective_date,

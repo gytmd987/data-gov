@@ -56,6 +56,9 @@ class Document(Base):
     owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     access_groups: Mapped[list] = mapped_column(JSON, default=list)
 
+    # 작성자 소속 노드(부서장 관리 범위 판정용, denormalized)
+    author_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
     # 생애주기
     lifecycle_status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -166,6 +169,29 @@ class Feedback(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)   # 무엇이 틀렸는지/정답
     cited_doc_ids: Mapped[list] = mapped_column(JSON, default=list)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)  # 관리자 처리 완료 여부
+
+
+class DocumentRequest(Base):
+    """문서 수정/삭제 요청 — 파트원은 직접 수정·삭제 못 하고 요청만 한다.
+
+    승인권: 관리자 전체, 부서장은 자기 부서(subtree) 문서. 삭제는 승인 시 하드 삭제.
+    """
+
+    __tablename__ = "document_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String(64), index=True)
+    doc_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # 표시용 스냅샷
+    author_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # 승인 범위 판정
+    request_type: Mapped[str] = mapped_column(String(16))     # edit | delete
+    requester_id: Mapped[str] = mapped_column(String(128), index=True)
+    target_admin_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # 삭제: 지정 관리자
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)   # 수정 제안 내용
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|rejected
+    resolved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Conversation(Base):

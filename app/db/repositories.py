@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
-from app.db.models import AuditLog, Chunk, Document, Feedback, OrgNode, User
+from app.db.models import (
+    AuditLog,
+    Chunk,
+    Document,
+    DocumentRequest,
+    Feedback,
+    OrgNode,
+    User,
+)
 from app.org.tree import OrgNodeView, OrgTree
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
@@ -83,7 +91,8 @@ class DocumentRepository:
 
     @staticmethod
     def _doc_filters(text: Optional[str], lifecycle_status: Optional[str],
-                     doc_type: Optional[str]) -> list:
+                     doc_type: Optional[str],
+                     author_node_ids: Optional[Iterable[int]] = None) -> list:
         conds: list = []
         if text:
             like = f"%{text}%"
@@ -93,11 +102,31 @@ class DocumentRepository:
             conds.append(Document.lifecycle_status == lifecycle_status)
         if doc_type:
             conds.append(Document.doc_type == doc_type)
+        if author_node_ids is not None:
+            conds.append(Document.author_node_id.in_(list(author_node_ids)))
         return conds
+
+    def find_active_by_title_format(self, title: Optional[str], file_format: str,
+                                    exclude_doc_id: Optional[str] = None
+                                    ) -> Optional[dict[str, Any]]:
+        """제목+형식이 같은 비-아카이브 문서(중복 후보). 없으면 None."""
+        if not title:
+            return None
+        stmt = select(Document).where(
+            Document.title == title, Document.file_format == file_format,
+            Document.lifecycle_status != "archived")
+        if exclude_doc_id:
+            stmt = stmt.where(Document.doc_id != exclude_doc_id)
+        row = self.session.execute(stmt).scalars().first()
+        if row is None:
+            return None
+        return {"doc_id": row.doc_id, "filename": row.source_filename,
+                "author_node_id": row.author_node_id, "owner": row.owner}
 
     def list_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+        author_node_ids: Optional[Iterable[int]] = None,
     ) -> list[dict[str, Any]]:
         """문서 목록(관리용 요약). 필터(파일명·제목/상태/유형) + 페이징.
 
@@ -105,7 +134,7 @@ class DocumentRepository:
         화면이 한 번에 모든 행을 로드하지 않도록 한다.
         """
         stmt = select(Document)
-        conds = self._doc_filters(text, lifecycle_status, doc_type)
+        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids)
         if conds:
             stmt = stmt.where(and_(*conds))
         stmt = stmt.order_by(Document.updated_at.desc())
@@ -117,8 +146,8 @@ class DocumentRepository:
                 "doc_id": r.doc_id, "filename": r.source_filename,
                 "doc_type": r.doc_type, "title": r.title,
                 "status": r.status, "lifecycle_status": r.lifecycle_status,
-                "sensitivity_level": r.sensitivity_level,
                 "access_groups": r.access_groups, "owner": r.owner,
+                "author_node_id": r.author_node_id,
                 "expiry_date": r.expiry_date.isoformat() if r.expiry_date else None,
                 "superseded_by": r.superseded_by,
             })
@@ -127,9 +156,10 @@ class DocumentRepository:
     def count_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None,
+        author_node_ids: Optional[Iterable[int]] = None,
     ) -> int:
         stmt = select(func.count()).select_from(Document)
-        conds = self._doc_filters(text, lifecycle_status, doc_type)
+        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids)
         if conds:
             stmt = stmt.where(and_(*conds))
         return self.session.scalar(stmt) or 0
@@ -281,6 +311,49 @@ class OrgRepository:
             out.append({"user_id": u.user_id, "display_name": u.display_name,
                         "org_role": u.org_role})
         return out
+
+
+class RequestRepository:
+    """문서 수정/삭제 요청 저장·조회·처리."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, doc_id: str, request_type: str, requester_id: str,
+               doc_title: Optional[str] = None, author_node_id: Optional[int] = None,
+               target_admin_id: Optional[str] = None, payload: Optional[dict] = None,
+               note: Optional[str] = None) -> int:
+        req = DocumentRequest(
+            doc_id=doc_id, doc_title=doc_title, author_node_id=author_node_id,
+            request_type=request_type, requester_id=requester_id,
+            target_admin_id=target_admin_id, payload_json=payload or {}, note=note)
+        self.session.add(req)
+        self.session.flush()
+        return req.id
+
+    def get(self, req_id: int) -> Optional[DocumentRequest]:
+        return self.session.get(DocumentRequest, req_id)
+
+    def list_pending(self) -> list[DocumentRequest]:
+        return list(self.session.execute(
+            select(DocumentRequest).where(DocumentRequest.status == "pending")
+            .order_by(DocumentRequest.created_at.desc())).scalars())
+
+    def resolve(self, req_id: int, status: str, resolved_by: str) -> None:
+        from datetime import datetime, timezone
+        req = self.session.get(DocumentRequest, req_id)
+        if req is not None:
+            req.status = status
+            req.resolved_by = resolved_by
+            req.resolved_at = datetime.now(timezone.utc)
+            self.session.flush()
+
+    def pending_delete_doc_ids(self) -> set[str]:
+        """삭제 승인 대기 중인 문서 id 집합(같은 제목 재업로드 잠금용)."""
+        return set(self.session.execute(
+            select(DocumentRequest.doc_id).where(
+                DocumentRequest.request_type == "delete",
+                DocumentRequest.status == "pending")).scalars())
 
 
 class AuditRepository:

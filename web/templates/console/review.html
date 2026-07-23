@@ -49,6 +49,20 @@
     </select>
   </div>{% endif %}
 
+  {% if dup %}
+  <div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:8px;padding:10px;margin-top:10px">
+    ⛔ <b>제목+형식이 같은 문서</b>가 이미 있습니다: <b>{{ dup.filename }}</b>. 처리 방법을 고르세요.
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+      <label><input type="radio" name="dup_action" value="supersede"> 기존 문서를 이 문서의 <b>이전 버전</b>으로 처리(교체)</label>
+      <label><input type="radio" name="dup_action" value="request_delete"> 기존 문서 <b>삭제 요청</b> →
+        <select name="target_admin" style="width:auto">
+          <option value="">담당 관리자 선택</option>{% for a in admins %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+        </select> <span class="msg-note">(승인 전까지 같은 제목 등록 불가)</span></label>
+      <label><input type="radio" name="dup_action" value="proceed"> 별개 문서로 그대로 등록</label>
+      <span class="msg-note">제목을 바꾸려면 아래 <b>제목</b> 필드를 수정하면 됩니다.</span>
+    </div>
+  </div>{% endif %}
+
   <div style="display:flex;gap:24px;margin-top:14px">
     <div style="flex:1">
       <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>

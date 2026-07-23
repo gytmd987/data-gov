@@ -12,6 +12,7 @@ from app.schemas.enums import FileFormat
 
 from .base import ParsedElement, ParseResult, Parser
 from .docx_parser import DocxParser
+from .email_parser import EmailParser
 from .image_parser import ImageParser
 from .pdf_parser import PdfParser
 from .pptx_parser import PptxParser
@@ -33,6 +34,7 @@ def build_registry(ocr: Optional[OCRFn] = None) -> dict[FileFormat, Parser]:
         FileFormat.XLSX: XlsxParser(),
         FileFormat.PPTX: PptxParser(image_ocr=ocr),
         FileFormat.PDF: PdfParser(page_ocr=ocr),
+        FileFormat.EMAIL: EmailParser(),
     }
     if ocr is not None:
         registry[FileFormat.JPG] = ImageParser(ocr, FileFormat.JPG)

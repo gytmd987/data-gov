@@ -98,6 +98,12 @@ class ReviewService:
             llm=self.llm, llm_model=self.llm_model, ocr=self.ocr,
             hash_lookup=persistent_hash_lookup(repo),
         )
+        # 작성자 기본값 = 업로더 + 그의 소속 노드(부서장 관리 범위 판정)
+        author = self.users.get_user(ingested_by)
+        ctx.doc.governance.author_id = ingested_by
+        if author is not None:
+            ctx.doc.governance.author_name = author.display_name
+            ctx.doc.governance.author_node_id = author.org_node_id
         save_ingestion(repo, ctx)
         # 원본 파일 보관(열람/다운로드용)
         self._store_original(path, ctx.doc.identification.doc_id,
@@ -217,6 +223,9 @@ class ReviewService:
             raise ValueError(f"문서 없음: {doc_id}")
 
         governance = _expand_access_tokens(self.session, governance)
+        if governance.author_node_id is None:
+            governance = governance.model_copy(update={
+                "author_node_id": ctx.doc.governance.author_node_id})
         result = apply_review(
             ctx, governance=governance,
             classification_overrides=classification_overrides,

@@ -7,7 +7,11 @@
 <p class="msg-note">등록된 문서의 메타데이터 수정, 새 버전 연결(개정판), 보관/삭제. 변경은 검색에 즉시 반영됩니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
-{% if expiring_soon %}
+{% if can_manage %}
+<p style="margin-bottom:8px"><a class="btn ghost" href="/console/requests/" style="padding:4px 10px">📨 수정·삭제 요청 처리</a></p>
+{% endif %}
+
+{% if expiring_soon and can_manage %}
 <div class="card" style="padding:10px 14px;background:#fff8e6;border-color:#f0d48a">
   ⏳ <b>{{ expire_days }}일 이내 만료 예정 {{ expiring_soon }}건.</b>
   <a href="?status=active">확인</a> 후 갱신하거나, 아래 <b>만료 문서 정리</b>로 지난 문서를 한 번에 정리하세요.
@@ -29,16 +33,23 @@
     <button class="btn">필터</button>
     {% if q or status_sel or doc_type_sel %}<a class="btn ghost" href="?">초기화</a>{% endif %}
   </form>
+  {% if can_manage %}
   <form method="post" action="/console/docs/sweep" style="margin:0 0 0 auto"
         onsubmit="return confirm('만료일이 지난 active 문서를 모두 만료 처리할까요?')">
     {% csrf_token %}<button class="btn ghost">🧹 만료 문서 정리</button>
   </form>
+  {% endif %}
 </div>
+
+{% if not can_manage %}
+<p class="msg-note">내 소속 부서의 문서 목록입니다. 직접 수정 권한이 없어 <b>수정·삭제는 요청</b>으로 처리됩니다.</p>
+{% endif %}
 
 <!-- 일괄 작업 + 목록 -->
 <form method="post" action="/console/docs/bulk" id="bulkForm">
   {% csrf_token %}
   <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  {% if can_manage %}
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
     <span class="msg-note">선택한 문서를</span>
     <select name="bulk_action" style="width:auto">
@@ -48,22 +59,23 @@
     <button class="btn ghost" onclick="return confirm('선택한 문서의 상태를 일괄 변경할까요?')">일괄 변경</button>
     <span class="msg-note" id="selCount"></span>
   </div>
+  {% endif %}
   <table>
     <tr>
-      <th style="width:28px"><input type="checkbox" id="checkAll" style="width:auto"></th>
-      <th>파일</th><th>유형</th><th>민감도</th><th>상태</th><th>그룹</th><th>만료일</th><th></th>
+      {% if can_manage %}<th style="width:28px"><input type="checkbox" id="checkAll" style="width:auto"></th>{% endif %}
+      <th>파일</th><th>종류</th><th>상태</th><th>만료일</th><th></th>
     </tr>
     {% for d in docs %}
     <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
-      <td><input type="checkbox" name="doc_ids" value="{{ d.doc_id }}" class="rowchk" style="width:auto"></td>
+      {% if can_manage %}<td><input type="checkbox" name="doc_ids" value="{{ d.doc_id }}" class="rowchk" style="width:auto"></td>{% endif %}
       <td>{{ d.filename }}{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
-      <td>{{ d.doc_type|klabel }}</td><td>{{ d.sensitivity_level|klabel }}</td>
-      <td>{{ d.lifecycle_status|klabel }}</td><td>{{ d.access_groups|klabel_join }}</td>
+      <td>{{ d.doc_type|klabel }}</td>
+      <td>{{ d.lifecycle_status|klabel }}</td>
       <td>{{ d.expiry_date|default_if_none:"—" }}</td>
-      <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">관리</a></td>
+      <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">{% if can_manage %}관리{% else %}보기{% endif %}</a></td>
     </tr>
     {% empty %}
-    <tr><td colspan="8" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
+    <tr><td colspan="6" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
     {% endfor %}
   </table>
 </form>
@@ -80,13 +92,12 @@
 {% if doc %}
 <div class="card">
   <b>{{ doc.identification.source_filename }}</b>
+  <span class="msg-note">· {{ doc.classification.summary|default_if_none:''|truncatechars:80 }}</span>
+  {% if can_manage_sel %}
   <div style="display:flex;gap:24px;margin-top:12px">
     <form method="post" action="/console/docs/{{ sel }}/action" style="flex:1">
       {% csrf_token %}<input type="hidden" name="action" value="save">
       <h4>메타데이터 수정</h4>
-      <div class="field"><label>민감도</label>
-        <select name="sensitivity">{% for o in opts.sensitivity_level %}
-          <option value="{{ o }}" {% if doc.governance.sensitivity_level.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
       <div class="field"><label>열람 가능 대상 <span class="msg-note">(기본: 팀 전체)</span></label>
         <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
           {% for n in node_opts %}
@@ -113,13 +124,34 @@
         {% csrf_token %}<input type="hidden" name="action" value="archive">
         <button class="btn ghost">🗄️ 보관(검색 제외)</button>
       </form>
+      {% if is_admin_user %}
       <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:8px"
             onsubmit="return confirm('정말 영구 삭제할까요? 되돌릴 수 없습니다.')">
         {% csrf_token %}<input type="hidden" name="action" value="delete">
         <button class="btn ghost" style="color:#c0392b">🗑️ 영구 삭제</button>
       </form>
+      {% endif %}
     </div>
   </div>
+  {% else %}
+  <!-- 직접 권한 없음 → 요청 -->
+  <div style="display:flex;gap:10px;margin-top:12px;align-items:flex-start">
+    <form method="post" action="/console/docs/{{ sel }}/request" style="flex:1">
+      {% csrf_token %}<input type="hidden" name="request_type" value="edit">
+      <input name="note" placeholder="수정 요청 내용(무엇을 어떻게)" style="margin-bottom:6px">
+      <button class="btn">✏️ 수정 요청</button>
+    </form>
+    <form method="post" action="/console/docs/{{ sel }}/request" style="flex:1">
+      {% csrf_token %}<input type="hidden" name="request_type" value="delete">
+      <select name="target_admin" style="margin-bottom:6px">
+        <option value="">담당 관리자 선택(선택)</option>
+        {% for a in admins %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+      </select>
+      <input name="note" placeholder="삭제 사유" style="margin-bottom:6px">
+      <button class="btn ghost" style="color:#c0392b">🗑️ 삭제 요청</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 </div>

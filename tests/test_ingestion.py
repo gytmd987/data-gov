@@ -83,8 +83,18 @@ def test_chunking_keeps_tables_whole_and_splits_long_text():
 def test_detect_format():
     assert detect_format("a.PDF") == FileFormat.PDF
     assert detect_format("b.jpeg") == FileFormat.JPG
+    assert detect_format("c.eml") == FileFormat.EMAIL
     with pytest.raises(ValueError):
         detect_format("c.zip")
+
+
+def test_email_parser(tmp_path: Path):
+    p = tmp_path / "m.eml"
+    p.write_text("From: a@co.com\nTo: b@co.com\nSubject: 연차 안내\n\n"
+                 "연차는 15일입니다. 확인 바랍니다.", encoding="utf-8")
+    result = get_parser(FileFormat.EMAIL).parse(str(p))
+    texts = " ".join(e.text for e in result.elements)
+    assert "연차 안내" in texts and "15일" in texts
 
 
 def test_intake_detects_duplicate(tmp_path: Path):

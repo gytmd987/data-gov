@@ -7,11 +7,18 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from web import bridge
-from web.authz import _email_of, admin_required
+from web.authz import (
+    _email_of,
+    admin_required,
+    can_manage_doc,
+    is_admin,
+    manage_scope,
+)
 
 from app import system_config
 from app.ingestion.enrichment import ReadError
@@ -47,14 +54,23 @@ def review(request):
                 messages.error(request, f"⚠️ '{f.name}' {e}")
             return redirect("console_review")
 
-        from app.db.repositories import OrgRepository
+        from app.db.repositories import DocumentRepository, OrgRepository
         pending = svc.list_pending()
         doc_id = request.GET.get("doc") or (pending[0]["doc_id"] if pending else None)
         view = svc.get_review(doc_id) if doc_id else None
+        # 제목+형식 중복 후보(있으면 처리 방법 선택 배너 노출)
+        dup = None
+        if view is not None:
+            d = svc.docs.get(view.doc_id)
+            if d is not None:
+                dup = DocumentRepository(session).find_active_by_title_format(
+                    d.classification.title_normalized,
+                    d.identification.file_format.value, exclude_doc_id=view.doc_id)
         return render(request, "console/review.html", {
             "pending": pending, "view": view, "opts": ENUM_OPTIONS,
             "departments": system_config.departments(),
             "node_opts": _org_options(OrgRepository(session)),
+            "dup": dup, "admins": system_config.admin_emails(),
         })
     finally:
         session.close()
@@ -83,11 +99,38 @@ def review_submit(request, doc_id: str):
         life = {"status": p.get("lifecycle_status"),
                 "effective_date": p.get("effective_date") or None,
                 "expiry_date": p.get("expiry_date") or None}
+
+        # ── 제목+형식 중복 처리 ──────────────────────────────────────────────
+        from app.db.repositories import DocumentRepository, RequestRepository
+        drepo = DocumentRepository(session)
+        existing = drepo.get(doc_id)
+        fmt = existing.identification.file_format.value if existing else None
+        title = cls["title_normalized"]
+        dup = drepo.find_active_by_title_format(title, fmt, exclude_doc_id=doc_id) if fmt else None
+        dup_action = p.get("dup_action")
+        if dup is not None:
+            if dup["doc_id"] in RequestRepository(session).pending_delete_doc_ids():
+                messages.error(request, f"'{dup['filename']}' 삭제 승인 대기 중 — 같은 제목으로 등록할 수 없습니다.")
+                return redirect(f"/console/review/?doc={doc_id}")
+            if dup_action == "request_delete":
+                RequestRepository(session).create(
+                    dup["doc_id"], "delete", _email_of(request.user),
+                    doc_title=dup["filename"], author_node_id=dup.get("author_node_id"),
+                    target_admin_id=p.get("target_admin") or None, note="중복 문서 정리 요청")
+                session.commit()
+                messages.info(request, "기존 문서 삭제를 요청했습니다. 승인 후 다시 등록하세요.")
+                return redirect(f"/console/review/?doc={doc_id}")
+            if dup_action not in ("supersede", "proceed"):
+                messages.error(request, f"제목+형식이 같은 문서가 있습니다: '{dup['filename']}'. 처리 방법을 선택하세요.")
+                return redirect(f"/console/review/?doc={doc_id}")
+
         result = svc.submit_review(doc_id, governance=gov,
                                    classification_overrides=cls,
                                    lifecycle_overrides=life)
         if result.ok:
             old = p.get("supersede_old")
+            if dup is not None and dup_action == "supersede":
+                old = dup["doc_id"]
             if old:
                 bridge.get_document_manager(session).supersede(old, doc_id)
                 messages.info(request, "선택한 옛 버전을 검색에서 제외했습니다.")
@@ -108,7 +151,7 @@ def _int(value, default: int) -> int:
         return default
 
 
-@admin_required
+@login_required
 def docs(request):
     session = bridge.open_session()
     try:
@@ -119,9 +162,25 @@ def docs(request):
         page = max(1, _int(request.GET.get("page"), 1))
         offset = (page - 1) * _PAGE_SIZE
 
-        total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type)
+        # 접근 범위: 관리자=전체, 부서장=내 subtree, 파트원=내 소속 노드(요청만 가능)
+        is_adm, scope = manage_scope(session, request.user)
+        author_ids = None
+        can_manage = is_adm
+        if not is_adm:
+            from app.db.repositories import UserRepository
+            u = UserRepository(session).get_user(_email_of(request.user))
+            if scope:                       # 부서장
+                author_ids, can_manage = scope, True
+            elif u is not None and u.org_node_id is not None:
+                author_ids = {u.org_node_id}   # 파트원: 내 소속 문서(요청만)
+            else:
+                author_ids = {-1}              # 미배정: 없음
+
+        total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type,
+                                    author_node_ids=author_ids)
         doc_list = mgr.list_documents(text=q, lifecycle_status=status, doc_type=doc_type,
-                                      limit=_PAGE_SIZE, offset=offset)
+                                      limit=_PAGE_SIZE, offset=offset,
+                                      author_node_ids=author_ids)
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
         sel = request.GET.get("doc")
@@ -150,6 +209,9 @@ def docs(request):
         qs = {k: v for k, v in (("q", q), ("status", status),
                                 ("doc_type", doc_type)) if v}
 
+        # 선택 문서를 이 사용자가 직접 관리 가능한지(수정 폼 vs 요청 버튼)
+        can_manage_sel = doc is not None and can_manage_doc(session, request.user, doc)
+
         return render(request, "console/docs.html", {
             "docs": doc_list, "sel": sel, "doc": doc,
             "supersede_candidates": supersede_candidates,
@@ -161,6 +223,9 @@ def docs(request):
             "page_end": min(offset + _PAGE_SIZE, total),
             "expiring_soon": expiring_soon, "expire_days": _EXPIRE_SOON_DAYS,
             "filter_qs": qs,
+            "is_admin_user": is_adm, "can_manage": can_manage,
+            "can_manage_sel": can_manage_sel,
+            "admins": system_config.admin_emails(),
         })
     finally:
         session.close()
@@ -207,21 +272,26 @@ def docs_sweep(request):
         session.close()
 
 
-@admin_required
+@login_required
 @require_POST
 def docs_action(request, doc_id: str):
     session = bridge.open_session()
     try:
         mgr = bridge.get_document_manager(session)
+        doc = mgr.get(doc_id)
+        if doc is None:
+            return redirect("console_docs")
+        if not can_manage_doc(session, request.user, doc):
+            messages.error(request, "직접 수정 권한이 없습니다. '수정/삭제 요청'을 이용하세요.")
+            return redirect(f"/console/docs/?doc={doc_id}")
         action = request.POST.get("action")
         if action == "save":
             p = request.POST
-            doc = mgr.get(doc_id)
             gov = doc.governance
             new_gov = GovernanceBlock(
                 access_selections=p.getlist("access"),
                 author_id=gov.author_id, author_name=gov.author_name,
-                reporting_line=gov.reporting_line)
+                author_node_id=gov.author_node_id, reporting_line=gov.reporting_line)
             mgr.update_metadata(doc_id, governance=new_gov,
                                 lifecycle_overrides={"status": p.get("lifecycle_status")})
             messages.success(request, "저장 완료 — 검색 필터에 즉시 반영되었습니다.")
@@ -234,10 +304,95 @@ def docs_action(request, doc_id: str):
             mgr.archive(doc_id)
             messages.success(request, "보관 처리했습니다(검색 제외, 기록 유지).")
         elif action == "delete":
+            if not is_admin(request.user):
+                messages.error(request, "영구 삭제는 관리자만 가능합니다. '삭제 요청'을 이용하세요.")
+                return redirect(f"/console/docs/?doc={doc_id}")
             mgr.delete(doc_id, hard=True)
             messages.warning(request, "영구 삭제했습니다.")
             return redirect("console_docs")
         return redirect(f"/console/docs/?doc={doc_id}")
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def docs_request(request, doc_id: str):
+    """파트원 등 직접 권한이 없는 사용자의 수정/삭제 요청 생성."""
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import RequestRepository
+        mgr = bridge.get_document_manager(session)
+        doc = mgr.get(doc_id)
+        if doc is None:
+            return redirect("console_docs")
+        rtype = request.POST.get("request_type")
+        if rtype not in ("edit", "delete"):
+            messages.error(request, "잘못된 요청입니다.")
+            return redirect(f"/console/docs/?doc={doc_id}")
+        RequestRepository(session).create(
+            doc_id=doc_id, request_type=rtype, requester_id=_email_of(request.user),
+            doc_title=doc.classification.title_normalized or doc.identification.source_filename,
+            author_node_id=doc.governance.author_node_id,
+            target_admin_id=request.POST.get("target_admin") or None,
+            note=request.POST.get("note") or None)
+        session.commit()
+        kind = "삭제" if rtype == "delete" else "수정"
+        messages.success(request, f"{kind} 요청을 등록했습니다. 부서장·관리자 승인 후 반영됩니다.")
+        return redirect(f"/console/docs/?doc={doc_id}")
+    finally:
+        session.close()
+
+
+# ── 수정/삭제 요청 승인 큐 ───────────────────────────────────────────────────
+@login_required
+def requests_queue(request):
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import RequestRepository
+        is_adm, scope = manage_scope(session, request.user)
+        if not is_adm and not scope:
+            messages.error(request, "요청 승인 권한이 없습니다(부서장·관리자 전용).")
+            return redirect("console_docs")
+        rows = []
+        for r in RequestRepository(session).list_pending():
+            if is_adm or (r.author_node_id in scope):
+                rows.append({"id": r.id, "doc_id": r.doc_id, "doc_title": r.doc_title,
+                             "request_type": r.request_type, "requester_id": r.requester_id,
+                             "target_admin_id": r.target_admin_id, "note": r.note,
+                             "created_at": r.created_at})
+        return render(request, "console/requests.html", {"rows": rows})
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def request_resolve(request, req_id: int):
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import RequestRepository
+        rr = RequestRepository(session)
+        req = rr.get(int(req_id))
+        if req is None or req.status != "pending":
+            return redirect("console_requests")
+        is_adm, scope = manage_scope(session, request.user)
+        if not is_adm and req.author_node_id not in scope:
+            messages.error(request, "이 요청을 처리할 권한이 없습니다.")
+            return redirect("console_requests")
+        decision = request.POST.get("decision")
+        if decision == "approve":
+            if req.request_type == "delete":
+                bridge.get_document_manager(session).delete(req.doc_id, hard=True)
+                messages.success(request, "삭제 요청 승인 — 문서를 영구 삭제했습니다.")
+            else:
+                messages.success(request, "수정 요청 승인 — 문서 관리에서 반영하세요.")
+            rr.resolve(req.id, "approved", _email_of(request.user))
+        else:
+            rr.resolve(req.id, "rejected", _email_of(request.user))
+            messages.info(request, "요청을 반려했습니다.")
+        session.commit()
+        return redirect("console_requests")
     finally:
         session.close()
 

@@ -69,6 +69,7 @@ class GovernanceBlock(BaseModel):
     access_tokens: list[str] = Field(default_factory=list)
     author_id: Optional[str] = None                      # 작성자 ID(기본값 현재 유저)
     author_name: Optional[str] = None                    # 작성자 이름
+    author_node_id: Optional[int] = None                 # 작성자 소속 조직 노드(부서장 관리 범위 판정)
     reporting_line: list[str] = Field(default_factory=list)  # 보고선(조직도 상위 라인)
 
 

@@ -40,17 +40,19 @@ class DocumentManager:
     def list_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+        author_node_ids=None,
     ) -> list[dict[str, Any]]:
         return self.repo.list_documents(
             text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
-            limit=limit, offset=offset)
+            limit=limit, offset=offset, author_node_ids=author_node_ids)
 
     def count_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
-        doc_type: Optional[str] = None,
+        doc_type: Optional[str] = None, author_node_ids=None,
     ) -> int:
         return self.repo.count_documents(
-            text=text, lifecycle_status=lifecycle_status, doc_type=doc_type)
+            text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
+            author_node_ids=author_node_ids)
 
     def get(self, doc_id: str) -> Optional[DocumentMetadata]:
         return self.repo.get(doc_id)
@@ -75,6 +77,9 @@ class DocumentManager:
             raise ValueError(f"문서 없음: {doc_id}")
         if governance is not None:
             from app.review.service import _expand_access_tokens
+            if governance.author_node_id is None:
+                governance = governance.model_copy(update={
+                    "author_node_id": doc.governance.author_node_id})
             doc.governance = _expand_access_tokens(self.session, governance)
         if classification_overrides:
             data = doc.classification.model_dump()
