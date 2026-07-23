@@ -54,6 +54,13 @@ def _files(pipe, user, q="연차"):
     return {c.source_filename for c in ans.used_chunks}
 
 
+def test_qa_chunk_surfaces_doc_for_question(env):
+    # 오프라인 LLM이 생성한 예상 질문으로 검색 → 합성 Q&A 청크가 문서를 노출시킴
+    session, pipe, manager, user, a, b = env
+    ans = pipe.answer("이 문서는 무엇에 대한 것인가요?", user, today=date(2026, 7, 20))
+    assert {c.source_filename for c in ans.used_chunks}   # 최소 한 문서 매칭
+
+
 def test_supersede_excludes_old_from_search(env):
     session, pipe, manager, user, a, b = env
     assert "leave_2025.txt" in _files(pipe, user)      # 초기엔 구버전도 검색됨

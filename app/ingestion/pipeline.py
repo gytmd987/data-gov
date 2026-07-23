@@ -17,12 +17,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Protocol
 
 from app.governance.validator import ValidationResult, validate_governance
+from app.schemas.enums import ChunkType
 from app.schemas.ingestion import IngestionStatus, assert_transition
 from app.schemas.metadata import (
     ClassificationBlock,
     DocumentMetadata,
     GovernanceBlock,
     LifecycleBlock,
+    doc_level_payload,
 )
 
 from .chunking import Chunk, chunk_elements
@@ -147,14 +149,44 @@ def index(ctx: IngestionContext, embedder: Embedder, indexer: Indexer) -> int:
         return 0
 
     texts = [c.text for c in ctx.chunks]
-    vectors = embedder.embed(texts)
     payloads = []
     for c in ctx.chunks:
         pl = c.meta.to_qdrant_payload(ctx.doc)
         pl["text"] = c.text   # 검색 결과·리랭킹·답변에 원문 필요
         payloads.append(pl)
     ids = [c.meta.chunk_id for c in ctx.chunks]
+
+    # 합성 Q&A 청크: 요약+키워드+예상 Q&A 를 별도 포인트로 색인해 질문형 질의의
+    # recall 을 높인다. 원문 청크 벡터는 건드리지 않아 near-dup·리랭킹에 영향 없음.
+    synth = build_qa_chunk_text(ctx.doc)
+    if synth:
+        doc_id = ctx.doc.identification.doc_id
+        qa_pl = doc_level_payload(ctx.doc)
+        qa_pl.update({"chunk_id": f"{doc_id}::qa", "parent_doc_id": doc_id,
+                      "chunk_type": ChunkType.QA.value, "section_title": None,
+                      "page_no": None, "text": synth})
+        texts.append(synth)
+        payloads.append(qa_pl)
+        ids.append(f"{doc_id}::qa")
+
+    vectors = embedder.embed(texts)
     indexer.upsert(vectors=vectors, payloads=payloads, ids=ids)
 
     ctx._to(IngestionStatus.INDEXED)
-    return len(ctx.chunks)
+    return len(ctx.chunks)   # 콘텐츠 청크 수(합성 청크 제외)
+
+
+def build_qa_chunk_text(doc) -> str:
+    """합성 Q&A 청크 텍스트 = 요약 + 핵심 키워드 + 예상 Q&A. 없으면 빈 문자열."""
+    cls = doc.classification
+    parts: list[str] = []
+    if cls.summary:
+        parts.append(cls.summary)
+    if cls.keywords:
+        parts.append("핵심 키워드: " + ", ".join(cls.keywords))
+    for qa in cls.expected_qa:
+        q = (qa.get("question") or "").strip()
+        a = (qa.get("answer") or "").strip()
+        if q:
+            parts.append(f"Q. {q}\nA. {a}")
+    return "\n".join(parts).strip()

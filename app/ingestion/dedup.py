@@ -37,6 +37,9 @@ def find_similar(
         payload = p.payload or {}
         doc_id = payload.get("parent_doc_id")
         score = float(getattr(p, "score", 0.0) or 0.0)
+        # 합성 Q&A 청크는 원문이 아니므로 유사도 판단에서 제외(원문 청크만 비교)
+        if payload.get("chunk_type") == "qa":
+            continue
         if not doc_id or doc_id == exclude_doc_id or score < threshold:
             continue
         prev = best.get(doc_id)

@@ -63,3 +63,4 @@ class ChunkType(str, Enum):
     TABLE = "table"
     LIST = "list"
     IMAGE_CAPTION = "image_caption"
+    QA = "qa"                       # 합성 청크: 요약+키워드+예상 Q&A(질문형 질의 recall용)

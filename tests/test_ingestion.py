@@ -193,6 +193,22 @@ def test_full_pipeline_happy_path(tmp_path: Path):
     assert payloads[0]["access_groups"] == ["n:1"]
 
 
+def test_index_adds_synthetic_qa_chunk(tmp_path: Path):
+    p = tmp_path / "policy.txt"
+    p.write_text("연차는 15일입니다.\n\n병가는 별도.", encoding="utf-8")
+    ctx = run_auto_stages(str(p), ingested_by="admin", llm=_GOOD_LLM, llm_model="m")
+    apply_review(ctx, governance=GovernanceBlock(access_tokens=["n:1"]),
+                 lifecycle_overrides={"status": DocStatus.ACTIVE})
+    indexer = FakeIndexer()
+    n = index(ctx, embedder=FakeEmbedder(), indexer=indexer)
+    assert n == 2                                   # 콘텐츠 청크 수(합성 제외)
+    _, payloads, ids = indexer.upserted
+    assert len(ids) == 3                            # 콘텐츠 2 + 합성 Q&A 1
+    qa = [pl for pl in payloads if pl.get("chunk_type") == "qa"]
+    assert qa and "연차" in qa[0]["text"]           # 키워드/Q&A 포함
+    assert qa[0]["access_groups"] == ["n:1"]        # 접근 토큰 상속(권한 동일 적용)
+
+
 def test_read_error_when_ai_cannot_fill_mandatory(tmp_path: Path):
     from app.ingestion.enrichment import ReadError
     p = tmp_path / "scan.txt"
