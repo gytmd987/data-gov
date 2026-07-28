@@ -40,13 +40,17 @@
 
   {% if view.similar_candidates %}
   <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
-    ⚠️ 유사한 기존 문서가 있습니다(개정판일 수 있음).
-    <select name="supersede_old" style="width:auto;margin-left:8px">
-      <option value="">별개 문서로 등록</option>
-      {% for c in view.similar_candidates %}
-      <option value="{{ c.doc_id }}">{{ c.filename }} 의 새 버전으로 (유사도 {{ c.score }})</option>
-      {% endfor %}
-    </select>
+    ⚠️ <b>유사한 기존 문서</b>가 있습니다. AI 판단을 참고해 관계를 확정하세요.
+    {% for c in view.similar_candidates %}
+    <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #e6cf8a">
+      <b>{{ c.filename }}</b> <span class="msg-note">· 유사도 {{ c.score }} · 🤖 {{ c.ai_label }}{% if c.ai_reason %} — {{ c.ai_reason }}{% endif %}</span>
+      <div style="display:flex;gap:14px;margin-top:4px;flex-wrap:wrap">
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="supersede" {% if c.default_action == 'supersede' %}checked{% endif %}> 이 문서의 새 버전으로 (기존을 대체됨 처리)</label>
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="relate" {% if c.default_action == 'relate' %}checked{% endif %}> 연관 문서로 연결</label>
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="ignore" {% if c.default_action == 'ignore' %}checked{% endif %}> 무관(별개)</label>
+      </div>
+    </div>
+    {% endfor %}
   </div>{% endif %}
 
   {% if dup %}

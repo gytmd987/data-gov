@@ -69,9 +69,16 @@ def review(request):
             return redirect("console_review")
 
         from app.db.repositories import DocumentRepository, OrgRepository
+        from app.relations.classify import RELATION_LABELS
         pending = svc.list_pending()
         doc_id = request.GET.get("doc") or (pending[0]["doc_id"] if pending else None)
         view = svc.get_review(doc_id) if doc_id else None
+        if view is not None:      # AI 관계 제안 한글 라벨 + 기본 선택값 부착
+            for c in view.similar_candidates:
+                rel = c.get("ai_relation") or "revision"
+                c["ai_label"] = RELATION_LABELS.get(rel, rel)
+                c["default_action"] = {"revision": "supersede", "related": "relate",
+                                       "unrelated": "ignore"}.get(rel, "supersede")
         # 제목+형식 중복 후보(있으면 처리 방법 선택 배너 노출)
         dup = None
         if view is not None:
@@ -143,12 +150,23 @@ def review_submit(request, doc_id: str):
                                    classification_overrides=cls,
                                    lifecycle_overrides=life)
         if result.ok:
-            old = p.get("supersede_old")
+            from app.db.repositories import RelationRepository
+            mgr = bridge.get_document_manager(session)
+            rel = RelationRepository(session)
+            # 유사 문서 관계 확정(후보별: 새 버전 교체 / 연관 연결 / 무관)
+            for key in p:
+                if key.startswith("sim__"):
+                    other = key[len("sim__"):]
+                    act = p.get(key)
+                    if act == "supersede":
+                        mgr.supersede(other, doc_id)   # 기존을 이 문서의 이전 버전으로
+                    elif act == "relate":
+                        rel.link(doc_id, other, source="human", reason="검토 확정",
+                                 created_by=_email_of(request.user))
+            # 정확 중복(제목+형식) 처리에서 supersede 선택 시
             if dup is not None and dup_action == "supersede":
-                old = dup["doc_id"]
-            if old:
-                bridge.get_document_manager(session).supersede(old, doc_id)
-                messages.info(request, "선택한 옛 버전을 검색에서 제외했습니다.")
+                mgr.supersede(dup["doc_id"], doc_id)
+            session.commit()
             messages.success(request, "✅ 검증 통과 → 색인 완료. 검색에 노출됩니다.")
         else:
             why = ", ".join(result.missing_fields + result.errors)

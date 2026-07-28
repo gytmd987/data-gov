@@ -141,10 +141,26 @@ class ReviewService:
                                  exclude_doc_id=doc_id, threshold=RELATED_FLOOR)
             dup = [c for c in cands if c["score"] >= DUP_THRESHOLD]
             if dup:
+                self._classify_candidates(ctx.doc, dup)   # AI 관계 제안 부착
                 self.docs.set_similar_candidates(doc_id, dup)
             self._auto_link_relations(ctx, sim_candidates=cands)
         except Exception:
             pass  # 탐지는 부가 기능 — 실패해도 적재는 계속
+
+    def _classify_candidates(self, new_doc, candidates) -> None:
+        """유사(개정판 대역) 후보마다 AI 관계 제안(revision/related/unrelated)을 부착."""
+        from app.relations.classify import classify_relation
+        nt = new_doc.classification.title_normalized
+        ns = new_doc.classification.summary
+        for c in candidates[:3]:
+            cand = self.docs.get(c["doc_id"])
+            if cand is None:
+                continue
+            res = classify_relation(self.llm, nt, ns,
+                                    cand.classification.title_normalized,
+                                    cand.classification.summary)
+            c["ai_relation"] = res["relation"]
+            c["ai_reason"] = res["reason"]
 
     def _auto_link_relations(self, ctx, sim_candidates=None) -> None:
         """업로드 시 연관 문서를 자동 감지해 연결(신호 1개만 잡혀도 연결)."""

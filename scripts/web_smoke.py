@@ -205,6 +205,31 @@ def main() -> int:
         s5.close()
     print("[연관   ] 보고서↔별첨 파일명 어간 자동 연결 ✅")
 
+    # 13) 유사 문서 업로드 → AI 관계 제안(개정판/연관/무관)
+    s6 = bridge.open_session()
+    try:
+        svc3 = bridge.get_review_service(s6)
+        d = _pl.Path(_tf.gettempdir())
+        (d / "연차규정_v1.txt").write_text(
+            "연차 휴가 규정. 1년 근속 시 15일의 연차를 부여한다. 미사용분은 수당 지급.", encoding="utf-8")
+        (d / "연차규정_v2.txt").write_text(
+            "연차 휴가 규정. 1년 근속 시 15일의 연차를 부여한다. 미사용분은 수당으로 지급함.", encoding="utf-8")
+        v1 = svc3.start_ingestion(str(d / "연차규정_v1.txt"), ingested_by="smoke")
+        svc3.submit_review(v1, governance=GovernanceBlock(),
+                           lifecycle_overrides={"status": "active"})
+        v2 = svc3.start_ingestion(str(d / "연차규정_v2.txt"), ingested_by="smoke")
+        s6.commit()
+        cands = svc3.get_review(v2).similar_candidates
+        assert cands and any(c["doc_id"] == v1 for c in cands), "유사 문서 감지 실패"
+        assert any(c.get("ai_relation") for c in cands), "AI 관계 제안 없음"
+    finally:
+        s6.close()
+    # 검토 화면 렌더에 관계 선택 UI(라디오)가 나오는지 확인
+    c.force_login(admin)
+    rpage = c.get(f"/console/review/?doc={v2}").content.decode()
+    assert "유사한 기존 문서" in rpage and 'name="sim__' in rpage, "관계 선택 UI 미노출"
+    print("[유사관계] 유사 문서 감지 + AI 관계 제안 + 관계 선택 UI ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

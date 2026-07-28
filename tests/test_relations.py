@@ -54,6 +54,24 @@ def session():
         yield s
 
 
+def test_classify_relation_maps_and_falls_back():
+    from app.relations.classify import RELATION_LABELS, classify_relation
+
+    class OkLLM:
+        def complete_json(self, prompt, schema):
+            return {"relation": "related", "reason": "별첨 자료"}
+
+    class BadLLM:
+        def complete_json(self, prompt, schema):
+            raise RuntimeError("llm down")
+
+    r = classify_relation(OkLLM(), "새", "요약", "기존", "요약2")
+    assert r["relation"] == "related" and r["reason"] == "별첨 자료"
+    assert "related" in RELATION_LABELS
+    # 실패 시 revision 으로 폴백
+    assert classify_relation(BadLLM(), "a", "b", "c", "d")["relation"] == "revision"
+
+
 def test_relation_repo_symmetric_and_dedup(session):
     rel = RelationRepository(session)
     rel.link("d1", "d2", source="auto", reason="파일명")

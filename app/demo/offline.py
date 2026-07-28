@@ -93,6 +93,9 @@ class ExtractiveLLM:
         if "groundedness" in props:
             denied = "확인할 수 없습니다" in prompt
             return {"groundedness": 1.0, "relevance": 0.3 if denied else 0.9}
+        # 관계 분류 스키마: 유사도 높은 후보라 기본 '개정판' 제안(데모용)
+        if "relation" in props:
+            return {"relation": "revision", "reason": "제목·내용이 유사합니다."}
         doc_type = "notice" if "급여" in prompt or "연봉" in prompt else "report"
         # 본문 첫 문장 몇 개를 요약/키워드 소재로(오프라인 휴리스틱)
         body = prompt.split('"""')[-2] if '"""' in prompt else prompt
