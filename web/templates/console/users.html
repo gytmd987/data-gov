@@ -2,15 +2,16 @@
 {% load klabels %}
 {% block title %}사용자 관리{% endblock %}
 {% block content %}
-<div style="max-width:900px;margin:0 auto;padding:0 16px">
+<div style="max-width:960px;margin:0 auto;padding:0 16px">
 <h2 style="margin:18px 0 4px">👤 사용자 관리</h2>
 <p class="msg-note">조직도 노드와 역할을 배정하면 그 소속에 맞는 문서 접근 권한이 부여되고, 로그인 계정도 함께 만들어집니다.
-  노드는 <a href="/console/org/">조직도 관리</a>에서 먼저 만들어 주세요.</p>
+  노드는 <a href="/console/org/">조직도 관리</a>에서 먼저 만들어 주세요. 아래 표에서 기존 사용자를 바로 수정·삭제할 수 있습니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
 <div class="card">
-  <form method="post" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-    {% csrf_token %}
+  <b>새 사용자 등록</b>
+  <form method="post" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+    {% csrf_token %}<input type="hidden" name="action" value="save">
     <input name="user_id" placeholder="사용자 ID (이메일 권장)" required>
     <input name="name" placeholder="이름">
     <select name="org_node_id">
@@ -22,17 +23,38 @@
       {% for r in roles %}<option>{{ r }}</option>{% endfor %}
     </select>
     <input name="password" type="password" placeholder="초기 비밀번호 (신규/변경 시)">
-    <button class="btn">저장</button>
+    <button class="btn">등록</button>
   </form>
 </div>
 
-<table>
-  <tr><th>ID</th><th>이름</th><th>소속</th><th>역할</th></tr>
+<h4 style="margin:16px 0 6px">등록된 사용자 <span class="msg-note">({{ users|length }}명)</span></h4>
+<div class="card" style="padding:8px 14px">
+  <div style="display:flex;gap:8px;font-size:12px;color:var(--sub);padding:0 2px 6px">
+    <span style="flex:1.4">ID</span><span style="flex:1">이름</span><span style="flex:1.4">소속</span>
+    <span style="flex:0.9">역할</span><span style="flex:1">비밀번호 변경</span><span style="width:130px"></span></div>
   {% for u in users %}
-  <tr><td>{{ u.user_id }}</td><td>{{ u.display_name }}</td>
-      <td>{{ u.org_node_name }}</td>
-      <td>{{ u.org_role|default:"—" }}</td></tr>
+  <form method="post" style="display:flex;gap:8px;align-items:center;padding:6px 2px;border-top:1px solid var(--line)">
+    {% csrf_token %}<input type="hidden" name="user_id" value="{{ u.user_id }}">
+    <span style="flex:1.4;font-size:13px;overflow:hidden;text-overflow:ellipsis">{{ u.user_id }}</span>
+    <input name="name" value="{{ u.display_name|default_if_none:'' }}" style="flex:1;padding:5px;width:auto">
+    <select name="org_node_id" style="flex:1.4;padding:5px;width:auto">
+      <option value="">(미배정)</option>
+      {% for n in node_opts %}<option value="{{ n.id }}" {% if n.id == u.org_node_id %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
+    </select>
+    <select name="org_role" style="flex:0.9;padding:5px;width:auto">
+      <option value="">(없음)</option>
+      {% for r in roles %}<option {% if r == u.org_role %}selected{% endif %}>{{ r }}</option>{% endfor %}
+    </select>
+    <input name="password" type="password" placeholder="변경 시만" style="flex:1;padding:5px;width:auto">
+    <span style="width:130px;display:flex;gap:4px">
+      <button class="btn" name="action" value="save" style="padding:5px 10px">저장</button>
+      <button class="btn ghost" name="action" value="delete" style="padding:5px 8px;color:#c0392b"
+              onclick="return confirm('{{ u.user_id }} 사용자를 삭제할까요? (로그인 계정도 삭제)')">삭제</button>
+    </span>
+  </form>
+  {% empty %}
+  <p class="msg-note" style="text-align:center;padding:16px">등록된 사용자가 없습니다.</p>
   {% endfor %}
-</table>
+</div>
 </div>
 {% endblock %}

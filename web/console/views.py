@@ -468,14 +468,22 @@ def users(request):
 
         if request.method == "POST":
             p = request.POST
+            from django.contrib.auth.models import User as DjUser
             uid = (p.get("user_id") or "").strip()
-            if uid:
+            action = p.get("action", "save")
+
+            if action == "delete" and uid:
+                repo.delete_user(uid)
+                session.commit()
+                DjUser.objects.filter(username=uid).delete()   # 로그인 계정도 삭제
+                messages.warning(request, f"'{uid}' 사용자를 삭제했습니다(로그인 계정 포함).")
+            elif uid:
                 node_id = int(p["org_node_id"]) if p.get("org_node_id") else None
                 role = p.get("org_role") or None
+                # 이름은 값이 있을 때만 갱신(빈칸이면 기존 유지)
                 repo.set_org(uid, node_id, role, display_name=p.get("name") or None)
                 session.commit()
                 # Django 로그인 계정도 함께 생성/갱신
-                from django.contrib.auth.models import User as DjUser
                 dj, created = DjUser.objects.get_or_create(
                     username=uid, defaults={"email": uid})
                 if p.get("password"):
@@ -483,8 +491,8 @@ def users(request):
                     dj.save()
                 node = org.get(node_id) if node_id else None
                 where = f"{node.name}/{role}" if node else (role or "미배정")
-                messages.success(request, f"'{uid}' 저장 → {where}"
-                                 + (" (로그인 계정 생성됨)" if created else ""))
+                verb = "생성" if created else "수정"
+                messages.success(request, f"'{uid}' {verb} 완료 → {where}")
             return redirect("console_users")
 
         # 노드 드롭다운(들여쓰기 표시용 depth 포함)

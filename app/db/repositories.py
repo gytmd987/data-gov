@@ -227,6 +227,14 @@ class UserRepository:
     def get_user(self, user_id: str) -> Optional[User]:
         return self.session.get(User, user_id)
 
+    def delete_user(self, user_id: str) -> bool:
+        row = self.session.get(User, user_id)
+        if row is None:
+            return False
+        self.session.delete(row)
+        self.session.flush()
+        return True
+
     def set_org(self, user_id: str, node_id: Optional[int], role: Optional[str],
                 display_name: Optional[str] = None) -> User:
         """사용자를 조직 노드·역할에 배정(없으면 생성). 접근제어의 근거."""
