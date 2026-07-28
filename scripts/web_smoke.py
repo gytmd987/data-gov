@@ -187,6 +187,24 @@ def main() -> int:
         s4.close()
     print("[승인   ] 관리자 삭제 승인 → 문서 영구 삭제 ✅")
 
+    # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
+    s5 = bridge.open_session()
+    try:
+        svc2 = bridge.get_review_service(s5)
+        import tempfile as _tf, pathlib as _pl
+        d = _pl.Path(_tf.gettempdir())
+        (d / "평가결과보고서.txt").write_text("2026 평가 결과 보고서. 별첨 급여표 참고.", encoding="utf-8")
+        (d / "평가결과보고서_별첨1.txt").write_text("급여표. 등급별 지급액 정리.", encoding="utf-8")
+        rep = svc2.start_ingestion(str(d / "평가결과보고서.txt"), ingested_by="smoke")
+        att = svc2.start_ingestion(str(d / "평가결과보고서_별첨1.txt"), ingested_by="smoke")
+        s5.commit()
+        from app.db.repositories import RelationRepository
+        rel_ids = {r["doc_id"] for r in RelationRepository(s5).related_ids(rep)}
+        assert att in rel_ids, "파일명 어간 기반 자동 연관이 안 됨"
+    finally:
+        s5.close()
+    print("[연관   ] 보고서↔별첨 파일명 어간 자동 연결 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

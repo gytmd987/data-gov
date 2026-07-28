@@ -23,6 +23,7 @@
 .src summary{padding:8px 10px;cursor:pointer;color:var(--sub)}
 .src .body{padding:8px 12px;border-top:1px solid var(--line)}
 .src .body p{margin-bottom:8px}
+.src .rel{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line);font-size:12px}
 .fb{display:flex;align-items:center;gap:2px;margin-top:6px;font-size:13px;color:var(--sub)}
 .fb button{border:none;background:none;cursor:pointer;font-size:15px;padding:0 3px}
 .composer{padding:12px 16px 20px}
@@ -106,8 +107,13 @@ function bubble(role, text, sources, meta){
         `<p><b>[${p.marker}]</b>${p.page?` · p.${p.page}`:''}<br>${esc(p.text)}</p>`).join('');
       const dl = s.doc_id ? `<a href="/docs/original/${s.doc_id}">📄 원본 파일 다운로드</a>` : '';
       const pastBadge = s.is_past ? `<span class="badge-past">⚠️ 과거/만료 자료</span>` : '';
+      let rel = '';
+      if (s.related && s.related.length){
+        rel = `<div class="rel">🔗 관련 문서: ` + s.related.map(r=>
+          `<a href="/docs/original/${r.doc_id}">${esc(r.filename)}</a>`).join(', ') + `</div>`;
+      }
       html += `<details class="src"><summary>📎 출처 ${i+1}. ${esc(s.label||'')} ${marks}${pastBadge}</summary>
-               <div class="body">${passages}${dl}</div></details>`;
+               <div class="body">${passages}${dl}${rel}</div></details>`;
     });
     html += `</div>`;
   }

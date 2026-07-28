@@ -50,6 +50,28 @@ def history(request, conversation_id: int):
     return JsonResponse({"messages": msgs})
 
 
+def _attach_related(session, sources: list, user_ctx, today) -> None:
+    """각 출처 문서의 연관 문서를 붙인다(사용자가 열람 가능한 것만 — 파일명 유출 방지)."""
+    from app.db.repositories import DocumentRepository, RelationRepository
+    from app.schemas.metadata import doc_level_payload
+    from app.search.access import AccessPolicy
+    rel = RelationRepository(session)
+    drepo = DocumentRepository(session)
+    policy = AccessPolicy.for_user(user_ctx, today=today)
+    for s in sources:
+        doc_id = s.get("doc_id")
+        if not doc_id:
+            continue
+        items = []
+        for r in rel.related_ids(doc_id):
+            d = drepo.get(r["doc_id"])
+            if d is not None and policy.allows(doc_level_payload(d)):
+                items.append({"doc_id": r["doc_id"],
+                              "filename": d.identification.source_filename})
+        if items:
+            s["related"] = items
+
+
 def _plain_prompt(history_msgs, text: str) -> str:
     lines = ["당신은 사내 어시스턴트입니다. 한국어로 간결하고 정확하게 답하세요.\n"]
     for m in history_msgs:
@@ -92,6 +114,7 @@ def send(request):
             ans = pipe.answer(text, user_ctx, today=today, include_past=include_past)
             answer_text = ans.text
             sources = group_sources(ans, today=today)
+            _attach_related(session, sources, user_ctx, today)
         else:
             hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
             llm = bridge.get_chat_llm()

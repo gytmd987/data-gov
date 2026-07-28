@@ -32,6 +32,20 @@ _PAGE_SIZE = 50            # 문서 관리 목록 한 페이지 행 수(대량�
 _EXPIRE_SOON_DAYS = 30     # 만료 임박 알림 기준
 
 
+def _related_docs(session, doc_id: str) -> list[dict]:
+    """이 문서와 연관된 문서 [{doc_id, filename, reason, source}] (파일명 해석)."""
+    from app.db.repositories import DocumentRepository, RelationRepository
+    drepo = DocumentRepository(session)
+    out = []
+    for r in RelationRepository(session).related_ids(doc_id):
+        d = drepo.get(r["doc_id"])
+        if d is not None:
+            out.append({"doc_id": r["doc_id"],
+                        "filename": d.identification.source_filename,
+                        "reason": r["reason"], "source": r["source"]})
+    return out
+
+
 # ── 문서 검토 ────────────────────────────────────────────────────────────────
 @admin_required
 def review(request):
@@ -71,6 +85,7 @@ def review(request):
             "departments": system_config.departments(),
             "node_opts": _org_options(OrgRepository(session)),
             "dup": dup, "admins": system_config.admin_emails(),
+            "related": _related_docs(session, view.doc_id) if view else [],
         })
     finally:
         session.close()
@@ -226,6 +241,7 @@ def docs(request):
             "is_admin_user": is_adm, "can_manage": can_manage,
             "can_manage_sel": can_manage_sel,
             "admins": system_config.admin_emails(),
+            "related": _related_docs(session, sel) if doc else [],
         })
     finally:
         session.close()
@@ -311,6 +327,32 @@ def docs_action(request, doc_id: str):
             messages.warning(request, "영구 삭제했습니다.")
             return redirect("console_docs")
         return redirect(f"/console/docs/?doc={doc_id}")
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def docs_relate(request, doc_id: str):
+    """연관 문서 수동 추가/제거(관리자·부서장). 자동 감지 오류를 사람이 바로잡는 용도."""
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import RelationRepository
+        mgr = bridge.get_document_manager(session)
+        doc = mgr.get(doc_id)
+        if doc is None or not can_manage_doc(session, request.user, doc):
+            return redirect(f"/console/docs/?doc={doc_id}")
+        rel = RelationRepository(session)
+        other = (request.POST.get("other_id") or "").strip()
+        if request.POST.get("action") == "unlink" and other:
+            rel.unlink(doc_id, other)
+            messages.success(request, "연관을 해제했습니다.")
+        elif request.POST.get("action") == "add" and other and mgr.get(other) is not None:
+            rel.link(doc_id, other, source="human", reason="수동",
+                     created_by=_email_of(request.user))
+            messages.success(request, "연관 문서로 연결했습니다.")
+        session.commit()
+        return redirect(request.POST.get("next") or f"/console/docs/?doc={doc_id}")
     finally:
         session.close()
 

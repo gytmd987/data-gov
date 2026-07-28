@@ -13,6 +13,7 @@ from app.db.models import (
     AuditLog,
     Chunk,
     Document,
+    DocumentRelation,
     DocumentRequest,
     Feedback,
     OrgNode,
@@ -354,6 +355,59 @@ class RequestRepository:
             select(DocumentRequest.doc_id).where(
                 DocumentRequest.request_type == "delete",
                 DocumentRequest.status == "pending")).scalars())
+
+
+class RelationRepository:
+    """문서 간 '연관' 관계 저장·조회(무방향, 쌍 정규화)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    @staticmethod
+    def _pair(a: str, b: str) -> tuple[str, str]:
+        return (a, b) if a <= b else (b, a)
+
+    def link(self, a: str, b: str, source: str = "auto", confidence: float = 1.0,
+             reason: Optional[str] = None, created_by: Optional[str] = None) -> None:
+        if a == b:
+            return
+        da, db = self._pair(a, b)
+        exists = self.session.execute(
+            select(DocumentRelation).where(
+                DocumentRelation.doc_a == da, DocumentRelation.doc_b == db)
+        ).scalars().first()
+        if exists is not None:
+            # 사람이 확정한 관계는 자동 감지가 덮어쓰지 않음
+            if source == "human":
+                exists.source = "human"
+                exists.reason = reason or exists.reason
+            return
+        self.session.add(DocumentRelation(
+            doc_a=da, doc_b=db, source=source, confidence=confidence,
+            reason=reason, created_by=created_by))
+        self.session.flush()
+
+    def unlink(self, a: str, b: str) -> None:
+        da, db = self._pair(a, b)
+        row = self.session.execute(
+            select(DocumentRelation).where(
+                DocumentRelation.doc_a == da, DocumentRelation.doc_b == db)
+        ).scalars().first()
+        if row is not None:
+            self.session.delete(row)
+            self.session.flush()
+
+    def related_ids(self, doc_id: str) -> list[dict[str, Any]]:
+        """이 문서와 연관된 상대 문서 [{doc_id, source, reason}] 목록."""
+        rows = self.session.execute(
+            select(DocumentRelation).where(
+                (DocumentRelation.doc_a == doc_id) | (DocumentRelation.doc_b == doc_id))
+        ).scalars()
+        out = []
+        for r in rows:
+            other = r.doc_b if r.doc_a == doc_id else r.doc_a
+            out.append({"doc_id": other, "source": r.source, "reason": r.reason})
+        return out
 
 
 class AuditRepository:

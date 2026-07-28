@@ -133,13 +133,37 @@ class ReviewService:
             return
         try:
             from app.ingestion.dedup import find_similar
+            from app.relations.detect import DUP_THRESHOLD, RELATED_FLOOR
+            doc_id = ctx.doc.identification.doc_id
             text = "\n".join(c.text for c in ctx.chunks[:20])
+            # 한 번의 검색으로 개정판(>=0.88)과 연관 후보(중간대)를 함께 얻는다.
             cands = find_similar(client, collection, self.embedder, text,
-                                 exclude_doc_id=ctx.doc.identification.doc_id)
-            if cands:
-                self.docs.set_similar_candidates(ctx.doc.identification.doc_id, cands)
+                                 exclude_doc_id=doc_id, threshold=RELATED_FLOOR)
+            dup = [c for c in cands if c["score"] >= DUP_THRESHOLD]
+            if dup:
+                self.docs.set_similar_candidates(doc_id, dup)
+            self._auto_link_relations(ctx, sim_candidates=cands)
         except Exception:
             pass  # 탐지는 부가 기능 — 실패해도 적재는 계속
+
+    def _auto_link_relations(self, ctx, sim_candidates=None) -> None:
+        """업로드 시 연관 문서를 자동 감지해 연결(신호 1개만 잡혀도 연결)."""
+        from app.db.repositories import RelationRepository
+        from app.relations.detect import detect_related
+        doc = ctx.doc
+        doc_id = doc.identification.doc_id
+        existing = self.docs.list_documents(limit=500)   # 최근 문서와 비교
+        found = detect_related(
+            this_doc_id=doc_id,
+            this_filename=doc.identification.source_filename,
+            mentions=doc.classification.references,
+            existing=existing,
+            sim_candidates=sim_candidates,
+        )
+        rel = RelationRepository(self.session)
+        for r in found:
+            rel.link(doc_id, r["doc_id"], source="auto",
+                     confidence=r["confidence"], reason=r["reason"])
 
     # ── 검토 대기 목록 ───────────────────────────────────────────────────────
     def list_pending(self) -> list[dict[str, Any]]:

@@ -100,6 +100,9 @@ def build_enrichment_schema() -> dict[str, Any]:
             "related_parties": {                    # 유관 조직/임직원(제안)
                 "type": "array", "items": {"type": "string"},
             },
+            "references": {                         # 본문이 언급한 다른 문서(제목/파일명)
+                "type": "array", "items": {"type": "string"},
+            },
             "department": free_field(),
             "effective_date": free_field(),   # ISO date 문자열 or 빈값
             "expiry_date": free_field(),
@@ -119,6 +122,8 @@ _PROMPT_TEMPLATE = """당신은 인사 문서의 메타데이터를 분류하는
   문서 내용으로 답할 수 있는 실제 질문과 답을 expected_qa 에 3개 이상 만드세요.
   keywords 는 expected_qa 와 겹치지 않는 핵심 용어로만 고르세요(중복 금지).
 - 접근권한/작성자/보고선 은 절대 추론하지 마세요(사람이 조직도에서 지정합니다).
+- references 에는 본문이 언급하는 **다른 문서의 제목이나 파일명**만 넣으세요(예: "별첨 급여표",
+  "「2026 평가 보고서」 참고"). 없으면 빈 배열.
 - 날짜는 알 수 없으면 value 를 빈 문자열로 두세요.
 
 파일명: {filename}
@@ -200,6 +205,10 @@ def enrich(
     related = result.get("related_parties")
     if isinstance(related, list):
         cls.related_parties = [str(t) for t in related if str(t).strip()]
+
+    refs = result.get("references")
+    if isinstance(refs, list):
+        cls.references = [str(t) for t in refs if str(t).strip()]
 
     qa = result.get("expected_qa")
     if isinstance(qa, list):

@@ -194,6 +194,29 @@ class DocumentRequest(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class DocumentRelation(Base):
+    """문서 간 '연관' 관계(무방향). 별첨·참고·연관을 타입 구분 없이 하나로 기록한다.
+
+    업로드 시 자동 감지(파일명·본문 언급·내용 유사)해 연결하고, 사람은 틀린 것만 제거한다.
+    쌍은 (doc_a < doc_b) 로 정규화해 중복 없이 한 행만 둔다.
+    """
+
+    __tablename__ = "document_relations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_a: Mapped[str] = mapped_column(String(64), index=True)
+    doc_b: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="auto")   # auto | human
+    confidence: Mapped[float] = mapped_column(default=1.0)
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 파일명 | 본문 언급 | 내용 유사
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("doc_a", "doc_b", name="uq_document_relations_pair"),
+    )
+
+
 class Conversation(Base):
     """채팅 대화(ChatGPT 스타일 대화 목록의 한 항목)."""
 

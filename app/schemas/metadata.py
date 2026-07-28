@@ -57,6 +57,7 @@ class ClassificationBlock(BaseModel):
     keywords: list[str] = Field(default_factory=list)    # [AI 필수] 핵심 키워드(Q&A와 중복 금지)
     expected_qa: list[dict] = Field(default_factory=list)  # [AI 필수] [{question, answer}, ...]
     related_parties: list[str] = Field(default_factory=list)  # 유관 조직/임직원(AI 제안)
+    references: list[str] = Field(default_factory=list)   # 본문이 언급한 다른 문서(제목/파일명) — 연관 자동감지용
     department: Optional[str] = None                     # 작성 부서(조직 노드 이름)
     language: Language = Language.UNKNOWN
 

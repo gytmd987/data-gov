@@ -152,6 +152,25 @@
     </form>
   </div>
   {% endif %}
+
+  {% if related %}
+  <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+    <b>🔗 관련 문서</b>
+    {% for r in related %}
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <a href="/docs/original/{{ r.doc_id }}">{{ r.filename }}</a>
+      <span class="msg-note">· {{ r.reason }}</span>
+      {% if can_manage_sel %}
+      <form method="post" action="/console/docs/{{ sel }}/relate" style="margin:0">
+        {% csrf_token %}<input type="hidden" name="action" value="unlink">
+        <input type="hidden" name="other_id" value="{{ r.doc_id }}">
+        <button class="btn ghost" style="padding:2px 8px">✕</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 </div>

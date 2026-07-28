@@ -118,6 +118,21 @@
   <button class="btn" style="margin-top:12px">✅ 확인 완료 → 검증 후 색인</button>
 </div>
 </form>
+
+<div class="card">
+  <h4>🔗 관련 문서 <span class="msg-note">(업로드 시 자동 감지 — 틀리면 제거)</span></h4>
+  {% for r in related %}
+  <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+    <span>{{ r.filename }} <span class="msg-note">· {{ r.reason }}{% if r.source == 'human' %}(수동){% endif %}</span></span>
+    <form method="post" action="/console/docs/{{ view.doc_id }}/relate" style="margin:0">
+      {% csrf_token %}<input type="hidden" name="action" value="unlink">
+      <input type="hidden" name="other_id" value="{{ r.doc_id }}">
+      <input type="hidden" name="next" value="/console/review/?doc={{ view.doc_id }}">
+      <button class="btn ghost" style="padding:2px 8px">✕ 해제</button>
+    </form>
+  </div>
+  {% empty %}<p class="msg-note">자동 감지된 관련 문서가 없습니다.</p>{% endfor %}
+</div>
 {% endif %}
 </div>
 {% endblock %}
