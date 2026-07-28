@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
@@ -18,6 +18,7 @@ from app.db.models import (
     Feedback,
     OrgNode,
     User,
+    UserOrgNode,
 )
 from app.org.tree import OrgNodeView, OrgTree
 from app.schemas.ingestion import IngestionStatus
@@ -212,53 +213,92 @@ class DocumentRepository:
 
 
 class UserRepository:
-    """사용자 ↔ 조직도 배정 + 접근 컨텍스트. 접근은 조직 노드/역할로만 판정한다."""
+    """사용자 ↔ 조직도 소속(다대다) + 접근 컨텍스트.
+
+    소속은 여러 노드가 가능하고, 부서장(리더) 지정은 OrgNode.leader_id 로 한다.
+    접근 토큰: 소속 노드마다 n:{node}, 리더인 노드마다 n:{node}+h:{node}.
+    """
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def _member_nodes(self, user_id: str) -> list[int]:
+        return list(self.session.execute(
+            select(UserOrgNode.node_id).where(UserOrgNode.user_id == user_id)).scalars())
+
+    def _led_nodes(self, user_id: str) -> list[int]:
+        return list(self.session.execute(
+            select(OrgNode.id).where(OrgNode.leader_id == user_id)).scalars())
 
     def list_users(self) -> list[dict[str, Any]]:
         out = []
         for u in self.session.execute(select(User).order_by(User.user_id)).scalars():
             out.append({"user_id": u.user_id, "display_name": u.display_name,
-                        "org_node_id": u.org_node_id, "org_role": u.org_role})
+                        "node_ids": self._member_nodes(u.user_id),
+                        "led_ids": self._led_nodes(u.user_id)})
         return out
 
     def get_user(self, user_id: str) -> Optional[User]:
         return self.session.get(User, user_id)
 
+    def member_nodes(self, user_id: str) -> list[int]:
+        """이 사용자가 소속된 노드 id 목록."""
+        return self._member_nodes(user_id)
+
+    def primary_node(self, user_id: str) -> Optional[int]:
+        """작성부서 기본값 등에 쓸 대표 소속 노드(첫 소속). 없으면 None."""
+        nodes = self._member_nodes(user_id)
+        return nodes[0] if nodes else None
+
     def delete_user(self, user_id: str) -> bool:
         row = self.session.get(User, user_id)
         if row is None:
             return False
+        self.session.execute(delete(UserOrgNode).where(UserOrgNode.user_id == user_id))
+        self.session.execute(
+            update(OrgNode).where(OrgNode.leader_id == user_id).values(leader_id=None))
         self.session.delete(row)
         self.session.flush()
         return True
 
-    def set_org(self, user_id: str, node_id: Optional[int], role: Optional[str],
-                display_name: Optional[str] = None) -> User:
-        """사용자를 조직 노드·역할에 배정(없으면 생성). 접근제어의 근거."""
+    def set_memberships(self, user_id: str, node_ids: Iterable[int],
+                        display_name: Optional[str] = None) -> User:
+        """사용자의 소속 노드 집합을 통째로 교체(없으면 생성)."""
         row = self.session.get(User, user_id)
         if row is None:
             row = User(user_id=user_id, display_name=display_name)
             self.session.add(row)
         if display_name is not None:
             row.display_name = display_name
-        row.org_node_id = node_id
-        row.org_role = role
+        self.session.execute(delete(UserOrgNode).where(UserOrgNode.user_id == user_id))
+        for nid in dict.fromkeys(int(n) for n in node_ids):   # 중복 제거
+            self.session.add(UserOrgNode(user_id=user_id, node_id=nid))
         self.session.flush()
         return row
 
+    def set_org(self, user_id: str, node_id: Optional[int], role: Optional[str] = None,
+                display_name: Optional[str] = None) -> User:
+        """하위호환: 단일 노드 배정(+역할이 부서장이면 그 노드 리더로 지정)."""
+        from app.org.tree import is_head_role
+        row = self.set_memberships(user_id, [node_id] if node_id else [], display_name)
+        if node_id and is_head_role(role):
+            node = self.session.get(OrgNode, node_id)
+            if node is not None:
+                node.leader_id = user_id
+                self.session.flush()
+        return row
+
     def get_user_context(self, user_id: str) -> Optional[UserContext]:
-        """조직 노드/역할 → 접근 토큰(UserContext.groups)."""
-        from app.org.tree import user_tokens
-        user = self.session.get(User, user_id)
-        if user is None:
+        """소속·리더 노드 → 접근 토큰(UserContext.groups)."""
+        if self.session.get(User, user_id) is None:
             return None
-        return UserContext(
-            user_id=user_id,
-            groups=frozenset(user_tokens(user.org_node_id, user.org_role)),
-        )
+        tokens: set[str] = set()
+        for m in self._member_nodes(user_id):
+            tokens.add(f"n:{m}")
+        for led in self._led_nodes(user_id):
+            tokens.add(f"n:{led}")
+            tokens.add(f"h:{led}")
+        return UserContext(user_id=user_id, groups=frozenset(tokens))
 
 
 class OrgRepository:
@@ -290,9 +330,8 @@ class OrgRepository:
         ids = self.load_tree().subtree(node_id)
         if not ids:
             return
-        self.session.execute(
-            update(User).where(User.org_node_id.in_(ids))
-            .values(org_node_id=None, org_role=None))
+        # 소속(UserOrgNode)·리더 지정 해제 후 노드 삭제(포터블하게 ORM에서 처리)
+        self.session.execute(delete(UserOrgNode).where(UserOrgNode.node_id.in_(ids)))
         for nid in reversed(ids):        # 하위(자식)부터 삭제
             node = self.session.get(OrgNode, nid)
             if node is not None:
@@ -311,14 +350,33 @@ class OrgRepository:
                              parent_id=n.parent_id) for n in self.list_nodes()]
         return OrgTree(views)
 
+    def set_leader(self, node_id: int, user_id: Optional[str]) -> None:
+        """이 조직의 리더(부서장) 지정/해제."""
+        node = self.session.get(OrgNode, node_id)
+        if node is not None:
+            node.leader_id = user_id or None
+            self.session.flush()
+
+    def leader(self, node_id: int) -> Optional[dict[str, Any]]:
+        node = self.session.get(OrgNode, node_id)
+        if node is None or not node.leader_id:
+            return None
+        u = self.session.get(User, node.leader_id)
+        return {"user_id": node.leader_id,
+                "display_name": u.display_name if u is not None else None}
+
+    def nodes_led_by(self, user_id: str) -> list[int]:
+        return list(self.session.execute(
+            select(OrgNode.id).where(OrgNode.leader_id == user_id)).scalars())
+
     def members(self, node_id: int) -> list[dict[str, Any]]:
-        """이 노드에 직접 배정된 사용자 목록."""
+        """이 노드에 소속된 사용자 목록."""
         out = []
         for u in self.session.execute(
-            select(User).where(User.org_node_id == node_id).order_by(User.user_id)
+            select(User).join(UserOrgNode, User.user_id == UserOrgNode.user_id)
+            .where(UserOrgNode.node_id == node_id).order_by(User.user_id)
         ).scalars():
-            out.append({"user_id": u.user_id, "display_name": u.display_name,
-                        "org_role": u.org_role})
+            out.append({"user_id": u.user_id, "display_name": u.display_name})
         return out
 
 

@@ -33,20 +33,23 @@ def domain_user_context(session, user):
 
 # ── 부서장(조직) 기반 문서 관리 권한 ────────────────────────────────────────
 def manage_scope(session, user):
-    """(is_admin, head_node_ids) 반환.
+    """(is_admin, managed_node_ids) 반환.
 
-    head_node_ids = 이 사용자가 부서장으로서 관리하는 노드 집합(자기 노드 subtree).
-    관리자면 전체 관리(scope 무제한). 파트원/미배정이면 빈 집합.
+    managed_node_ids = 이 사용자가 리더(부서장)인 노드들의 subtree 합집합.
+    관리자면 전체 관리(scope 무제한). 리더가 아닌 사용자는 빈 집합.
     """
-    from app.db.repositories import OrgRepository, UserRepository
-    from app.org.tree import is_head_role
+    from app.db.repositories import OrgRepository
     if is_admin(user):
         return True, set()
-    u = UserRepository(session).get_user(_email_of(user))
-    if u is None or u.org_node_id is None or not is_head_role(u.org_role):
+    org = OrgRepository(session)
+    led = org.nodes_led_by(_email_of(user))
+    if not led:
         return False, set()
-    subtree = set(OrgRepository(session).load_tree().subtree(u.org_node_id))
-    return False, subtree
+    tree = org.load_tree()
+    scope: set = set()
+    for n in led:
+        scope |= set(tree.subtree(n))
+    return False, scope
 
 
 def can_manage_doc(session, user, doc) -> bool:

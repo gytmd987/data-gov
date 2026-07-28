@@ -119,6 +119,8 @@ class OrgNode(Base):
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("org_nodes.id", ondelete="CASCADE"), nullable=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # 이 조직의 리더(부서장) — 조직도 관리에서 지정. 접근 토큰 h:{node} 의 근거.
+    leader_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
 
 class User(Base):
@@ -126,13 +128,19 @@ class User(Base):
 
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    clearance: Mapped[str | None] = mapped_column(String(16), nullable=True)  # 레거시(미사용)
     position: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 직책(레거시)
     job: Mapped[str | None] = mapped_column(String(64), nullable=True)        # 직무(레거시)
-    # 조직도 배정 — 접근제어의 근거
-    org_node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("org_nodes.id", ondelete="SET NULL"), nullable=True, index=True)
-    org_role: Mapped[str | None] = mapped_column(String(16), nullable=True)   # 팀장|그룹장|파트장|파트원
+
+
+class UserOrgNode(Base):
+    """사용자 ↔ 조직 노드 소속(다대다). 한 사람이 여러 부서에 속할 수 있다."""
+
+    __tablename__ = "user_org_nodes"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True)
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("org_nodes.id", ondelete="CASCADE"), primary_key=True)
 
 
 class UserGroup(Base):

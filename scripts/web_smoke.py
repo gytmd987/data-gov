@@ -140,28 +140,39 @@ def main() -> int:
         tid, gid, pid = t.id, g.id, p.id
     finally:
         s2.close()
-    # 사용자 관리 화면에서 노드·역할 배정
+    # 사용자 관리 화면에서 노드 배정(복수 소속 가능, 역할 없음)
     resp = c.post("/console/users/", {"user_id": "hong@company.com", "name": "홍파트원",
-                  "org_node_id": str(pid), "org_role": "파트원"})
+                  "org_node_id": [str(pid), str(gid)]})
     assert resp.status_code == 302
     body = c.get("/console/org/").content.decode()
     assert "People팀" in body and "인터뷰파트" in body and "홍파트원" in body
-    print("[조직도 ] 팀>그룹>파트 생성 · 사용자 배정 · 계층 표시 ✅")
+    print("[조직도 ] 팀>그룹>파트 생성 · 복수 소속 배정 · 계층 표시 ✅")
 
-    # 10b) 사용자 수정(역할 변경) + 삭제
+    # 10b) 다중 소속 반영 + 조직도에서 부서장 지정 + 사용자 삭제
     resp = c.post("/console/users/", {"action": "save", "user_id": "hong@company.com",
-                  "name": "홍길동", "org_node_id": str(pid), "org_role": "파트장"})
+                  "name": "홍길동", "org_node_id": [str(pid), str(gid)]})
     assert resp.status_code == 302
+    from app.db.repositories import UserRepository
     s_u = bridge.open_session()
     try:
-        from app.db.repositories import UserRepository
-        u = UserRepository(s_u).get_user("hong@company.com")
-        assert u.org_role == "파트장" and u.display_name == "홍길동", "사용자 수정 반영 안 됨"
+        repo_u = UserRepository(s_u)
+        u = repo_u.get_user("hong@company.com")
+        assert u.display_name == "홍길동", "사용자 수정 반영 안 됨"
+        assert set(repo_u.member_nodes("hong@company.com")) == {pid, gid}, "복수 소속 반영 안 됨"
     finally:
         s_u.close()
+    # 조직도 관리에서 부서장(리더) 지정 — 사용자 관리 탭엔 역할 선택 없음
+    resp = c.post("/console/org/", {"action": "set_leader", "node_id": str(pid),
+                                    "leader_id": "hong@company.com"})
+    assert resp.status_code == 302
+    s_l = bridge.open_session()
+    try:
+        assert OrgRepository(s_l).nodes_led_by("hong@company.com") == [pid], "부서장 지정 안 됨"
+    finally:
+        s_l.close()
     # 삭제 대상 임시 사용자 생성 후 삭제
     c.post("/console/users/", {"action": "save", "user_id": "temp@company.com",
-                               "org_node_id": str(pid), "org_role": "파트원"})
+                               "org_node_id": [str(pid)]})
     resp = c.post("/console/users/", {"action": "delete", "user_id": "temp@company.com"})
     assert resp.status_code == 302
     s_u2 = bridge.open_session()
@@ -170,7 +181,7 @@ def main() -> int:
     finally:
         s_u2.close()
     assert not DjUser.objects.filter(username="temp@company.com").exists()
-    print("[사용자 ] 역할 수정 반영 · 사용자+로그인계정 삭제 ✅")
+    print("[사용자 ] 복수 소속 반영 · 조직도에서 부서장 지정 · 사용자+로그인계정 삭제 ✅")
 
     # 11) 파트원 문서 등록 → 수정/삭제 요청 → 관리자 승인(삭제)
     from django.core.files.uploadedfile import SimpleUploadedFile

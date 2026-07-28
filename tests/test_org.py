@@ -107,4 +107,5 @@ def test_org_crud_and_tree(session):
     session.commit()
     assert org.get(part.id) is None
     ctx_user = users.list_users()[0]
-    assert ctx_user["org_node_id"] is None       # 배정 해제됨(SET NULL)
+    assert ctx_user["node_ids"] == []            # 소속 해제됨
+    assert ctx_user["led_ids"] == []             # 부서장 지정도 해제됨

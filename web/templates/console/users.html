@@ -4,54 +4,66 @@
 {% block content %}
 <div style="max-width:960px;margin:0 auto;padding:0 16px">
 <h2 style="margin:18px 0 4px">👤 사용자 관리</h2>
-<p class="msg-note">조직도 노드와 역할을 배정하면 그 소속에 맞는 문서 접근 권한이 부여되고, 로그인 계정도 함께 만들어집니다.
-  노드는 <a href="/console/org/">조직도 관리</a>에서 먼저 만들어 주세요. 아래 표에서 기존 사용자를 바로 수정·삭제할 수 있습니다.</p>
+<p class="msg-note">한 사람이 여러 부서에 소속될 수 있습니다. 아래에서 소속 부서를 체크하면 그 소속에 맞는 문서 접근 권한이 부여되고, 로그인 계정도 함께 만들어집니다.
+  부서(노드)는 <a href="/console/org/">조직도 관리</a>에서 먼저 만들어 주세요. 부서장(리더) 지정도 조직도 관리에서 합니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
 <div class="card">
-  <b>새 사용자 등록</b>
-  <form method="post" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+  <b>{% if edit_user %}✏️ '{{ edit_user.user_id }}' 수정{% else %}새 사용자 등록{% endif %}</b>
+  <form method="post" style="margin-top:8px">
     {% csrf_token %}<input type="hidden" name="action" value="save">
-    <input name="user_id" placeholder="사용자 ID (이메일 권장)" required>
-    <input name="name" placeholder="이름">
-    <select name="org_node_id">
-      <option value="">(소속 노드 선택)</option>
-      {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
-    </select>
-    <select name="org_role">
-      <option value="">(역할 선택)</option>
-      {% for r in roles %}<option>{{ r }}</option>{% endfor %}
-    </select>
-    <input name="password" type="password" placeholder="초기 비밀번호 (신규/변경 시)">
-    <button class="btn">등록</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      {% if edit_user %}
+        <input type="hidden" name="user_id" value="{{ edit_user.user_id }}">
+        <input value="{{ edit_user.user_id }}" disabled style="background:var(--line)">
+        <input name="name" placeholder="이름" value="{{ edit_user.display_name|default_if_none:'' }}">
+      {% else %}
+        <input name="user_id" placeholder="사용자 ID (이메일 권장)" required>
+        <input name="name" placeholder="이름">
+      {% endif %}
+      <input name="password" type="password" placeholder="{% if edit_user %}비밀번호 변경 (변경 시만){% else %}초기 비밀번호{% endif %}"
+             style="grid-column:1/3">
+    </div>
+    <div style="margin:10px 0 4px;font-size:13px;color:var(--sub)">소속 부서 (복수 선택 가능)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 14px;max-height:200px;overflow:auto;padding:8px 4px;border:1px solid var(--line);border-radius:6px">
+      {% for n in node_opts %}
+      <label style="display:flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap">
+        <input type="checkbox" name="org_node_id" value="{{ n.id }}"
+               {% if n.id in edit_node_ids %}checked{% endif %}>
+        <span style="color:var(--sub)">{{ n.indent }}</span>{{ n.name }}
+        <span class="msg-note">· {{ n.node_type|klabel }}</span>
+      </label>
+      {% empty %}
+      <span class="msg-note">조직도가 비어 있습니다. 먼저 <a href="/console/org/">조직도 관리</a>에서 부서를 만드세요.</span>
+      {% endfor %}
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn">{% if edit_user %}수정 저장{% else %}등록{% endif %}</button>
+      {% if edit_user %}<a class="btn ghost" href="/console/users/">취소</a>{% endif %}
+    </div>
   </form>
 </div>
 
 <h4 style="margin:16px 0 6px">등록된 사용자 <span class="msg-note">({{ users|length }}명)</span></h4>
 <div class="card" style="padding:8px 14px">
-  <div style="display:flex;gap:8px;font-size:12px;color:var(--sub);padding:0 2px 6px">
-    <span style="flex:1.4">ID</span><span style="flex:1">이름</span><span style="flex:1.4">소속</span>
-    <span style="flex:0.9">역할</span><span style="flex:1">비밀번호 변경</span><span style="width:130px"></span></div>
+  <div style="display:flex;gap:10px;font-size:12px;color:var(--sub);padding:0 2px 6px">
+    <span style="width:220px">ID</span><span style="width:70px">이름</span>
+    <span style="flex:1">소속 부서</span><span style="width:120px;text-align:right">관리</span></div>
   {% for u in users %}
-  <form method="post" style="display:flex;gap:8px;align-items:center;padding:6px 2px;border-top:1px solid var(--line)">
-    {% csrf_token %}<input type="hidden" name="user_id" value="{{ u.user_id }}">
-    <span style="flex:1.4;font-size:13px;overflow:hidden;text-overflow:ellipsis">{{ u.user_id }}</span>
-    <input name="name" value="{{ u.display_name|default_if_none:'' }}" style="flex:1;padding:5px;width:auto">
-    <select name="org_node_id" style="flex:1.4;padding:5px;width:auto">
-      <option value="">(미배정)</option>
-      {% for n in node_opts %}<option value="{{ n.id }}" {% if n.id == u.org_node_id %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
-    </select>
-    <select name="org_role" style="flex:0.9;padding:5px;width:auto">
-      <option value="">(없음)</option>
-      {% for r in roles %}<option {% if r == u.org_role %}selected{% endif %}>{{ r }}</option>{% endfor %}
-    </select>
-    <input name="password" type="password" placeholder="변경 시만" style="flex:1;padding:5px;width:auto">
-    <span style="width:130px;display:flex;gap:4px">
-      <button class="btn" name="action" value="save" style="padding:5px 10px">저장</button>
-      <button class="btn ghost" name="action" value="delete" style="padding:5px 8px;color:#c0392b"
-              onclick="return confirm('{{ u.user_id }} 사용자를 삭제할까요? (로그인 계정도 삭제)')">삭제</button>
+  <div style="display:flex;gap:10px;align-items:center;padding:7px 2px;border-top:1px solid var(--line)">
+    <span style="width:220px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="{{ u.user_id }}">{{ u.user_id }}</span>
+    <span style="width:70px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ u.display_name|default_if_none:'—' }}</span>
+    <span style="flex:1;font-size:13px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="{{ u.node_names }}">{{ u.node_names }}{% if u.led_ids %} <span style="color:#2d7">· 부서장</span>{% endif %}</span>
+    <span style="width:120px;display:flex;gap:4px;justify-content:flex-end">
+      <a class="btn ghost" href="/console/users/?edit={{ u.user_id }}" style="padding:4px 10px">수정</a>
+      <form method="post" style="display:inline" onsubmit="return confirm('{{ u.user_id }} 사용자를 삭제할까요? (로그인 계정도 삭제)')">
+        {% csrf_token %}<input type="hidden" name="user_id" value="{{ u.user_id }}">
+        <button class="btn ghost" name="action" value="delete" style="padding:4px 8px;color:#c0392b">삭제</button>
+      </form>
     </span>
-  </form>
+  </div>
   {% empty %}
   <p class="msg-note" style="text-align:center;padding:16px">등록된 사용자가 없습니다.</p>
   {% endfor %}

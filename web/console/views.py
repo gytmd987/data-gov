@@ -201,13 +201,11 @@ def docs(request):
         can_manage = is_adm
         if not is_adm:
             from app.db.repositories import UserRepository
-            u = UserRepository(session).get_user(_email_of(request.user))
             if scope:                       # 부서장
                 author_ids, can_manage = scope, True
-            elif u is not None and u.org_node_id is not None:
-                author_ids = {u.org_node_id}   # 파트원: 내 소속 문서(요청만)
-            else:
-                author_ids = {-1}              # 미배정: 없음
+            else:                           # 파트원: 내 소속 부서 문서(요청만)
+                mine = set(UserRepository(session).member_nodes(_email_of(request.user)))
+                author_ids = mine or {-1}
 
         total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type,
                                     author_node_ids=author_ids)
@@ -478,10 +476,9 @@ def users(request):
                 DjUser.objects.filter(username=uid).delete()   # 로그인 계정도 삭제
                 messages.warning(request, f"'{uid}' 사용자를 삭제했습니다(로그인 계정 포함).")
             elif uid:
-                node_id = int(p["org_node_id"]) if p.get("org_node_id") else None
-                role = p.get("org_role") or None
+                node_ids = [int(x) for x in p.getlist("org_node_id") if x]
                 # 이름은 값이 있을 때만 갱신(빈칸이면 기존 유지)
-                repo.set_org(uid, node_id, role, display_name=p.get("name") or None)
+                repo.set_memberships(uid, node_ids, display_name=p.get("name") or None)
                 session.commit()
                 # Django 로그인 계정도 함께 생성/갱신
                 dj, created = DjUser.objects.get_or_create(
@@ -489,22 +486,23 @@ def users(request):
                 if p.get("password"):
                     dj.set_password(p["password"])
                     dj.save()
-                node = org.get(node_id) if node_id else None
-                where = f"{node.name}/{role}" if node else (role or "미배정")
+                names = ", ".join(org.get(n).name for n in node_ids if org.get(n)) or "미배정"
                 verb = "생성" if created else "수정"
-                messages.success(request, f"'{uid}' {verb} 완료 → {where}")
+                messages.success(request, f"'{uid}' {verb} 완료 → 소속: {names}")
             return redirect("console_users")
 
-        # 노드 드롭다운(들여쓰기 표시용 depth 포함)
         node_opts = _org_options(org)
         node_names = {n["id"]: n["name"] for n in node_opts}
         user_list = repo.list_users()
         for u in user_list:
-            u["org_node_name"] = node_names.get(u["org_node_id"], "—")
+            u["node_names"] = ", ".join(node_names.get(i, str(i)) for i in u["node_ids"]) or "—"
+        # 수정 대상(?edit=uid) 미리 채우기
+        edit_uid = request.GET.get("edit")
+        edit_user = next((u for u in user_list if u["user_id"] == edit_uid), None)
+        edit_node_ids = set(edit_user["node_ids"]) if edit_user else set()
         return render(request, "console/users.html", {
-            "users": user_list,
-            "node_opts": node_opts,
-            "roles": system_config.org_roles(),
+            "users": user_list, "node_opts": node_opts,
+            "edit_user": edit_user, "edit_node_ids": edit_node_ids,
         })
     finally:
         session.close()
@@ -540,13 +538,18 @@ def _org_options(org) -> list[dict]:
 def org_console(request):
     session = bridge.open_session()
     try:
-        from app.db.repositories import OrgRepository
+        from app.db.repositories import OrgRepository, UserRepository
         from app.org.tree import NODE_TYPES
         repo = OrgRepository(session)
 
         if request.method == "POST":
             p = request.POST
             action = p.get("action")
+            if action == "set_leader":
+                repo.set_leader(int(p["node_id"]), p.get("leader_id") or None)
+                session.commit()
+                messages.success(request, "부서장을 지정했습니다.")
+                return redirect("console_org")
             if action == "create":
                 name = (p.get("name") or "").strip()
                 node_type = p.get("node_type")
@@ -569,11 +572,13 @@ def org_console(request):
                 messages.warning(request, "노드를 삭제했습니다(하위 포함, 배정 사용자는 해제).")
             return redirect("console_org")
 
+        all_users = UserRepository(session).list_users()
         rows = _org_options(repo)
         for r in rows:
             r["members"] = repo.members(r["id"])
+            r["leader"] = repo.leader(r["id"])
         return render(request, "console/org.html", {
-            "rows": rows, "node_opts": rows,
+            "rows": rows, "node_opts": rows, "all_users": all_users,
             "node_types": [{"value": t, "label": system_config.label(t)}
                            for t in ["team", "group", "part"]],
         })

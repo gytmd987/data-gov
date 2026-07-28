@@ -26,16 +26,26 @@
 
 {% if rows %}
 <table>
-  <tr><th>조직</th><th>유형</th><th>구성원</th><th style="width:220px"></th></tr>
+  <tr><th>조직</th><th>유형</th><th>구성원</th><th style="width:230px">부서장</th><th style="width:200px"></th></tr>
   {% for r in rows %}
   <tr>
     <td><span style="display:inline-block;width:{{ r.depth }}0px"></span>{% if r.depth %}└ {% endif %}<b>{{ r.name }}</b></td>
     <td>{{ r.node_type|klabel }}</td>
-    <td>{% for m in r.members %}{{ m.display_name|default:m.user_id }}<span class="msg-note"> ({{ m.org_role|default:"?" }})</span>{% if not forloop.last %}, {% endif %}{% empty %}<span class="msg-note">—</span>{% endfor %}</td>
+    <td>{% for m in r.members %}{{ m.display_name|default:m.user_id }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="msg-note">—</span>{% endfor %}</td>
+    <td>
+      <form method="post" style="display:inline-flex;gap:4px">
+        {% csrf_token %}<input type="hidden" name="action" value="set_leader"><input type="hidden" name="node_id" value="{{ r.id }}">
+        <select name="leader_id" style="width:150px;padding:4px 6px">
+          <option value="">(없음)</option>
+          {% for u in all_users %}<option value="{{ u.user_id }}" {% if r.leader and r.leader.user_id == u.user_id %}selected{% endif %}>{{ u.display_name|default:u.user_id }}</option>{% endfor %}
+        </select>
+        <button class="btn ghost" style="padding:4px 8px">지정</button>
+      </form>
+    </td>
     <td>
       <form method="post" style="display:inline-flex;gap:4px">
         {% csrf_token %}<input type="hidden" name="action" value="rename"><input type="hidden" name="node_id" value="{{ r.id }}">
-        <input name="name" value="{{ r.name }}" style="width:120px;padding:4px 6px">
+        <input name="name" value="{{ r.name }}" style="width:100px;padding:4px 6px">
         <button class="btn ghost" style="padding:4px 8px">이름변경</button>
       </form>
       <form method="post" style="display:inline" onsubmit="return confirm('이 노드와 하위 노드를 모두 삭제할까요?')">
