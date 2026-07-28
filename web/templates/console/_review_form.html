@@ -1,0 +1,99 @@
+{# 업로더 검토 폼 — AI가 채운 내용을 확인·수정하고 등록을 확정한다. #}
+{% load klabels %}
+<form method="post" action="/console/review/{{ view.doc_id }}/submit">
+{% csrf_token %}
+<input type="hidden" name="next" value="/console/docs/?doc={{ view.doc_id }}">
+<div class="card">
+  <b>📝 {{ view.source_filename }} — 등록 전 검토</b>
+  <span class="msg-note">· {{ view.file_format }} · 조각 {{ view.chunk_count }}개 · 상태 {{ view.status }}</span>
+  <p class="msg-note" style="margin-top:4px">AI가 아래 항목을 자동으로 채웠습니다. 확인·수정한 뒤 <b>등록 확정</b>하면 검색에 노출됩니다.</p>
+
+  {% if view.auto_filled %}
+  <p class="msg-note" style="margin-top:8px">🤖 AI 자동 채움 신뢰도:
+    {% for a in view.auto_filled %}{{ a.field }} {{ a.confidence }}{% if not forloop.last %} · {% endif %}{% endfor %}
+  </p>{% endif %}
+
+  {% if view.similar_candidates %}
+  <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
+    ⚠️ <b>유사한 기존 문서</b>가 있습니다. AI 판단을 참고해 관계를 확정하세요.
+    {% for c in view.similar_candidates %}
+    <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #e6cf8a">
+      <b>{{ c.filename }}</b> <span class="msg-note">· 유사도 {{ c.score }} · 🤖 {{ c.ai_label }}{% if c.ai_reason %} — {{ c.ai_reason }}{% endif %}</span>
+      <div style="display:flex;gap:14px;margin-top:4px;flex-wrap:wrap">
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="supersede" {% if c.default_action == 'supersede' %}checked{% endif %}> 이 문서의 새 버전으로 (기존을 대체됨 처리)</label>
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="relate" {% if c.default_action == 'relate' %}checked{% endif %}> 연관 문서로 연결</label>
+        <label><input type="radio" name="sim__{{ c.doc_id }}" value="ignore" {% if c.default_action == 'ignore' %}checked{% endif %}> 무관(별개)</label>
+      </div>
+    </div>
+    {% endfor %}
+  </div>{% endif %}
+
+  {% if dup %}
+  <div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:8px;padding:10px;margin-top:10px">
+    ⛔ <b>제목+형식이 같은 문서</b>가 이미 있습니다: <b>{{ dup.filename }}</b>. 처리 방법을 고르세요.
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+      <label><input type="radio" name="dup_action" value="supersede"> 기존 문서를 이 문서의 <b>이전 버전</b>으로 처리(교체)</label>
+      <label><input type="radio" name="dup_action" value="request_delete"> 기존 문서 <b>삭제 요청</b> →
+        <select name="target_admin" style="width:auto">
+          <option value="">담당 관리자 선택</option>{% for a in admins %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+        </select> <span class="msg-note">(승인 전까지 같은 제목 등록 불가)</span></label>
+      <label><input type="radio" name="dup_action" value="proceed"> 별개 문서로 그대로 등록</label>
+      <span class="msg-note">제목을 바꾸려면 아래 <b>제목</b> 필드를 수정하면 됩니다.</span>
+    </div>
+  </div>{% endif %}
+
+  <div style="display:flex;gap:24px;margin-top:14px;flex-wrap:wrap">
+    <div style="flex:1;min-width:300px">
+      <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>
+      <div class="field"><label>문서 종류</label>
+        <select name="doc_type">{% for o in opts.doc_type %}
+          <option value="{{ o }}" {% if o == view.classification.doc_type %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>제목</label>
+        <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></div>
+      <div class="field"><label>요약 <span class="msg-note">(AI 필수)</span></label>
+        <textarea name="summary" rows="3">{{ view.classification.summary|default_if_none:'' }}</textarea></div>
+      <div class="field"><label>핵심 키워드 <span class="msg-note">(AI 필수 · 쉼표 구분)</span></label>
+        <input name="keywords" value="{{ view.classification.keywords|join:', ' }}"></div>
+      <div class="field"><label>예상 Q&amp;A <span class="msg-note">(AI 필수 — 자동 생성)</span></label>
+        <div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:#fafafa;font-size:13px;max-height:160px;overflow-y:auto">
+          {% for qa in view.classification.expected_qa %}
+          <p style="margin-bottom:6px"><b>Q.</b> {{ qa.question }}<br><b>A.</b> {{ qa.answer }}</p>
+          {% empty %}<span class="msg-note">⚠️ AI가 Q&amp;A를 생성하지 못했습니다(파일 읽기 문제 가능).</span>{% endfor %}
+        </div></div>
+      <div class="field"><label>유관 조직/임직원 <span class="msg-note">(쉼표 구분)</span></label>
+        <input name="related_parties" value="{{ view.classification.related_parties|join:', ' }}"></div>
+      <div class="field"><label>작성 부서</label>
+        <select name="department"><option value="">(미설정)</option>
+          {% if view.classification.department and view.classification.department not in departments %}
+          <option selected>{{ view.classification.department }}</option>{% endif %}
+          {% for d in departments %}<option {% if d == view.classification.department %}selected{% endif %}>{{ d }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div style="flex:1;min-width:300px">
+      <h4>② 접근 권한 <span class="msg-note">(기본: 팀 전체)</span></h4>
+      <div class="field"><label>열람 가능 대상</label>
+        <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+          {% for n in node_opts %}
+          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
+          <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
+          {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다. 먼저 <a href="/console/org/">조직도</a>를 만드세요.</span>{% endfor %}
+        </div></details>
+        <span class="msg-note">아무것도 안 고르면 팀 전체가 열람합니다. 부서를 고르면 하위 전체+상위, 부서장을 고르면 그 부서장+상위가 열람합니다.</span></div>
+      <div class="field"><label>작성자</label>
+        <input name="author_name" placeholder="이름" value="{{ view.governance.author_name|default_if_none:'' }}">
+        <input name="author_id" placeholder="ID(이메일)" value="{{ view.governance.author_id|default_if_none:'' }}" style="margin-top:6px"></div>
+      <div class="field"><label>보고선 <span class="msg-note">(쉼표 구분)</span></label>
+        <input name="reporting_line" value="{{ view.governance.reporting_line|join:', ' }}"></div>
+      <h4 style="margin-top:10px">③ 생애주기</h4>
+      <div class="field"><label>상태</label>
+        <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+          <option value="{{ o }}" {% if o == view.lifecycle.lifecycle_status %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>시행일</label>
+        <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></div>
+      <div class="field"><label>유효일(만료)</label>
+        <input name="expiry_date" placeholder="YYYY-MM-DD(비우면 무기한)" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></div>
+    </div>
+  </div>
+  <button class="btn" style="margin-top:12px">✅ 등록 확정 → 검증 후 색인</button>
+</div>
+</form>

@@ -79,3 +79,13 @@ def can_edit_doc(session, user, doc) -> bool:
 def can_delete_doc(session, user, doc) -> bool:
     """삭제 권한: 관리자 또는 문서 작성부서를 관리하는 부서장만(파트원 불가)."""
     return can_manage_doc(session, user, doc)
+
+
+def can_review_doc(session, user, doc) -> bool:
+    """검토(등록 승인) 권한: 업로더 본인 · 같은 파트 · 부서장 · 관리자.
+
+    업로드한 사람이 AI가 채운 내용을 확인·수정하고 등록을 확정한다.
+    """
+    if doc.governance.author_id and _email_of(user) == doc.governance.author_id:
+        return True
+    return can_edit_doc(session, user, doc)

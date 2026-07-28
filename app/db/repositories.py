@@ -94,7 +94,8 @@ class DocumentRepository:
     @staticmethod
     def _doc_filters(text: Optional[str], lifecycle_status: Optional[str],
                      doc_type: Optional[str],
-                     author_node_ids: Optional[Iterable[int]] = None) -> list:
+                     author_node_ids: Optional[Iterable[int]] = None,
+                     indexed_only: bool = False) -> list:
         conds: list = []
         if text:
             like = f"%{text}%"
@@ -106,6 +107,8 @@ class DocumentRepository:
             conds.append(Document.doc_type == doc_type)
         if author_node_ids is not None:
             conds.append(Document.author_node_id.in_(list(author_node_ids)))
+        if indexed_only:                 # 검토 대기·차단 문서는 목록에서 제외
+            conds.append(Document.status == IngestionStatus.INDEXED.value)
         return conds
 
     def find_active_by_title_format(self, title: Optional[str], file_format: str,
@@ -128,7 +131,7 @@ class DocumentRepository:
     def list_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
-        author_node_ids: Optional[Iterable[int]] = None,
+        author_node_ids: Optional[Iterable[int]] = None, indexed_only: bool = False,
     ) -> list[dict[str, Any]]:
         """문서 목록(관리용 요약). 필터(파일명·제목/상태/유형) + 페이징.
 
@@ -136,7 +139,8 @@ class DocumentRepository:
         화면이 한 번에 모든 행을 로드하지 않도록 한다.
         """
         stmt = select(Document)
-        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids)
+        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids,
+                                  indexed_only)
         if conds:
             stmt = stmt.where(and_(*conds))
         stmt = stmt.order_by(Document.updated_at.desc())
@@ -158,10 +162,11 @@ class DocumentRepository:
     def count_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None,
-        author_node_ids: Optional[Iterable[int]] = None,
+        author_node_ids: Optional[Iterable[int]] = None, indexed_only: bool = False,
     ) -> int:
         stmt = select(func.count()).select_from(Document)
-        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids)
+        conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids,
+                                  indexed_only)
         if conds:
             stmt = stmt.where(and_(*conds))
         return self.session.scalar(stmt) or 0

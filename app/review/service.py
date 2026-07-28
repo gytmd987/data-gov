@@ -113,40 +113,6 @@ class ReviewService:
         self.session.commit()
         return ctx.doc.identification.doc_id
 
-    def register(self, path: str, ingested_by: str) -> str:
-        """등록 즉시 색인 — 검토 대기 없이 바로 검색에 노출한다.
-
-        AI 필수 항목(요약/키워드/Q&A)을 못 채우면 run_auto_stages 가 ReadError 를 던진다.
-        접근 권한은 기본값(팀 전체)으로 등록되고, 이후 문서 화면에서 수정할 수 있다.
-        """
-        repo = self.docs
-        ctx = run_auto_stages(
-            path, ingested_by=ingested_by,
-            llm=self.llm, llm_model=self.llm_model, ocr=self.ocr,
-            hash_lookup=persistent_hash_lookup(repo),
-        )
-        # 작성자 기본값 = 업로더 + 그의 대표 소속 노드
-        author = self.users.get_user(ingested_by)
-        ctx.doc.governance.author_id = ingested_by
-        if author is not None:
-            ctx.doc.governance.author_name = author.display_name
-            ctx.doc.governance.author_node_id = self.users.primary_node(ingested_by)
-        save_ingestion(repo, ctx)
-        self._store_original(path, ctx.doc.identification.doc_id,
-                             ctx.doc.identification.file_format.value)
-        self._detect_similar(ctx)   # 유사/연관 자동 기록(비차단)
-
-        # 기본 거버넌스 + active 상태로 즉시 검증·색인
-        gov = _expand_access_tokens(self.session, ctx.doc.governance)
-        result = apply_review(ctx, governance=gov,
-                              lifecycle_overrides={"status": DocStatus.ACTIVE.value})
-        save_ingestion(repo, ctx)
-        if result.ok:
-            index(ctx, embedder=self.embedder, indexer=self.indexer)
-            save_ingestion(repo, ctx)
-        self.session.commit()
-        return ctx.doc.identification.doc_id
-
     def _store_original(self, src_path: str, doc_id: str, ext: str) -> None:
         try:
             import shutil
@@ -216,7 +182,8 @@ class ReviewService:
                      confidence=r["confidence"], reason=r["reason"])
 
     # ── 검토 대기 목록 ───────────────────────────────────────────────────────
-    def list_pending(self) -> list[dict[str, Any]]:
+    def list_pending(self, author_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """검토 대기(+차단) 문서. author_id 지정 시 그 사람이 올린 문서만."""
         repo = self.docs
         ids = (repo.list_by_status(IngestionStatus.PENDING_REVIEW)
                + repo.list_by_status(IngestionStatus.BLOCKED))
@@ -225,10 +192,13 @@ class ReviewService:
             doc = repo.get(doc_id)
             if doc is None:
                 continue
+            if author_id is not None and doc.governance.author_id != author_id:
+                continue
             out.append({
                 "doc_id": doc_id,
                 "filename": doc.identification.source_filename,
                 "doc_type": doc.classification.doc_type.value,
+                "title": doc.classification.title_normalized,
                 "status": self._status_of(doc_id),
             })
         return out

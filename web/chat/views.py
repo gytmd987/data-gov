@@ -164,8 +164,9 @@ def submit_document(request):
                 for chunk in f.chunks():
                     out.write(chunk)
             try:
-                svc.register(str(dest), ingested_by=_email_of(request.user))
-                messages.success(request, f"'{f.name}' 등록 완료 — 검색에 바로 반영됩니다.")
+                new_id = svc.start_ingestion(str(dest), ingested_by=_email_of(request.user))
+                messages.success(request, f"'{f.name}' 업로드 완료 — AI가 채운 내용을 확인·수정한 뒤 등록을 확정하세요.")
+                return redirect(f"/console/docs/?doc={new_id}")
             except DuplicateError:
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
             except ReadError as e:

@@ -40,19 +40,20 @@ class DocumentManager:
     def list_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
-        author_node_ids=None,
+        author_node_ids=None, indexed_only: bool = False,
     ) -> list[dict[str, Any]]:
         return self.repo.list_documents(
             text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
-            limit=limit, offset=offset, author_node_ids=author_node_ids)
+            limit=limit, offset=offset, author_node_ids=author_node_ids,
+            indexed_only=indexed_only)
 
     def count_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
-        doc_type: Optional[str] = None, author_node_ids=None,
+        doc_type: Optional[str] = None, author_node_ids=None, indexed_only: bool = False,
     ) -> int:
         return self.repo.count_documents(
             text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
-            author_node_ids=author_node_ids)
+            author_node_ids=author_node_ids, indexed_only=indexed_only)
 
     def get(self, doc_id: str) -> Optional[DocumentMetadata]:
         return self.repo.get(doc_id)

@@ -18,6 +18,7 @@ from web.authz import (
     can_delete_doc,
     can_edit_doc,
     can_manage_doc,
+    can_review_doc,
     is_admin,
     manage_scope,
 )
@@ -28,6 +29,7 @@ from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
 from app.review.service import ENUM_OPTIONS
 from app.schemas.enums import DocStatus
+from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
 
 _PAGE_SIZE = 50            # 문서 관리 목록 한 페이지 행 수(대량에서도 화면이 안 먹통)
@@ -100,12 +102,18 @@ def review(request):
         session.close()
 
 
-@admin_required
+@login_required
 @require_POST
 def review_submit(request, doc_id: str):
     session = bridge.open_session()
     try:
         svc = bridge.get_review_service(session)
+        _doc = svc.docs.get(doc_id)
+        if _doc is None:
+            return redirect("console_docs")
+        if not can_review_doc(session, request.user, _doc):
+            messages.error(request, "이 문서를 검토·등록할 권한이 없습니다.")
+            return redirect("console_docs")
         p = request.POST
         gov = GovernanceBlock(
             access_selections=p.getlist("access"),   # "node:N" / "head:N"; 빈 값=팀 전체
@@ -113,12 +121,14 @@ def review_submit(request, doc_id: str):
             author_name=p.get("author_name") or None,
             reporting_line=[x for x in p.getlist("reporting_line") if x],
         )
-        cls = {"doc_type": p.get("doc_type"), "language": p.get("language"),
+        cls = {"doc_type": p.get("doc_type"),
                "title_normalized": p.get("title") or None,
                "summary": p.get("summary") or None,
                "department": p.get("department") or None,
                "keywords": [k.strip() for k in (p.get("keywords") or "").split(",") if k.strip()],
                "related_parties": [x.strip() for x in (p.get("related_parties") or "").split(",") if x.strip()]}
+        if p.get("language"):            # 비면 AI가 채운 값 유지
+            cls["language"] = p.get("language")
         # expected_qa 는 AI가 채운 값을 유지(폼에서 덮어쓰지 않음)
         life = {"status": p.get("lifecycle_status"),
                 "effective_date": p.get("effective_date") or None,
@@ -132,10 +142,11 @@ def review_submit(request, doc_id: str):
         title = cls["title_normalized"]
         dup = drepo.find_active_by_title_format(title, fmt, exclude_doc_id=doc_id) if fmt else None
         dup_action = p.get("dup_action")
+        back = f"/console/docs/?doc={doc_id}"
         if dup is not None:
             if dup["doc_id"] in RequestRepository(session).pending_delete_doc_ids():
                 messages.error(request, f"'{dup['filename']}' 삭제 승인 대기 중 — 같은 제목으로 등록할 수 없습니다.")
-                return redirect(f"/console/review/?doc={doc_id}")
+                return redirect(back)
             if dup_action == "request_delete":
                 RequestRepository(session).create(
                     dup["doc_id"], "delete", _email_of(request.user),
@@ -143,10 +154,10 @@ def review_submit(request, doc_id: str):
                     target_admin_id=p.get("target_admin") or None, note="중복 문서 정리 요청")
                 session.commit()
                 messages.info(request, "기존 문서 삭제를 요청했습니다. 승인 후 다시 등록하세요.")
-                return redirect(f"/console/review/?doc={doc_id}")
+                return redirect(back)
             if dup_action not in ("supersede", "proceed"):
                 messages.error(request, f"제목+형식이 같은 문서가 있습니다: '{dup['filename']}'. 처리 방법을 선택하세요.")
-                return redirect(f"/console/review/?doc={doc_id}")
+                return redirect(back)
 
         result = svc.submit_review(doc_id, governance=gov,
                                    classification_overrides=cls,
@@ -169,11 +180,11 @@ def review_submit(request, doc_id: str):
             if dup is not None and dup_action == "supersede":
                 mgr.supersede(dup["doc_id"], doc_id)
             session.commit()
-            messages.success(request, "✅ 검증 통과 → 색인 완료. 검색에 노출됩니다.")
-        else:
-            why = ", ".join(result.missing_fields + result.errors)
-            messages.error(request, f"⛔ 적재 차단(BLOCKED): {why}")
-        return redirect("console_review")
+            messages.success(request, "✅ 검증 통과 → 등록 완료. 검색에 노출됩니다.")
+            return redirect(back)
+        why = ", ".join(result.missing_fields + result.errors)
+        messages.error(request, f"⛔ 적재 차단(BLOCKED): {why}")
+        return redirect(back)
     finally:
         session.close()
 
@@ -191,8 +202,9 @@ def docs(request):
     session = bridge.open_session()
     try:
         mgr = bridge.get_document_manager(session)
+        me = _email_of(request.user)
 
-        # 문서 등록(업로드) — 등록 즉시 색인되어 검색에 바로 반영된다.
+        # 문서 등록(업로드) — AI 자동 채움 후 '내 검토 대기'에 올려 업로더가 확인·등록한다.
         if request.method == "POST" and request.FILES.get("file"):
             f = request.FILES["file"]
             dest = Path(tempfile.gettempdir()) / f.name
@@ -201,8 +213,9 @@ def docs(request):
                     out.write(chunk)
             try:
                 svc = bridge.get_review_service(session)
-                svc.register(str(dest), ingested_by=_email_of(request.user))
-                messages.success(request, f"'{f.name}' 등록 완료 — 검색에 바로 반영됩니다.")
+                new_id = svc.start_ingestion(str(dest), ingested_by=me)
+                messages.success(request, f"'{f.name}' 업로드 완료 — AI가 채운 내용을 확인·수정한 뒤 등록을 확정하세요.")
+                return redirect(f"/console/docs/?doc={new_id}")
             except DuplicateError:
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
             except ReadError as e:
@@ -227,21 +240,47 @@ def docs(request):
                 mine = set(UserRepository(session).member_nodes(_email_of(request.user)))
                 author_ids = mine or {-1}
 
+        # 목록은 등록(색인) 완료 문서만. 검토 대기는 아래 '내 검토 대기'로 분리.
         total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type,
-                                    author_node_ids=author_ids)
+                                    author_node_ids=author_ids, indexed_only=True)
         doc_list = mgr.list_documents(text=q, lifecycle_status=status, doc_type=doc_type,
                                       limit=_PAGE_SIZE, offset=offset,
-                                      author_node_ids=author_ids)
+                                      author_node_ids=author_ids, indexed_only=True)
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
+
+        # 내가 올린 검토 대기 문서(등록 전 — 업로더가 확인해야 함)
+        svc = bridge.get_review_service(session)
+        my_pending = svc.list_pending(author_id=me)
 
         sel = request.GET.get("doc")
         doc = mgr.get(sel) if sel else None
+        sel_status = svc.docs.get_status(sel) if sel else None
+        pending_states = {IngestionStatus.PENDING_REVIEW.value, IngestionStatus.BLOCKED.value}
+
+        # 선택 문서가 '검토 대기'이고 검토 권한이 있으면 검토 폼을 띄운다.
+        review_view = None
+        dup = None
+        if doc is not None and sel_status in pending_states and can_review_doc(
+                session, request.user, doc):
+            from app.db.repositories import DocumentRepository
+            from app.relations.classify import RELATION_LABELS
+            review_view = svc.get_review(sel)
+            for c in review_view.similar_candidates:
+                rel = c.get("ai_relation") or "revision"
+                c["ai_label"] = RELATION_LABELS.get(rel, rel)
+                c["default_action"] = {"revision": "supersede", "related": "relate",
+                                       "unrelated": "ignore"}.get(rel, "supersede")
+            dup = DocumentRepository(session).find_active_by_title_format(
+                doc.classification.title_normalized,
+                doc.identification.file_format.value, exclude_doc_id=sel)
+
         # 개정판 연결 후보: 선택 문서와 같은 유형 최근 200건(대량에서도 안전).
         supersede_candidates = []
-        if doc is not None:
+        if doc is not None and review_view is None:
             supersede_candidates = [
                 d for d in mgr.list_documents(
-                    doc_type=doc.classification.doc_type.value, limit=200)
+                    doc_type=doc.classification.doc_type.value, limit=200,
+                    indexed_only=True)
                 if d["doc_id"] != sel]
 
         from app.db.repositories import OrgRepository
@@ -277,6 +316,7 @@ def docs(request):
 
         return render(request, "console/docs.html", {
             "docs": doc_list, "sel": sel, "doc": doc,
+            "my_pending": my_pending, "review_view": review_view, "dup": dup,
             "supersede_candidates": supersede_candidates,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,
