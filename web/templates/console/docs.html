@@ -1,14 +1,41 @@
 {% extends "base.html" %}
 {% load klabels %}
-{% block title %}문서 관리{% endblock %}
+{% block title %}문서{% endblock %}
 {% block content %}
 <div style="max-width:1100px;margin:0 auto;padding:0 16px">
-<h2 style="margin:18px 0 4px">📄 문서 관리 <span class="msg-note" style="font-size:14px">· 총 {{ total }}건</span></h2>
-<p class="msg-note">등록된 문서의 메타데이터 수정, 새 버전 연결(개정판), 보관/삭제. 변경은 검색에 즉시 반영됩니다.</p>
+<h2 style="margin:18px 0 4px">📄 문서 <span class="msg-note" style="font-size:14px">· 총 {{ total }}건</span></h2>
+<p class="msg-note">등록하면 AI가 요약·키워드·예상 Q&amp;A를 채우고 <b>즉시 검색에 반영</b>됩니다. 본인 소속 부서의 문서는 직접 수정할 수 있고, 삭제는 부서장·관리자가 합니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
-{% if can_manage %}
-<p style="margin-bottom:8px"><a class="btn ghost" href="/console/requests/" style="padding:4px 10px">📨 수정·삭제 요청 처리</a></p>
+<!-- 문서 등록(업로드) — 즉시 색인 -->
+<div class="card">
+  <b>📤 문서 등록</b>
+  <form method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;margin-top:8px">
+    {% csrf_token %}
+    <input type="file" name="file" required style="flex:1">
+    <button class="btn">올리기 (AI 자동 채움 → 즉시 등록)</button>
+  </form>
+</div>
+
+<!-- 처리 대기 요청(부서장·관리자) -->
+{% if pending_requests %}
+<div class="card" style="background:#fff8e6;border-color:#f0d48a">
+  <b>📨 처리 대기 요청 {{ pending_requests|length }}건</b>
+  {% for r in pending_requests %}
+  <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding-top:8px;border-top:1px dashed #e6cf8a">
+    <span style="flex:1">
+      <b>{% if r.request_type == 'delete' %}🗑️ 삭제{% else %}✏️ 수정{% endif %}</b>
+      · <a href="?doc={{ r.doc_id }}">{{ r.doc_title|default:r.doc_id }}</a>
+      <span class="msg-note">· 요청자 {{ r.requester_id }}{% if r.note %} · {{ r.note }}{% endif %}</span>
+    </span>
+    <form method="post" action="/console/requests/{{ r.id }}/resolve" style="display:inline-flex;gap:4px;margin:0">
+      {% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button class="btn ghost" name="decision" value="approve" style="padding:4px 10px">승인</button>
+      <button class="btn ghost" name="decision" value="reject" style="padding:4px 10px;color:#c0392b">반려</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
 {% endif %}
 
 {% if expiring_soon and can_manage %}
@@ -41,10 +68,6 @@
   {% endif %}
 </div>
 
-{% if not can_manage %}
-<p class="msg-note">내 소속 부서의 문서 목록입니다. 직접 수정 권한이 없어 <b>수정·삭제는 요청</b>으로 처리됩니다.</p>
-{% endif %}
-
 <!-- 일괄 작업 + 목록 -->
 <form method="post" action="/console/docs/bulk" id="bulkForm">
   {% csrf_token %}
@@ -72,7 +95,7 @@
       <td>{{ d.doc_type|klabel }}</td>
       <td>{{ d.lifecycle_status|klabel }}</td>
       <td>{{ d.expiry_date|default_if_none:"—" }}</td>
-      <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">{% if can_manage %}관리{% else %}보기{% endif %}</a></td>
+      <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">열기</a></td>
     </tr>
     {% empty %}
     <tr><td colspan="6" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
@@ -92,50 +115,101 @@
 {% if doc %}
 <div class="card">
   <b>{{ doc.identification.source_filename }}</b>
-  <span class="msg-note">· {{ doc.classification.summary|default_if_none:''|truncatechars:80 }}</span>
-  {% if can_manage_sel %}
-  <div style="display:flex;gap:24px;margin-top:12px">
+  <span class="msg-note">· {{ doc.identification.file_format }}</span>
+  <a href="/docs/original/{{ sel }}" class="msg-note" style="margin-left:6px">⬇️ 원본 다운로드</a>
+
+  {% if can_edit_sel %}
+  <!-- 본인 파트 이상: 직접 수정 -->
+  <div style="display:flex;gap:24px;margin-top:14px">
     <form method="post" action="/console/docs/{{ sel }}/action" style="flex:1">
       {% csrf_token %}<input type="hidden" name="action" value="save">
-      <h4>메타데이터 수정</h4>
-      <div class="field"><label>열람 가능 대상 <span class="msg-note">(기본: 팀 전체)</span></label>
-        <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
-          {% for n in node_opts %}
-          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
-          <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
-          {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
-        </div></details></div>
-      <div class="field"><label>상태</label>
-        <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
-          <option value="{{ o }}" {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <h4>① 내용</h4>
+      <div class="field"><label>문서 종류</label>
+        <select name="doc_type">{% for o in opts.doc_type %}
+          <option value="{{ o }}" {% if doc.classification.doc_type.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+      <div class="field"><label>제목</label>
+        <input name="title" value="{{ doc.classification.title_normalized|default_if_none:'' }}"></div>
+      <div class="field"><label>요약 <span class="msg-note">(AI 자동)</span></label>
+        <textarea name="summary" rows="3">{{ doc.classification.summary|default_if_none:'' }}</textarea></div>
+      <div class="field"><label>핵심 키워드 <span class="msg-note">(쉼표 구분)</span></label>
+        <input name="keywords" value="{{ doc.classification.keywords|join:', ' }}"></div>
+      <div class="field"><label>예상 Q&amp;A <span class="msg-note">(AI 자동 — 참고)</span></label>
+        <div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:#fafafa;font-size:13px;max-height:140px;overflow-y:auto">
+          {% for qa in doc.classification.expected_qa %}
+          <p style="margin-bottom:6px"><b>Q.</b> {{ qa.question }}<br><b>A.</b> {{ qa.answer }}</p>
+          {% empty %}<span class="msg-note">—</span>{% endfor %}
+        </div></div>
+      <div class="field"><label>유관 조직/임직원 <span class="msg-note">(쉼표 구분)</span></label>
+        <input name="related_parties" value="{{ doc.classification.related_parties|join:', ' }}"></div>
+      <div class="field"><label>작성 부서</label>
+        <select name="department"><option value="">(미설정)</option>
+          {% if doc.classification.department and doc.classification.department not in departments %}
+          <option selected>{{ doc.classification.department }}</option>{% endif %}
+          {% for dp in departments %}<option {% if dp == doc.classification.department %}selected{% endif %}>{{ dp }}</option>{% endfor %}
+        </select></div>
       <button class="btn">💾 저장</button>
     </form>
     <div style="flex:1">
       <form method="post" action="/console/docs/{{ sel }}/action">
+        {% csrf_token %}<input type="hidden" name="action" value="save">
+        <h4>② 접근 권한 <span class="msg-note">(기본: 팀 전체)</span></h4>
+        <input type="hidden" name="doc_type" value="{{ doc.classification.doc_type.value }}">
+        <input type="hidden" name="title" value="{{ doc.classification.title_normalized|default_if_none:'' }}">
+        <input type="hidden" name="summary" value="{{ doc.classification.summary|default_if_none:'' }}">
+        <input type="hidden" name="keywords" value="{{ doc.classification.keywords|join:', ' }}">
+        <input type="hidden" name="related_parties" value="{{ doc.classification.related_parties|join:', ' }}">
+        <input type="hidden" name="department" value="{{ doc.classification.department|default_if_none:'' }}">
+        <div class="field"><label>열람 가능 대상</label>
+          <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+            {% for n in node_opts %}
+            <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
+            <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
+            {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
+          </div></details>
+          <span class="msg-note">부서를 고르면 하위 전체+상위, 부서장을 고르면 그 부서장+상위가 열람합니다.</span></div>
+        <h4 style="margin-top:10px">③ 생애주기</h4>
+        <div class="field"><label>상태</label>
+          <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
+            <option value="{{ o }}" {% if doc.lifecycle.status.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
+        <div class="field"><label>시행일</label>
+          <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ doc.lifecycle.effective_date|default_if_none:'' }}"></div>
+        <div class="field"><label>유효일(만료)</label>
+          <input name="expiry_date" placeholder="YYYY-MM-DD(비우면 무기한)" value="{{ doc.lifecycle.expiry_date|default_if_none:'' }}"></div>
+        <button class="btn">💾 접근·상태 저장</button>
+      </form>
+
+      <h4 style="margin-top:16px">④ 버전·정리</h4>
+      <form method="post" action="/console/docs/{{ sel }}/action">
         {% csrf_token %}<input type="hidden" name="action" value="supersede">
-        <h4>버전 연결 (개정판 처리)</h4>
-        <p class="msg-note">이 문서가 대체할 <b>옛 문서</b>를 고르면, 옛 문서는 검색에서 제외됩니다. (같은 유형 최근 200건)</p>
+        <p class="msg-note">이 문서가 대체할 <b>옛 문서</b>를 고르면, 옛 문서는 검색에서 제외됩니다.</p>
         <p><select name="old_id"><option value="">(선택)</option>
           {% for d in supersede_candidates %}<option value="{{ d.doc_id }}">{{ d.filename }}</option>{% endfor %}
         </select></p>
-        <button class="btn">🔗 새 버전으로 지정</button>
+        <button class="btn ghost">🔗 새 버전으로 지정</button>
       </form>
-      <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:14px">
+      <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:10px">
         {% csrf_token %}<input type="hidden" name="action" value="archive">
         <button class="btn ghost">🗄️ 보관(검색 제외)</button>
       </form>
-      {% if is_admin_user %}
+      {% if can_delete_sel %}
       <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:8px"
             onsubmit="return confirm('정말 영구 삭제할까요? 되돌릴 수 없습니다.')">
         {% csrf_token %}<input type="hidden" name="action" value="delete">
-        <button class="btn ghost" style="color:#c0392b">🗑️ 영구 삭제</button>
+        <button class="btn ghost" style="color:#c0392b">🗑️ 영구 삭제 (부서장)</button>
+      </form>
+      {% else %}
+      <form method="post" action="/console/docs/{{ sel }}/request" style="margin-top:8px">
+        {% csrf_token %}<input type="hidden" name="request_type" value="delete">
+        <input name="note" placeholder="삭제 사유" style="margin-bottom:6px">
+        <button class="btn ghost" style="color:#c0392b">🗑️ 삭제 요청 (부서장 승인 필요)</button>
       </form>
       {% endif %}
     </div>
   </div>
   {% else %}
-  <!-- 직접 권한 없음 → 요청 -->
-  <div style="display:flex;gap:10px;margin-top:12px;align-items:flex-start">
+  <!-- 타 부서: 직접 권한 없음 → 요청 -->
+  <p class="msg-note" style="margin-top:10px">이 문서는 다른 부서 소속이라 직접 수정할 수 없습니다. 수정·삭제는 요청으로 처리됩니다.</p>
+  <div style="display:flex;gap:10px;margin-top:8px;align-items:flex-start">
     <form method="post" action="/console/docs/{{ sel }}/request" style="flex:1">
       {% csrf_token %}<input type="hidden" name="request_type" value="edit">
       <input name="note" placeholder="수정 요청 내용(무엇을 어떻게)" style="margin-bottom:6px">
@@ -160,7 +234,7 @@
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
       <a href="/docs/original/{{ r.doc_id }}">{{ r.filename }}</a>
       <span class="msg-note">· {{ r.reason }}</span>
-      {% if can_manage_sel %}
+      {% if can_edit_sel %}
       <form method="post" action="/console/docs/{{ sel }}/relate" style="margin:0">
         {% csrf_token %}<input type="hidden" name="action" value="unlink">
         <input type="hidden" name="other_id" value="{{ r.doc_id }}">

@@ -59,3 +59,23 @@ def can_manage_doc(session, user, doc) -> bool:
         return True
     node = doc.governance.author_node_id
     return node is not None and node in scope
+
+
+def can_edit_doc(session, user, doc) -> bool:
+    """수정 권한: 관리자 · 부서장(내 subtree) · 본인 소속 부서(파트)의 문서.
+
+    파트원도 자기 파트(소속 노드)의 문서는 직접 수정할 수 있다. 삭제는 별도(부서장만).
+    """
+    if can_manage_doc(session, user, doc):
+        return True
+    from app.db.repositories import UserRepository
+    node = doc.governance.author_node_id
+    if node is None:
+        return False
+    mine = set(UserRepository(session).member_nodes(_email_of(user)))
+    return node in mine
+
+
+def can_delete_doc(session, user, doc) -> bool:
+    """삭제 권한: 관리자 또는 문서 작성부서를 관리하는 부서장만(파트원 불가)."""
+    return can_manage_doc(session, user, doc)

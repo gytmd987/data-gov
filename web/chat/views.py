@@ -150,7 +150,10 @@ def feedback(request):
 
 @login_required
 def submit_document(request):
-    """일반 사용자 문서 등록 — 업로드하면 검토 대기에 올라가고, 관리자 검토 후 색인된다."""
+    """문서 등록 — 업로드하면 즉시 색인되어 검색에 바로 반영된다(검토 대기 없음).
+
+    등록·관리·수정은 '문서' 탭(/console/docs/)으로 일원화됐다. 이 경로는 하위호환.
+    """
     if request.method == "POST" and request.FILES.get("file"):
         f = request.FILES["file"]
         session = bridge.open_session()
@@ -161,16 +164,16 @@ def submit_document(request):
                 for chunk in f.chunks():
                     out.write(chunk)
             try:
-                svc.start_ingestion(str(dest), ingested_by=_email_of(request.user))
-                messages.success(request, f"'{f.name}' 업로드 완료 — 관리자 검토 후 검색에 반영됩니다.")
+                svc.register(str(dest), ingested_by=_email_of(request.user))
+                messages.success(request, f"'{f.name}' 등록 완료 — 검색에 바로 반영됩니다.")
             except DuplicateError:
                 messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
             except ReadError as e:
                 messages.error(request, f"⚠️ '{f.name}' {e}")
         finally:
             session.close()
-        return redirect("submit_document")
-    return render(request, "submit.html", {"offline": bridge.is_offline()})
+        return redirect("console_docs")
+    return redirect("console_docs")
 
 
 @login_required

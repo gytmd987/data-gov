@@ -51,12 +51,9 @@ th{background:#fafafa}
   <span class="nav">
     <a href="/" class="{% if request.path == '/' %}on{% endif %}">💬 채팅</a>
     {% if user.is_authenticated %}
-    <a href="/submit/" class="{% if '/submit' in request.path %}on{% endif %}">📤 문서 등록</a>
-    <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}">📄 문서 관리</a>
+    <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}">📄 문서</a>
     {% endif %}
     {% if is_admin %}
-    <a href="/console/review/" class="{% if '/console/review' in request.path %}on{% endif %}">📝 문서 검토</a>
-    <a href="/console/requests/" class="{% if '/console/requests' in request.path %}on{% endif %}">📨 요청 승인</a>
     <a href="/console/org/" class="{% if '/console/org' in request.path %}on{% endif %}">🏢 조직도</a>
     <a href="/console/users/" class="{% if '/console/users' in request.path %}on{% endif %}">👤 사용자 관리</a>
     {% endif %}

@@ -102,9 +102,10 @@ def main() -> int:
     assert resp.status_code in (200, 404)
     print(f"[다운로드] 권한 검증 경로 동작(status={resp.status_code}) ✅")
 
-    # 7) 일반 사용자 문서 등록 페이지 접근(관리자 아님)
-    assert c.get("/submit/").status_code == 200
-    print("[등록   ] 일반 사용자 문서 등록 페이지 접근 ✅")
+    # 7) 문서 등록/관리는 '문서' 한 탭으로 통합 — /submit/ 은 문서 탭으로 이동(하위호환)
+    assert c.get("/submit/").status_code == 302
+    assert c.get("/console/docs/").status_code == 200
+    print("[등록   ] 문서 탭 통합 · /submit/ → /console/docs/ 이동 ✅")
 
     # 8) 관리 콘솔: 필터·페이징·일괄작업·만료 정리
     c.force_login(admin)
@@ -183,44 +184,57 @@ def main() -> int:
     assert not DjUser.objects.filter(username="temp@company.com").exists()
     print("[사용자 ] 복수 소속 반영 · 조직도에서 부서장 지정 · 사용자+로그인계정 삭제 ✅")
 
-    # 11) 파트원 문서 등록 → 수정/삭제 요청 → 관리자 승인(삭제)
+    # 11) 파트원 문서 등록(즉시 색인) → 본인 파트 문서 직접 수정 가능 → 삭제만 요청
     from django.core.files.uploadedfile import SimpleUploadedFile
     c.force_login(staffer)
     up = SimpleUploadedFile("팀회식_공지.txt",
                             "회식 공지. 이번 주 금요일 저녁 회식이 있습니다.".encode("utf-8"),
                             content_type="text/plain")
-    assert c.post("/submit/", {"file": up}).status_code == 302
-    # 파트원의 문서 관리: 자기 소속 문서만, 삭제 요청 버튼
-    dpage = c.get("/console/docs/")
-    assert dpage.status_code == 200 and "요청" in dpage.content.decode()
-    # 방금 올린 문서 id 조회
+    assert c.post("/console/docs/", {"file": up}).status_code == 302
+    # 등록 즉시 색인(검토 대기 없음) — 상태 확인
     s3 = bridge.open_session()
     try:
         from app.db.repositories import DocumentRepository
-        mine = [d for d in DocumentRepository(s3).list_documents()
+        drepo = DocumentRepository(s3)
+        mine = [d for d in drepo.list_documents()
                 if d["filename"] == "팀회식_공지.txt"]
         assert mine, "파트원 업로드 문서를 찾지 못함"
         req_doc_id = mine[0]["doc_id"]
+        assert drepo.get_status(req_doc_id) == "indexed", "등록 즉시 색인 안 됨"
     finally:
         s3.close()
+    # 본인 파트 문서: 직접 수정 가능(제목 변경) — 요청 없이 반영
+    assert c.post(f"/console/docs/{req_doc_id}/action",
+                  {"action": "save", "title": "팀 회식 공지",
+                   "lifecycle_status": "active"}).status_code == 302
+    s3b = bridge.open_session()
+    try:
+        assert DocumentRepository(s3b).get(req_doc_id).classification.title_normalized == "팀 회식 공지", \
+            "본인 파트 문서 직접 수정 안 됨"
+    finally:
+        s3b.close()
+    # 삭제는 부서장·관리자만 → 파트원은 삭제 요청
+    dpage = c.get(f"/console/docs/?doc={req_doc_id}").content.decode()
+    assert "삭제 요청" in dpage, "파트원 화면에 삭제 요청 버튼이 없음"
     assert c.post(f"/console/docs/{req_doc_id}/request",
                   {"request_type": "delete", "note": "중복"}).status_code == 302
-    print("[요청   ] 파트원 등록 · 자기부서 목록 · 삭제 요청 ✅")
+    print("[등록   ] 파트원 즉시 색인 · 본인 파트 직접 수정 · 삭제만 요청 ✅")
 
-    # 관리자 승인 큐에서 삭제 승인 → 문서 제거
+    # 관리자·부서장은 '문서' 탭에서 대기 요청을 바로 승인 → 삭제 실행
     c.force_login(admin)
-    qpage = c.get("/console/requests/")
-    assert qpage.status_code == 200 and "팀회식_공지" in qpage.content.decode()
+    dpage = c.get("/console/docs/").content.decode()
+    assert "처리 대기 요청" in dpage and "회식" in dpage, "문서 탭에 대기 요청이 안 보임"
     import re as _re
-    m = _re.search(r"/console/requests/(\d+)/resolve", qpage.content.decode())
+    m = _re.search(r"/console/requests/(\d+)/resolve", dpage)
     assert m, "요청 승인 링크 없음"
-    assert c.post(f"/console/requests/{m.group(1)}/resolve", {"decision": "approve"}).status_code == 302
+    assert c.post(f"/console/requests/{m.group(1)}/resolve",
+                  {"decision": "approve", "next": "/console/docs/"}).status_code == 302
     s4 = bridge.open_session()
     try:
         assert DocumentRepository(s4).get(req_doc_id) is None   # 삭제됨
     finally:
         s4.close()
-    print("[승인   ] 관리자 삭제 승인 → 문서 영구 삭제 ✅")
+    print("[승인   ] 문서 탭에서 삭제 요청 승인 → 문서 영구 삭제 ✅")
 
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()
