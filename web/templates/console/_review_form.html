@@ -13,6 +13,12 @@
     {% for a in view.auto_filled %}{{ a.field }} {{ a.confidence }}{% if not forloop.last %} · {% endif %}{% endfor %}
   </p>{% endif %}
 
+  {% if view.filename_stem and view.classification.title_normalized != view.filename_stem %}
+  <div style="background:#eef4ff;border:1px solid #c7d6ff;border-radius:8px;padding:8px 10px;margin-top:10px">
+    🤖 파일명이 제목으로 적절치 않아 AI가 제목을 <b>{{ view.classification.title_normalized }}</b>로 수정했습니다
+    <span class="msg-note">(원래 파일명: {{ view.filename_stem }})</span>. 확인 후 등록하세요.
+  </div>{% endif %}
+
   {% if view.similar_candidates %}
   <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
     ⚠️ <b>유사한 기존 문서</b>가 있습니다. AI 판단을 참고해 관계를 확정하세요.
@@ -62,11 +68,9 @@
         </div></div>
       <div class="field"><label>유관 조직/임직원 <span class="msg-note">(쉼표 구분)</span></label>
         <input name="related_parties" value="{{ view.classification.related_parties|join:', ' }}"></div>
-      <div class="field"><label>작성 부서</label>
-        <select name="department"><option value="">(미설정)</option>
-          {% if view.classification.department and view.classification.department not in departments %}
-          <option selected>{{ view.classification.department }}</option>{% endif %}
-          {% for d in departments %}<option {% if d == view.classification.department %}selected{% endif %}>{{ d }}</option>{% endfor %}
+      <div class="field"><label>작성 부서 <span class="msg-note">(조직도 = 관리 부서)</span></label>
+        <select name="author_node_id"><option value="">(미지정)</option>
+          {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
         </select></div>
     </div>
     <div style="flex:1;min-width:300px">
@@ -88,7 +92,7 @@
       <div class="field"><label>상태</label>
         <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
           <option value="{{ o }}" {% if o == view.lifecycle.lifecycle_status %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
-      <div class="field"><label>시행일</label>
+      <div class="field"><label>작성일</label>
         <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></div>
       <div class="field"><label>유효일(만료)</label>
         <input name="expiry_date" placeholder="YYYY-MM-DD(비우면 무기한)" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></div>

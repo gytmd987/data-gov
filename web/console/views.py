@@ -27,8 +27,7 @@ from app import system_config
 from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
-from app.review.service import ENUM_OPTIONS
-from app.schemas.enums import DocStatus
+from app.review.service import ENUM_OPTIONS, USER_DOC_STATUSES
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
 
@@ -115,16 +114,20 @@ def review_submit(request, doc_id: str):
             messages.error(request, "이 문서를 검토·등록할 권한이 없습니다.")
             return redirect("console_docs")
         p = request.POST
+        node_id, dept_name = _dept_from_form(session, p)
+        if node_id is None:              # 작성부서 미선택 → 적재 시 기본값 유지
+            node_id, dept_name = _doc.governance.author_node_id, _doc.classification.department
         gov = GovernanceBlock(
             access_selections=p.getlist("access"),   # "node:N" / "head:N"; 빈 값=팀 전체
             author_id=p.get("author_id") or _email_of(request.user),
             author_name=p.get("author_name") or None,
+            author_node_id=node_id,                  # 작성부서 = 조직도 노드(관리 부서)
             reporting_line=[x for x in p.getlist("reporting_line") if x],
         )
         cls = {"doc_type": p.get("doc_type"),
                "title_normalized": p.get("title") or None,
                "summary": p.get("summary") or None,
-               "department": p.get("department") or None,
+               "department": dept_name,              # 노드 이름(표시·검색용)
                "keywords": [k.strip() for k in (p.get("keywords") or "").split(",") if k.strip()],
                "related_parties": [x.strip() for x in (p.get("related_parties") or "").split(",") if x.strip()]}
         if p.get("language"):            # 비면 AI가 채운 값 유지
@@ -180,8 +183,14 @@ def review_submit(request, doc_id: str):
             if dup is not None and dup_action == "supersede":
                 mgr.supersede(dup["doc_id"], doc_id)
             session.commit()
+            # 여러 건을 올렸으면 남은 검토 대기 문서로 자동 이동(순차 검토)
+            remaining = [d for d in svc.list_pending(author_id=_email_of(request.user))
+                         if d["doc_id"] != doc_id]
+            if remaining:
+                messages.success(request, f"✅ 등록 완료. 남은 검토 대기 {len(remaining)}건 — 다음 문서를 검토하세요.")
+                return redirect(f"/console/docs/?doc={remaining[0]['doc_id']}")
             messages.success(request, "✅ 검증 통과 → 등록 완료. 검색에 노출됩니다.")
-            return redirect(back)
+            return redirect("console_docs")
         why = ", ".join(result.missing_fields + result.errors)
         messages.error(request, f"⛔ 적재 차단(BLOCKED): {why}")
         return redirect(back)
@@ -197,6 +206,20 @@ def _int(value, default: int) -> int:
         return default
 
 
+def _dept_from_form(session, post):
+    """폼의 작성부서(author_node_id=노드 id) → (node_id, 노드이름). 없으면 (None, None)."""
+    from app.db.repositories import OrgRepository
+    raw = post.get("author_node_id")
+    if not raw:
+        return None, None
+    try:
+        nid = int(raw)
+    except (TypeError, ValueError):
+        return None, None
+    node = OrgRepository(session).get(nid)
+    return (nid, node.name) if node is not None else (None, None)
+
+
 @login_required
 def docs(request):
     session = bridge.open_session()
@@ -204,23 +227,31 @@ def docs(request):
         mgr = bridge.get_document_manager(session)
         me = _email_of(request.user)
 
-        # 문서 등록(업로드) — AI 자동 채움 후 '내 검토 대기'에 올려 업로더가 확인·등록한다.
-        if request.method == "POST" and request.FILES.get("file"):
-            f = request.FILES["file"]
-            dest = Path(tempfile.gettempdir()) / f.name
-            with open(dest, "wb") as out:
-                for chunk in f.chunks():
-                    out.write(chunk)
-            try:
-                svc = bridge.get_review_service(session)
-                new_id = svc.start_ingestion(str(dest), ingested_by=me)
-                messages.success(request, f"'{f.name}' 업로드 완료 — AI가 채운 내용을 확인·수정한 뒤 등록을 확정하세요.")
-                return redirect(f"/console/docs/?doc={new_id}")
-            except DuplicateError:
-                messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
-            except ReadError as e:
-                messages.error(request, f"⚠️ '{f.name}' {e}")
-            return redirect("console_docs")
+        # 문서 등록(업로드) — 여러 파일 동시 업로드 가능. 각각 '내 검토 대기'에 올려
+        # 업로더가 확인·등록한다. 첫 문서로 이동해 순차 검토를 시작한다.
+        if request.method == "POST" and request.FILES.getlist("file"):
+            svc = bridge.get_review_service(session)
+            first_id, ok_n, dups, errs = None, 0, [], []
+            for f in request.FILES.getlist("file"):
+                dest = Path(tempfile.gettempdir()) / f.name
+                with open(dest, "wb") as out:
+                    for chunk in f.chunks():
+                        out.write(chunk)
+                try:
+                    new_id = svc.start_ingestion(str(dest), ingested_by=me)
+                    ok_n += 1
+                    first_id = first_id or new_id
+                except DuplicateError:
+                    dups.append(f.name)
+                except ReadError as e:
+                    errs.append(f"{f.name}: {e}")
+            if ok_n:
+                messages.success(request, f"{ok_n}건 업로드 완료 — 내용을 확인·수정한 뒤 등록을 확정하세요.")
+            if dups:
+                messages.warning(request, "이미 등록된 문서(내용 동일): " + ", ".join(dups))
+            for e in errs:
+                messages.error(request, f"⚠️ {e}")
+            return redirect(f"/console/docs/?doc={first_id}" if first_id else "console_docs")
 
         q = request.GET.get("q") or None
         status = request.GET.get("status") or None
@@ -273,6 +304,8 @@ def docs(request):
             dup = DocumentRepository(session).find_active_by_title_format(
                 doc.classification.title_normalized,
                 doc.identification.file_format.value, exclude_doc_id=sel)
+            # 제목이 파일명과 다르면 AI가 제목을 보정한 것 → 검토 폼에서 고지
+            review_view.filename_stem = Path(doc.identification.source_filename).stem
 
         # 개정판 연결 후보: 선택 문서와 같은 유형 최근 200건(대량에서도 안전).
         supersede_candidates = []
@@ -287,9 +320,11 @@ def docs(request):
         node_opts = _org_options(OrgRepository(session))
         if doc is not None:
             sels = set(doc.governance.access_selections)
+            author_node = doc.governance.author_node_id
             for n in node_opts:
                 n["sel_node"] = f"node:{n['id']}" in sels
                 n["sel_head"] = f"head:{n['id']}" in sels
+                n["sel_author"] = (n["id"] == author_node)   # 작성부서 기본 선택
 
         today = date.today()
         expiring_soon = mgr.repo.count_expiring_soon(
@@ -320,8 +355,7 @@ def docs(request):
             "supersede_candidates": supersede_candidates,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,
-            "statuses": [s.value for s in DocStatus], "doc_types": ENUM_OPTIONS["doc_type"],
-            "departments": system_config.departments(),
+            "statuses": USER_DOC_STATUSES, "doc_types": ENUM_OPTIONS["doc_type"],
             "total": total, "page": page, "num_pages": num_pages,
             "page_start": offset + 1 if total else 0,
             "page_end": min(offset + _PAGE_SIZE, total),
@@ -333,30 +367,6 @@ def docs(request):
             "admins": system_config.admin_emails(),
             "related": _related_docs(session, sel) if doc else [],
         })
-    finally:
-        session.close()
-
-
-@admin_required
-@require_POST
-def docs_bulk(request):
-    """여러 문서를 한 번에 상태 변경(일괄 보관/만료/활성)."""
-    session = bridge.open_session()
-    try:
-        mgr = bridge.get_document_manager(session)
-        doc_ids = request.POST.getlist("doc_ids")
-        action = request.POST.get("bulk_action")
-        valid = {s.value for s in DocStatus}
-        if not doc_ids:
-            messages.warning(request, "선택된 문서가 없습니다.")
-        elif action not in valid:
-            messages.error(request, "잘못된 일괄 작업입니다.")
-        else:
-            for doc_id in doc_ids:
-                mgr.set_status(doc_id, DocStatus(action))
-            label = system_config.label(action)
-            messages.success(request, f"{len(doc_ids)}건을 '{label}' 상태로 변경했습니다.")
-        return redirect(request.POST.get("next") or "console_docs")
     finally:
         session.close()
 
@@ -405,14 +415,18 @@ def docs_action(request, doc_id: str):
         if action == "save":
             p = request.POST
             gov = doc.governance
+            # 작성부서(조직 노드) 변경 반영. 미선택이면 기존 값 유지.
+            node_id, dept_name = _dept_from_form(session, p)
+            if node_id is None:
+                node_id, dept_name = gov.author_node_id, doc.classification.department
             new_gov = GovernanceBlock(
                 access_selections=p.getlist("access"),
                 author_id=gov.author_id, author_name=gov.author_name,
-                author_node_id=gov.author_node_id, reporting_line=gov.reporting_line)
+                author_node_id=node_id, reporting_line=gov.reporting_line)
             cls = {"doc_type": p.get("doc_type") or doc.classification.doc_type.value,
                    "title_normalized": p.get("title") or None,
                    "summary": p.get("summary") or None,
-                   "department": p.get("department") or None,
+                   "department": dept_name,
                    "keywords": [k.strip() for k in (p.get("keywords") or "").split(",") if k.strip()],
                    "related_parties": [x.strip() for x in (p.get("related_parties") or "").split(",") if x.strip()]}
             life = {"status": p.get("lifecycle_status"),

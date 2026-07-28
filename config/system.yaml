@@ -59,7 +59,7 @@ labels:
   active: 유효
   superseded: 대체됨
   expired: 만료
-  archived: 아카이브
+  archived: 보관
   # 접근
   "*": 팀 전체
   # 조직 노드 유형

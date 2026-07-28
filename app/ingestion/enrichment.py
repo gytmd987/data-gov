@@ -118,6 +118,10 @@ _PROMPT_TEMPLATE = """당신은 인사 문서의 메타데이터를 분류하는
 규칙:
 - doc_type/language/status 는 반드시 제공된 enum 값 중에서만 고르세요.
 - 확신이 없으면 doc_type 은 "unknown", language 는 "unknown" 을 쓰고 confidence 를 낮게 주세요.
+- **title_normalized 는 기본적으로 파일명(확장자 제외)을 그대로 쓰세요.**
+  단, 파일명이 '새 문서', '무제', 'Document1', '제목없음' 처럼 내용을 알 수 없거나
+  오타·깨진 글자가 있으면, 문서 내용에 맞는 제목으로 고쳐서 넣고 confidence 를 높게 주세요.
+  파일명이 이미 적절하면 그대로 두세요(내용으로 바꾸지 마세요).
 - **summary(요약), keywords(핵심 키워드), expected_qa(예상 질의응답) 는 반드시 채우세요.**
   문서 내용으로 답할 수 있는 실제 질문과 답을 expected_qa 에 3개 이상 만드세요.
   keywords 는 expected_qa 와 겹치지 않는 핵심 용어로만 고르세요(중복 금지).

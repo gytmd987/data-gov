@@ -36,11 +36,15 @@ from app.schemas.metadata import GovernanceBlock
 OCRFn = Callable[[bytes], str]
 
 
-# 폼 드롭다운용 enum 옵션
+# 사용자에게 노출하는 생애주기 상태(내부 draft/superseded 는 숨김)
+USER_DOC_STATUSES: list[str] = [
+    DocStatus.ACTIVE.value, DocStatus.EXPIRED.value, DocStatus.ARCHIVED.value]
+
+# 폼 드롭다운용 enum 옵션 — 문서 종류의 'unknown'(미분류)은 선택지에서 제외한다.
 ENUM_OPTIONS: dict[str, list[str]] = {
-    "doc_type": [e.value for e in DocType],
+    "doc_type": [e.value for e in DocType if e.value != "unknown"],
     "language": [e.value for e in Language],
-    "lifecycle_status": [e.value for e in DocStatus],
+    "lifecycle_status": USER_DOC_STATUSES,
 }
 
 
@@ -70,6 +74,7 @@ class ReviewView:
     known_groups: list[str] = field(default_factory=list)
     similar_candidates: list[dict[str, Any]] = field(default_factory=list)
     last_validation: Optional[dict[str, Any]] = None
+    filename_stem: Optional[str] = None   # 제목 보정 고지용(제목≠파일명이면 배너)
 
 
 @dataclass
@@ -98,12 +103,32 @@ class ReviewService:
             llm=self.llm, llm_model=self.llm_model, ocr=self.ocr,
             hash_lookup=persistent_hash_lookup(repo),
         )
+        # 제목 기본값 = 파일명(확장자 제외). AI가 파일명이 부적절하다고 판단해 고쳤으면 그 값 유지.
+        from pathlib import Path
+        if not (ctx.doc.classification.title_normalized or "").strip():
+            ctx.doc.classification.title_normalized = Path(
+                ctx.doc.identification.source_filename).stem
+
         # 작성자 기본값 = 업로더 + 그의 대표 소속 노드(부서장 관리 범위 판정)
         author = self.users.get_user(ingested_by)
         ctx.doc.governance.author_id = ingested_by
         if author is not None:
             ctx.doc.governance.author_name = author.display_name
-            ctx.doc.governance.author_node_id = self.users.primary_node(ingested_by)
+        # 작성부서·권한 기본값: 직전 업로드와 동일하게(보통 같음). 없으면 대표 소속 노드.
+        prev = repo.last_upload_defaults(ingested_by)
+        node_id = None
+        if prev is not None:
+            node_id = prev.get("author_node_id")
+            if prev.get("access_selections"):
+                ctx.doc.governance.access_selections = list(prev["access_selections"])
+        if node_id is None:
+            node_id = self.users.primary_node(ingested_by)
+        ctx.doc.governance.author_node_id = node_id
+        if node_id is not None:                    # 작성부서(표시용) = 노드 이름
+            from app.db.repositories import OrgRepository
+            node = OrgRepository(self.session).get(node_id)
+            if node is not None:
+                ctx.doc.classification.department = node.name
         save_ingestion(repo, ctx)
         # 원본 파일 보관(열람/다운로드용)
         self._store_original(path, ctx.doc.identification.doc_id,
@@ -247,6 +272,7 @@ class ReviewService:
                 "access_selections": gov.access_selections,
                 "author_id": gov.author_id,
                 "author_name": gov.author_name,
+                "author_node_id": gov.author_node_id,
                 "reporting_line": gov.reporting_line,
             },
             similar_candidates=repo.get_similar_candidates(doc_id),

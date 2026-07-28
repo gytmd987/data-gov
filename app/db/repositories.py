@@ -111,6 +111,25 @@ class DocumentRepository:
             conds.append(Document.status == IngestionStatus.INDEXED.value)
         return conds
 
+    def last_upload_defaults(self, author_id: str) -> Optional[dict[str, Any]]:
+        """이 사람이 올린 가장 최근 문서의 작성부서·접근권한(다음 업로드 기본값).
+
+        보통 같은 부서·같은 권한으로 연속 업로드하므로 직전 값을 미리 채워 준다.
+        최근 문서(updated_at desc)를 훑어 governance.author_id 가 일치하는 첫 건을 쓴다.
+        """
+        if not author_id:
+            return None
+        rows = self.session.execute(
+            select(Document).order_by(Document.updated_at.desc()).limit(100)).scalars()
+        for row in rows:
+            meta = row.metadata_json or {}
+            gov = meta.get("governance", {}) if isinstance(meta, dict) else {}
+            if gov.get("author_id") != author_id:
+                continue
+            return {"author_node_id": row.author_node_id,
+                    "access_selections": list(gov.get("access_selections") or [])}
+        return None
+
     def find_active_by_title_format(self, title: Optional[str], file_format: str,
                                     exclude_doc_id: Optional[str] = None
                                     ) -> Optional[dict[str, Any]]:

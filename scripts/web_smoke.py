@@ -107,14 +107,14 @@ def main() -> int:
     assert c.get("/console/docs/").status_code == 200
     print("[등록   ] 문서 탭 통합 · /submit/ → /console/docs/ 이동 ✅")
 
-    # 8) 관리 콘솔: 필터·페이징·일괄작업·만료 정리
+    # 8) 관리 콘솔: 필터·페이징·보관(개별)·만료 정리
     c.force_login(admin)
-    assert c.get("/console/docs/?status=active&doc_type=policy&page=1").status_code == 200
-    resp = c.post("/console/docs/bulk", {"doc_ids": [doc_id], "bulk_action": "archived"})
+    assert c.get("/console/docs/?status=active&doc_type=report&page=1").status_code == 200
+    resp = c.post(f"/console/docs/{doc_id}/action", {"action": "archive"})
     assert resp.status_code == 302
     resp = c.post("/console/docs/sweep", {})
     assert resp.status_code == 302
-    print("[콘솔+  ] 필터·페이징·일괄 보관·만료 정리 동작 ✅")
+    print("[콘솔+  ] 필터·페이징·보관·만료 정리 동작 ✅")
 
     # 9) 과거 문서 포함 검색: 방금 보관한 문서도 include_past 로 검색됨
     c.force_login(staffer)
@@ -245,6 +245,56 @@ def main() -> int:
     finally:
         s4.close()
     print("[삭제   ] 부서장이 삭제 요청 없이 자기 부서 문서 직접 삭제 ✅")
+
+    # 11c) 제목 기본값(파일명) + 작성부서=조직노드 + 이전 업로드 기본값 프리필
+    c.force_login(admin)
+
+    def _f(name, body):
+        return SimpleUploadedFile(name, body.encode("utf-8"), content_type="text/plain")
+
+    respA = c.post("/console/docs/", {"file": _f("복리후생 안내.txt", "복리후생 제도 안내 문서입니다.")})
+    aid = respA["Location"].split("doc=")[1]
+    s_a = bridge.open_session()
+    try:
+        assert (DocumentRepository(s_a).get(aid).classification.title_normalized or "").strip(), \
+            "제목이 파일명 기본값으로 채워지지 않음"
+    finally:
+        s_a.close()
+    # 검토 확정: 작성부서=인터뷰파트(pid), 권한=채용그룹 전체
+    assert c.post(f"/console/review/{aid}/submit",
+                  {"title": "복리후생 안내", "doc_type": "notice", "summary": "복리후생 안내",
+                   "keywords": "복리후생", "lifecycle_status": "active",
+                   "author_node_id": str(pid), "access": [f"node:{gid}"]}).status_code == 302
+    s_a2 = bridge.open_session()
+    try:
+        da = DocumentRepository(s_a2).get(aid)
+        assert da.governance.author_node_id == pid, "작성부서(조직노드) 저장 안 됨"
+        assert da.governance.access_selections == [f"node:{gid}"], "권한 저장 안 됨"
+    finally:
+        s_a2.close()
+    # 다음 업로드가 직전 작성부서·권한으로 프리필되는지
+    respB = c.post("/console/docs/", {"file": _f("교육 지원 안내.txt", "교육비 지원 제도 안내입니다.")})
+    bid = respB["Location"].split("doc=")[1]
+    s_b = bridge.open_session()
+    try:
+        db = DocumentRepository(s_b).get(bid)
+        assert db.governance.author_node_id == pid, "이전 업로드 작성부서 프리필 안 됨"
+        assert db.governance.access_selections == [f"node:{gid}"], "이전 업로드 권한 프리필 안 됨"
+    finally:
+        s_b.close()
+    print("[기본값 ] 제목=파일명 · 작성부서=조직노드 · 이전 업로드 부서·권한 프리필 ✅")
+
+    # 11d) 다중 업로드 → 순차 검토(첫 건 확정 시 다음 건으로 자동 이동)
+    resp = c.post("/console/docs/", {"file": [_f("규정1.txt", "첫 번째 규정 내용."),
+                                              _f("규정2.txt", "두 번째 규정 내용.")]})
+    m1 = resp["Location"].split("doc=")[1]
+    # 첫 건 확정 → 남은 검토 대기 문서로 자동 이동(순차 검토)
+    r_next = c.post(f"/console/review/{m1}/submit",
+                    {"title": "규정1", "doc_type": "notice", "summary": "규정1",
+                     "keywords": "규정", "lifecycle_status": "active"})
+    assert r_next.status_code == 302 and "doc=" in r_next["Location"], "다음 검토 문서로 이동 안 함"
+    assert r_next["Location"].split("doc=")[1] != m1, "순차 이동이 같은 문서를 가리킴"
+    print("[다중   ] 여러 파일 동시 업로드 · 순차 검토 자동 이동 ✅")
 
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()
