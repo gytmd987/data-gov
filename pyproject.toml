@@ -22,6 +22,10 @@ ingest = [
 postgres = [
     "psycopg[binary]>=3.1",  # 운영 DB 드라이버(테스트는 SQLite라 불필요)
 ]
+datasets = [
+    "duckdb>=1.0",           # 표 데이터(명단·급여) 구조화 저장/집계(Tier 2)
+    "sqlglot>=25.0",         # text-to-SQL 검증(SELECT 전용·테이블 화이트리스트)
+]
 web = [
     "django>=5.0",           # 웹 UI (채팅 + 관리 콘솔)
 ]

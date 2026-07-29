@@ -1,28 +1,34 @@
 """xlsx 파서 (경로 A: 검색용).
 
-각 시트를 헤더 보존 마크다운 표로 직렬화해 table 요소로 만든다. section_title = 시트명.
-집계·정형 질의를 위한 경로 B(DuckDB 적재)는 별도 모듈에서 처리한다.
+작은 표는 시트 전체를 헤더 보존 마크다운으로 만들어 임베딩한다.
+대용량 표(명단·급여 등, 데이터행 > 임계값)는 전체 행을 임베딩하면 잘리고 의미가 없으므로,
+**스키마·요약 카드**만 만들어 임베딩한다(검색으로 파일을 찾는 용도). 실제 행 조회는
+Tier 2(DuckDB 적재 + text-to-SQL)가 담당한다.
 """
 
 from __future__ import annotations
 
 import openpyxl
 
+from app.datasets.detect import (
+    DATA_TABLE_ROW_THRESHOLD,
+    build_schema_card,
+    is_data_table,
+    normalize_headers,
+    read_sheet_preview,
+)
 from app.schemas.enums import ChunkType, FileFormat
 
 from .base import ParsedElement, ParseResult
 
 
-def _rows_to_markdown(rows: list[list[str]]) -> str:
-    if not rows:
-        return ""
-    header, *body = rows
+def _rows_to_markdown(header: list[str], body: list[list[str]]) -> str:
     ncol = len(header)
     lines = ["| " + " | ".join(header) + " |",
              "| " + " | ".join("---" for _ in range(ncol)) + " |"]
     for r in body:
-        r = (r + [""] * ncol)[:ncol]
-        lines.append("| " + " | ".join(r) + " |")
+        r = (list(r) + [""] * ncol)[:ncol]
+        lines.append("| " + " | ".join(str(c) for c in r) + " |")
     return "\n".join(lines)
 
 
@@ -35,20 +41,18 @@ class XlsxParser:
         sheet_count = len(wb.worksheets)
 
         for ws in wb.worksheets:
-            rows: list[list[str]] = []
-            for row in ws.iter_rows(values_only=True):
-                if row is None:
-                    continue
-                cells = ["" if c is None else str(c).strip() for c in row]
-                if any(cells):
-                    rows.append(cells)
-            if not rows:
+            header, small_rows, n_rows, samples = read_sheet_preview(
+                ws, DATA_TABLE_ROW_THRESHOLD)
+            if header is None or n_rows == 0:
                 continue
-            md = _rows_to_markdown(rows)
-            elements.append(
-                ParsedElement(text=md, element_type=ChunkType.TABLE,
-                              section_title=ws.title)
-            )
+            if is_data_table(n_rows):
+                # 대용량 표 → 스키마·요약 카드만(전체 행은 Tier 2 DuckDB 에서)
+                text = build_schema_card(ws.title, header, n_rows, samples)
+            else:
+                cols = normalize_headers(header)
+                text = _rows_to_markdown(cols, small_rows)
+            elements.append(ParsedElement(text=text, element_type=ChunkType.TABLE,
+                                          section_title=ws.title))
 
         wb.close()
         return ParseResult(elements=elements, page_count=sheet_count)

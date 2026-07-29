@@ -127,5 +127,10 @@ class DocumentManager:
             return
         if self.indexer is not None:
             self.indexer.delete_doc(doc_id)
+        try:                       # 표 데이터(DuckDB) 정리 — 있으면
+            from app.datasets.loader import drop_datasets
+            drop_datasets(self.session, doc_id)
+        except Exception:
+            pass
         self.repo.delete(doc_id)
         self.session.commit()

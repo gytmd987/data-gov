@@ -516,6 +516,66 @@ class RelationRepository:
         return out
 
 
+class DatasetRepository:
+    """표 데이터 카탈로그(Dataset) — DuckDB 테이블 목록·스키마·권한."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def upsert(self, doc_id: str, sheet: str, table_name: str, columns: list[dict],
+               row_count: int, access_groups: list[str]) -> None:
+        from app.db.models import Dataset
+        row = self.session.execute(
+            select(Dataset).where(Dataset.table_name == table_name)).scalars().first()
+        if row is None:
+            row = Dataset(doc_id=doc_id, sheet=sheet, table_name=table_name)
+            self.session.add(row)
+        row.doc_id = doc_id
+        row.sheet = sheet
+        row.columns_json = columns
+        row.row_count = row_count
+        row.access_groups = list(access_groups)
+        self.session.flush()
+
+    def by_doc(self, doc_id: str) -> list:
+        from app.db.models import Dataset
+        return list(self.session.execute(
+            select(Dataset).where(Dataset.doc_id == doc_id)).scalars())
+
+    def drop_for_doc(self, doc_id: str) -> list[str]:
+        """카탈로그에서 이 문서의 데이터셋 제거 → 삭제해야 할 DuckDB 테이블명 반환."""
+        from app.db.models import Dataset
+        rows = self.by_doc(doc_id)
+        names = [r.table_name for r in rows]
+        for r in rows:
+            self.session.delete(r)
+        self.session.flush()
+        return names
+
+    def list_visible(self, user_ctx) -> list[dict[str, Any]]:
+        """사용자가 접근 가능 + 문서가 검색 노출 상태(유효·보관)인 데이터셋 목록."""
+        from app.db.models import Dataset
+        tokens = set(getattr(user_ctx, "groups", set()) or set())
+        rows = self.session.execute(
+            select(Dataset, Document.status, Document.lifecycle_status,
+                   Document.source_filename, Document.title)
+            .join(Document, Dataset.doc_id == Document.doc_id)).all()
+        out = []
+        for ds, status, life, filename, title in rows:
+            if status != IngestionStatus.INDEXED.value:
+                continue
+            if life not in ("active", "archived"):
+                continue
+            ag = ds.access_groups or []
+            if "*" not in ag and not (set(ag) & tokens):
+                continue
+            out.append({"doc_id": ds.doc_id, "sheet": ds.sheet,
+                        "table_name": ds.table_name, "columns": ds.columns_json or [],
+                        "row_count": ds.row_count,
+                        "filename": filename, "title": title})
+        return out
+
+
 class AuditRepository:
     """search.pipeline.AuditSink 프로토콜 구현(append-only)."""
 

@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     # 원본 파일 저장 위치(열람/다운로드용). 폐쇄망이면 로컬 경로로 충분.
     storage_dir: str = "./storage/originals"
+    # 표 데이터(명단·급여) 구조화 저장소(Tier 2 DuckDB 파일)
+    duckdb_path: str = "./storage/datasets.duckdb"
 
     # 데이터 스토어
     postgres_user: str = "ragadmin"

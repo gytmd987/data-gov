@@ -34,6 +34,10 @@
 .toggle.disabled{opacity:.4;pointer-events:none}
 .badge-past{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:10px;
             background:#fbe7c6;color:#8a6d1a;font-size:12px}
+.dscard{margin-top:8px;padding:8px 10px;border:1px solid #c7d6ff;background:#f2f6ff;border-radius:8px;font-size:13px}
+.dstbl{border-collapse:collapse;margin:6px 0;font-size:12px;overflow:auto;display:block;max-width:100%}
+.dstbl th,.dstbl td{border:1px solid var(--line);padding:3px 8px;white-space:nowrap}
+.dssql pre{white-space:pre-wrap;font-size:12px;background:#0d1117;color:#c9d1d9;padding:6px 8px;border-radius:6px}
 .switch{position:relative;width:40px;height:22px}
 .switch input{opacity:0;width:0;height:0}
 .slider{position:absolute;inset:0;background:#ccc;border-radius:22px;cursor:pointer;transition:.2s}
@@ -94,11 +98,21 @@ document.getElementById('useRag').addEventListener('change', e => {
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
-function bubble(role, text, sources, meta){
+function bubble(role, text, sources, meta, dataset){
   document.getElementById('empty')?.remove();
   const row = document.createElement('div');
   row.className = 'row ' + (role==='user'?'user':'asst');
   let html = `<div class="bubble">${esc(text)}`;
+  if (role !== 'user' && dataset){
+    const cols = dataset.columns||[], rows = dataset.rows||[];
+    let tbl = `<table class="dstbl"><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
+    rows.slice(0,10).forEach(r=>{ tbl += `<tr>${r.map(c=>`<td>${esc(c==null?'':String(c))}</td>`).join('')}</tr>`; });
+    tbl += `</table>`;
+    const dl = dataset.source_doc_id ? `<a href="/docs/original/${dataset.source_doc_id}">📄 원본 파일</a>` : '';
+    html += `<div class="dscard">📊 <b>데이터 조회</b> · ${esc(dataset.filename||'')} ${dl}
+             ${tbl}
+             <details class="dssql"><summary>실행한 SQL</summary><pre>${esc(dataset.sql||'')}</pre></details></div>`;
+  }
   if (role !== 'user' && sources && sources.length){
     html += `<div class="srcs">`;
     sources.forEach((s,i)=>{
@@ -150,7 +164,7 @@ async function sendMsg(){
     if (!r.ok){ bubble('asst', '⚠️ ' + (d.error || '오류가 발생했습니다.')); return; }
     if (!convId){ convId = d.conversation_id; addConvItem(text, convId); }
     bubble('asst', d.text, d.sources, {query:text, answer:d.text,
-      cited: (d.sources||[]).map(s=>s.doc_id).filter(Boolean)});
+      cited: (d.sources||[]).map(s=>s.doc_id).filter(Boolean)}, d.dataset_answer);
   } catch(e){ thinking.remove(); bubble('asst', '⚠️ 서버에 연결할 수 없습니다.'); }
   document.getElementById('sendBtn').disabled = false;
 }

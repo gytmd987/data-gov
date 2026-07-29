@@ -189,6 +189,12 @@ def review_submit(request, doc_id: str):
                     rel.link(doc_id, other, source="human", reason="등록 시 지정",
                              created_by=_email_of(request.user))
             svc.finalize_original_name(doc_id)   # 서버 원본 파일명을 제목으로
+            # 표 데이터(엑셀 명단 등)면 DuckDB 에 구조화 적재(Tier 2)
+            try:
+                from app.datasets.loader import ingest_if_tabular
+                ingest_if_tabular(session, svc.docs.get(doc_id))
+            except Exception:
+                pass   # 구조화 적재 실패해도 문서 등록 자체는 유지
             session.commit()
             # 여러 건을 올렸으면 남은 검토 대기 문서로 자동 이동(순차 검토)
             remaining = [d for d in svc.list_pending(author_id=_email_of(request.user))

@@ -103,6 +103,7 @@ def send(request):
             conv_id = chat.create_conversation(email)
 
         sources: list = []
+        dataset_answer = None
         if use_rag:
             user_ctx = domain_user_context(session, request.user)
             if user_ctx is None:
@@ -115,6 +116,17 @@ def send(request):
             answer_text = ans.text
             sources = group_sources(ans, today=today)
             _attach_related(session, sources, user_ctx, today)
+            # 표 데이터가 검색에 잡히면 구조화(SQL) 답변 시도 → 정확 조회·집계
+            try:
+                from app.datasets.query import maybe_answer_structured
+                cited = [s.get("doc_id") for s in sources if s.get("doc_id")]
+                da = maybe_answer_structured(session, bridge.get_chat_llm(),
+                                             user_ctx, text, cited)
+                if da is not None:
+                    dataset_answer = da
+                    answer_text = da["text"]
+            except Exception:
+                pass
         else:
             hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
             llm = bridge.get_chat_llm()
@@ -125,7 +137,8 @@ def send(request):
                                   use_rag=use_rag, sources=sources)
         session.commit()
         return JsonResponse({"conversation_id": conv_id, "message_id": msg_id,
-                             "text": answer_text, "sources": sources})
+                             "text": answer_text, "sources": sources,
+                             "dataset_answer": dataset_answer})
     finally:
         session.close()
 

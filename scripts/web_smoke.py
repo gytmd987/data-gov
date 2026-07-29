@@ -438,6 +438,46 @@ def main() -> int:
         s_bd.close()
     print("[일괄삭제] 여러 문서 한 번에 삭제 ✅")
 
+    # 11k) 표 데이터(엑셀 명단) → Tier1 카드 임베딩 + Tier2 DuckDB 적재 + 구조화 답변
+    import openpyxl as _oxl
+    import tempfile as _tf2
+    import pathlib as _pl2
+    from app.datasets.detect import DATA_TABLE_ROW_THRESHOLD as _THR
+    xpath = _pl2.Path(_tf2.gettempdir()) / "직원명단.xlsx"
+    _wb = _oxl.Workbook(); _ws = _wb.active
+    _ws.append(["사번", "이름", "부서", "급여"])
+    for _i in range(_THR + 30):
+        _ws.append([f"E{_i:04d}", f"이름{_i}", "인사팀" if _i % 2 else "재무팀", 3000 + _i])
+    _wb.save(str(xpath))
+    with open(xpath, "rb") as _f:
+        up_xlsx = SimpleUploadedFile(
+            "직원명단.xlsx", _f.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    c.force_login(admin)
+    rX = c.post("/console/docs/", {"file": up_xlsx})
+    xid = rX["Location"].split("doc=")[1]
+    assert c.post(f"/console/review/{xid}/submit",
+                  {"title": "직원명단", "doc_type": "report", "summary": "직원 명단",
+                   "keywords": "명단", "lifecycle_status": "archived"}).status_code == 302
+    # Tier 2 카탈로그 + DuckDB 적재 확인
+    s_ds = bridge.open_session()
+    try:
+        from app.db.repositories import DatasetRepository
+        from app.datasets.store import DuckDBStore
+        from app.datasets.query import maybe_answer_structured
+        from app.search.access import UserContext
+        ds = DatasetRepository(s_ds).by_doc(xid)
+        assert len(ds) == 1 and ds[0].row_count == _THR + 30, "데이터셋 적재 실패"
+        cols, rows = DuckDBStore().query(f'SELECT count(*) AS n FROM "{ds[0].table_name}"')
+        assert rows[0][0] == _THR + 30, "DuckDB 행수 불일치"
+        # 구조화(SQL) 답변: 오프라인 fake LLM = count(*)
+        ctx = UserContext(user_id="admin@company.com", groups=frozenset())
+        da = maybe_answer_structured(s_ds, bridge.get_chat_llm(), ctx, "총 몇 명?", [xid])
+        assert da is not None and str(_THR + 30) in da["text"], "구조화 답변 실패"
+    finally:
+        s_ds.close()
+    print(f"[표데이터] Tier1 카드 색인 + Tier2 DuckDB 적재({_THR + 30}행)·SQL 답변 ✅")
+
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()
     try:

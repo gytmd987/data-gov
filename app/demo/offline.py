@@ -87,8 +87,15 @@ class ExtractiveLLM:
 
     _FILENAME = re.compile(r"파일명:\s*(.+)")
 
+    _SQL_TABLE = re.compile(r"TABLE:\s*(\S+)")
+
     def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         props = schema.get("properties", {})
+        # text-to-SQL 스키마: 데모용으로 항상 유효한 집계 SQL(행 수) 생성
+        if "sql" in props:
+            m = self._SQL_TABLE.search(prompt)
+            table = m.group(1) if m else "t"
+            return {"sql": f'SELECT count(*) AS 행수 FROM "{table}"'}
         # LLM-as-judge 스키마면 판정 점수를 반환(데모용 휴리스틱)
         if "groundedness" in props:
             denied = "확인할 수 없습니다" in prompt

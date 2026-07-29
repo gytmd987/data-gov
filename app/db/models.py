@@ -225,6 +225,25 @@ class DocumentRelation(Base):
     )
 
 
+class Dataset(Base):
+    """표 데이터(명단·급여) 구조화 카탈로그 — DuckDB 테이블 1개와 1:1.
+
+    라우팅/권한의 근거. access_groups 는 문서 열람 토큰을 그대로 상속한다.
+    """
+
+    __tablename__ = "datasets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.doc_id", ondelete="CASCADE"), index=True)
+    sheet: Mapped[str] = mapped_column(String(256))
+    table_name: Mapped[str] = mapped_column(String(160), unique=True)   # DuckDB 물리 테이블
+    columns_json: Mapped[list] = mapped_column(JSON, default=list)       # [{name, type}]
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    access_groups: Mapped[list] = mapped_column(JSON, default=list)      # 문서 열람 토큰 상속
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Conversation(Base):
     """채팅 대화(ChatGPT 스타일 대화 목록의 한 항목)."""
 
