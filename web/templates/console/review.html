@@ -99,11 +99,10 @@
       <div class="field"><label>열람 가능 대상</label>
         <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
           {% for n in node_opts %}
-          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
-          <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
+          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
           {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다. 먼저 <a href="/console/org/">조직도</a>를 만드세요.</span>{% endfor %}
         </div></details>
-        <span class="msg-note">아무것도 안 고르면 팀 전체가 열람합니다. 부서를 고르면 하위 전체+상위, 부서장을 고르면 그 부서장+상위가 열람합니다.</span></div>
+        <span class="msg-note">아무것도 안 고르면 팀 전체가 열람합니다. 부서를 고르면 그 부서와 <b>하위 조직 전원</b> + <b>상위 부서장</b>이 열람합니다.</span></div>
       <div class="field"><label>작성자</label>
         <input name="author_name" placeholder="이름" value="{{ view.governance.author_name|default_if_none:'' }}">
         <input name="author_id" placeholder="ID(이메일)" value="{{ view.governance.author_id|default_if_none:'' }}" style="margin-top:6px"></div>

@@ -24,7 +24,7 @@
     </select>
     <input type="file" name="file" multiple required style="flex:1;min-width:220px">
     <button id="uploadBtn" class="btn"><svg class="ic sm"><use href="#i-upload"/></svg>올리기</button>
-    <span class="msg-note" style="flex-basis:100%">고른 폴더가 <b>작성 부서</b>가 되고 열람 권한도 <b>그 부서 전체</b>로 설정되며, 파일도 그 폴더에 저장됩니다.</span>
+    <span class="msg-note" style="flex-basis:100%">고른 폴더가 <b>작성 부서</b>가 되고 열람 권한도 <b>그 부서(하위 포함)</b>로 설정되며, 파일도 그 폴더에 저장됩니다.</span>
   </form>
   <div id="uploadProgress" style="display:none;align-items:center;gap:8px;margin-top:8px;color:var(--sub);font-size:var(--fs-sm)">
     <span class="spin" aria-hidden="true"></span>
@@ -206,7 +206,7 @@
     <div class="info-cell"><div class="k">유효일</div><div class="v">{% if doc.lifecycle.expiry_date %}{{ doc.lifecycle.expiry_date|date:"Y-m-d" }}{% else %}무기한{% endif %}</div></div>
     <div class="info-cell" style="grid-column:1/-1"><div class="k">열람 대상</div><div class="v">
       {% if doc.governance.access_selections %}
-        {% for n in node_opts %}{% if n.sel_node %}{{ n.name }}(부서 전체) {% endif %}{% if n.sel_head %}{{ n.name }}(부서장) {% endif %}{% endfor %}
+        {% for n in node_opts %}{% if n.sel_node %}<span class="tag">{{ n.name }}</span> {% endif %}{% endfor %}
       {% else %}팀 전체 (제한 없음){% endif %}</div></div>
     {% if doc.lifecycle.superseded_by %}<div class="info-cell"><div class="k">대체됨 →</div><div class="v">{{ doc.lifecycle.superseded_by }}</div></div>{% endif %}
     {% if doc.governance.reporting_line %}<div class="info-cell"><div class="k">보고선</div><div class="v">{{ doc.governance.reporting_line|join:" → " }}</div></div>{% endif %}
@@ -256,11 +256,10 @@
             {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
           </select></div>
         <!-- 접근·생애주기도 같은 저장에 포함 -->
-        <div class="field"><label>열람 가능 대상 <span class="msg-note">(기본: 팀 전체)</span></label>
+        <div class="field"><label>열람 가능 대상 <span class="msg-note">(비우면 팀 전체)</span></label>
           <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
             {% for n in node_opts %}
-            <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서 전체</label>
-            <label><input type="checkbox" name="access" value="head:{{ n.id }}" {% if n.sel_head %}checked{% endif %}> {{ n.indent }}{{ n.name }} · 부서장만</label>
+            <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
             {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
           </div></details></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">

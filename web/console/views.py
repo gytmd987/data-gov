@@ -407,7 +407,6 @@ def docs(request):
             author_node = doc.governance.author_node_id
             for n in node_opts:
                 n["sel_node"] = f"node:{n['id']}" in sels
-                n["sel_head"] = f"head:{n['id']}" in sels
                 n["sel_author"] = (n["id"] == author_node)   # 폴더(작성부서) 기본 선택
 
         today = date.today()

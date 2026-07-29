@@ -83,6 +83,26 @@ def session():
         yield s
 
 
+def test_node_selection_grants_subtree_and_upper_heads():
+    """지금 유일한 선택지인 '부서(node:)' 의 열람 범위."""
+    tree = OrgTree([OrgNodeView(1, "People팀", "team", None),
+                    OrgNodeView(2, "A그룹", "group", 1),
+                    OrgNodeView(3, "A파트", "part", 2),
+                    OrgNodeView(4, "B그룹", "group", 1)])
+    toks = set(tree.readable_tokens(["node:2"]))
+    assert {"n:2", "n:3"} <= toks      # 그 부서 + 하위 전원
+    assert "h:1" in toks               # 상위 부서장
+    assert "n:1" not in toks           # 상위 부서의 '일반 구성원'은 제외
+    assert "n:4" not in toks           # 형제 부서 제외
+
+
+def test_legacy_head_selection_still_readable():
+    """UI에서 없앤 'head:'(부서장만)로 저장된 옛 문서도 그대로 해석된다."""
+    tree = OrgTree([OrgNodeView(1, "People팀", "team", None),
+                    OrgNodeView(2, "A그룹", "group", 1)])
+    assert set(tree.readable_tokens(["head:2"])) == {"h:2", "h:1"}
+
+
 def test_org_crud_and_tree(session):
     org = OrgRepository(session)
     team = org.create_node("People팀", "team")

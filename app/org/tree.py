@@ -92,7 +92,12 @@ class OrgTree:
         return out
 
     def readable_tokens(self, selections: Iterable[str]) -> list[str]:
-        """문서 access_selections → 열람 허용 토큰 목록. 빈 선택은 팀 전체(`*`)."""
+        """문서 access_selections → 열람 허용 토큰 목록. 빈 선택은 팀 전체(`*`).
+
+        지금 화면에서 고를 수 있는 건 `node:<id>`(부서) 하나뿐이다.
+        `head:<id>`(그 부서장만)는 UI에서 제거됐지만, 예전에 그렇게 저장된 문서가
+        그대로 동작하도록 해석은 유지한다.
+        """
         selections = [s for s in (selections or []) if s]
         if not selections:
             return ["*"]
