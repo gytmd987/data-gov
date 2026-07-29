@@ -27,7 +27,6 @@ from app.ingestion.pipeline import (
 )
 from app.schemas.enums import (
     DocStatus,
-    DocType,
     Language,
 )
 from app.schemas.ingestion import IngestionStatus
@@ -40,9 +39,19 @@ OCRFn = Callable[[bytes], str]
 USER_DOC_STATUSES: list[str] = [
     DocStatus.ACTIVE.value, DocStatus.EXPIRED.value, DocStatus.ARCHIVED.value]
 
+
+def _doc_type_options() -> list[str]:
+    """문서 종류 드롭다운 — '미분류(unknown)' 제외, 라벨 가나다순, '기타(other)'는 맨 끝."""
+    vals = [v for v in system_config.doc_types() if v not in ("unknown", "other")]
+    vals.sort(key=lambda v: system_config.label(v))
+    if "other" in system_config.doc_types():
+        vals.append("other")
+    return vals
+
+
 # 폼 드롭다운용 enum 옵션 — 문서 종류의 'unknown'(미분류)은 선택지에서 제외한다.
 ENUM_OPTIONS: dict[str, list[str]] = {
-    "doc_type": [e.value for e in DocType if e.value != "unknown"],
+    "doc_type": _doc_type_options(),
     "language": [e.value for e in Language],
     "lifecycle_status": USER_DOC_STATUSES,
 }

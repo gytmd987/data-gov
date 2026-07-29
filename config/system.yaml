@@ -13,6 +13,11 @@ metadata:
     - presentation    # 발표자료
     - manual          # 매뉴얼
     - notice          # 공지사항
+    - policy          # 정책
+    - regulation      # 규정
+    - guideline       # 지침
+    - form            # 양식/서식
+    - contract        # 계약서
     - email           # 이메일
     - messenger       # 메신저
     - approval        # 품의
@@ -37,6 +42,11 @@ labels:
   presentation: 발표자료
   manual: 매뉴얼
   notice: 공지사항
+  policy: 정책
+  regulation: 규정
+  guideline: 지침
+  form: 양식
+  contract: 계약서
   email: 이메일
   messenger: 메신저
   approval: 품의

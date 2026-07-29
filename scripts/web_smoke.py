@@ -296,6 +296,53 @@ def main() -> int:
     assert r_next["Location"].split("doc=")[1] != m1, "순차 이동이 같은 문서를 가리킴"
     print("[다중   ] 여러 파일 동시 업로드 · 순차 검토 자동 이동 ✅")
 
+    # 11e) 검토 취소(폐기) + 등록 단계 연관 문서 지정 + 어휘 변경 내구성
+    respC = c.post("/console/docs/", {"file": _f("취소할문서.txt", "취소 테스트용 문서.")})
+    cid = respC["Location"].split("doc=")[1]
+    rvpage = c.get(f"/console/docs/?doc={cid}").content.decode()
+    assert "취소(폐기)" in rvpage and "관련 문서" in rvpage, "검토 폼에 취소/관련문서 UI 없음"
+    assert c.post(f"/console/review/{cid}/cancel", {}).status_code == 302
+    s_c = bridge.open_session()
+    try:
+        assert DocumentRepository(s_c).get(cid) is None, "검토 취소 시 문서가 폐기되지 않음"
+    finally:
+        s_c.close()
+    # 등록 단계에서 연관 문서 지정(최대 3개 중 1개) → 링크 생성
+    respD = c.post("/console/docs/", {"file": _f("본문서.txt", "관련문서 지정 테스트.")})
+    did2 = respD["Location"].split("doc=")[1]
+    c.post(f"/console/review/{did2}/submit",
+           {"title": "본문서", "doc_type": "report", "summary": "본문", "keywords": "본문",
+            "lifecycle_status": "active", "related_pick": [aid]})
+    s_d = bridge.open_session()
+    try:
+        from app.db.repositories import RelationRepository
+        assert aid in {r["doc_id"] for r in RelationRepository(s_d).related_ids(did2)}, \
+            "등록 시 지정한 연관 문서가 연결되지 않음"
+    finally:
+        s_d.close()
+    print("[등록UX ] 검토 취소 폐기 · 등록 시 연관 문서 지정 ✅")
+
+    # 11f) 어휘 변경 내구성: 예전 doc_type('policy' 등 현재 어휘 밖)도 로딩·표시 가능
+    s_leg = bridge.open_session()
+    try:
+        from app.db.models import Document as _Doc
+        legacy = DocumentRepository(s_leg).get(did2)
+        row = s_leg.get(_Doc, did2)
+        meta = dict(row.metadata_json)
+        meta["classification"]["doc_type"] = "policy_legacy_removed"  # 현재 어휘에 없음
+        row.metadata_json = meta
+        row.doc_type = "policy_legacy_removed"
+        s_leg.commit()
+        # 로딩이 깨지지 않고 안전 대체(unknown)로 열려야 함
+        reopened = DocumentRepository(s_leg).get(did2)
+        assert reopened is not None and reopened.classification.doc_type.value == "unknown", \
+            "어휘 밖 doc_type 로딩이 안전 대체되지 않음"
+    finally:
+        s_leg.close()
+    # 상세 화면도 500 없이 열려야 함
+    assert c.get(f"/console/docs/?doc={did2}").status_code == 200
+    print("[내구성 ] 어휘 밖 doc_type 문서도 오류 없이 로딩·표시 ✅")
+
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()
     try:

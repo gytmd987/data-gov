@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .enums import (
     ChunkType,
@@ -26,6 +26,20 @@ from .enums import (
     FileFormat,
     Language,
 )
+
+
+def _coerce_enum(enum_cls, fallback: str):
+    """저장된 값이 현재 어휘에 없으면 fallback 으로 대체하는 before-validator.
+
+    설정(config)에서 문서 종류 등을 나중에 바꿔도 기존 문서 로딩이 깨지지 않게 한다.
+    (예: 예전에 'policy'로 저장됐는데 지금 어휘에 없으면 'unknown' 등으로 안전 대체.)
+    """
+    def _validate(value):
+        if value is None:
+            return value
+        raw = getattr(value, "value", value)
+        return raw if raw in {e.value for e in enum_cls} else fallback
+    return _validate
 
 
 class AutoFilledField(BaseModel):
@@ -48,6 +62,9 @@ class IdentificationBlock(BaseModel):
     page_count: Optional[int] = None
     last_modified: Optional[datetime] = None   # 문서 최종 수정일(파일 속성)
 
+    _v_fmt = field_validator("file_format", mode="before")(
+        _coerce_enum(FileFormat, "other"))
+
 
 # ── 블록 2. 내용 분류 (LLM 추론 → 사람 확인) ────────────────────────────────
 class ClassificationBlock(BaseModel):
@@ -60,6 +77,12 @@ class ClassificationBlock(BaseModel):
     references: list[str] = Field(default_factory=list)   # 본문이 언급한 다른 문서(제목/파일명) — 연관 자동감지용
     department: Optional[str] = None                     # 작성 부서(조직 노드 이름)
     language: Language = Language.UNKNOWN
+
+    # 어휘 변경(예: 예전 'policy' 제거)에도 기존 문서 로딩이 깨지지 않게 안전 대체
+    _v_type = field_validator("doc_type", mode="before")(
+        _coerce_enum(DocType, "unknown"))
+    _v_lang = field_validator("language", mode="before")(
+        _coerce_enum(Language, "unknown"))
 
 
 # ── 블록 3. 접근통제 (조직도 기반) ──────────────────────────────────────────
@@ -83,6 +106,9 @@ class LifecycleBlock(BaseModel):
     status: DocStatus = DocStatus.DRAFT
     supersedes: Optional[str] = None       # 이 문서가 대체하는 doc_id
     superseded_by: Optional[str] = None     # 이 문서를 대체한 doc_id
+
+    _v_status = field_validator("status", mode="before")(
+        _coerce_enum(DocStatus, "active"))
 
 
 # ── 블록 5. 출처 (혼합) ──────────────────────────────────────────────────────

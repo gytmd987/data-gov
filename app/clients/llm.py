@@ -126,12 +126,23 @@ class VLLMClient:
                     f"vLLM {resp.status_code} @ {url}: {resp.text[:500]}")
             return resp.json()
 
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+    def complete_json(self, prompt: str, schema: dict[str, Any],
+                      retries: int = 2) -> dict[str, Any]:
+        """구조화 출력 요청. 모델이 간혹 JSON이 아닌 응답을 내므로 몇 회 재시도한다.
+
+        (같은 파일을 다시 올리면 됐던 이유 = 이 응답이 비결정적이기 때문. 이제 자동 재시도한다.)
+        """
         payload = build_json_payload(
             prompt, schema, self.model, self.structured_mode, self.guided_backend)
-        data = self._post_chat(payload)
-        content = data["choices"][0]["message"]["content"]
-        return extract_json(content)
+        last_err: Exception | None = None
+        for _ in range(max(1, retries + 1)):
+            data = self._post_chat(payload)
+            content = data["choices"][0]["message"]["content"]
+            try:
+                return extract_json(content)
+            except ValueError as e:
+                last_err = e   # 비-JSON 응답 → 재시도
+        raise last_err  # type: ignore[misc]
 
     def complete_text(self, prompt: str, temperature: float = 0.2) -> str:
         """일반 텍스트 생성(답변 생성용). answer.TextLLM 프로토콜 구현."""

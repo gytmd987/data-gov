@@ -182,6 +182,12 @@ def review_submit(request, doc_id: str):
             # 정확 중복(제목+형식) 처리에서 supersede 선택 시
             if dup is not None and dup_action == "supersede":
                 mgr.supersede(dup["doc_id"], doc_id)
+            # 등록 단계에서 수동 지정한 연관 문서(최대 3개)
+            picked = [x for x in dict.fromkeys(p.getlist("related_pick")) if x][:3]
+            for other in picked:
+                if mgr.get(other) is not None:
+                    rel.link(doc_id, other, source="human", reason="등록 시 지정",
+                             created_by=_email_of(request.user))
             session.commit()
             # 여러 건을 올렸으면 남은 검토 대기 문서로 자동 이동(순차 검토)
             remaining = [d for d in svc.list_pending(author_id=_email_of(request.user))
@@ -194,6 +200,33 @@ def review_submit(request, doc_id: str):
         why = ", ".join(result.missing_fields + result.errors)
         messages.error(request, f"⛔ 적재 차단(BLOCKED): {why}")
         return redirect(back)
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def review_cancel(request, doc_id: str):
+    """검토 대기 문서 등록 취소 — 아직 색인 전이므로 문서·조각을 폐기한다."""
+    session = bridge.open_session()
+    try:
+        svc = bridge.get_review_service(session)
+        doc = svc.docs.get(doc_id)
+        status = svc.docs.get_status(doc_id)
+        pending = {IngestionStatus.PENDING_REVIEW.value, IngestionStatus.BLOCKED.value}
+        if doc is None or status not in pending:
+            return redirect("console_docs")
+        if not can_review_doc(session, request.user, doc):
+            messages.error(request, "이 문서를 취소할 권한이 없습니다.")
+            return redirect("console_docs")
+        bridge.get_document_manager(session).delete(doc_id, hard=True)
+        session.commit()
+        messages.info(request, "등록을 취소했습니다(문서를 폐기했습니다).")
+        # 남은 검토 대기 문서가 있으면 이어서 검토
+        remaining = svc.list_pending(author_id=_email_of(request.user))
+        if remaining:
+            return redirect(f"/console/docs/?doc={remaining[0]['doc_id']}")
+        return redirect("console_docs")
     finally:
         session.close()
 
@@ -245,6 +278,8 @@ def docs(request):
                     dups.append(f.name)
                 except ReadError as e:
                     errs.append(f"{f.name}: {e}")
+                except Exception:   # LLM 일시 오류 등 — 500 대신 안내 후 재시도 유도
+                    errs.append(f"{f.name}: AI 처리 중 일시 오류가 발생했습니다. 잠시 후 다시 올려주세요.")
             if ok_n:
                 messages.success(request, f"{ok_n}건 업로드 완료 — 내용을 확인·수정한 뒤 등록을 확정하세요.")
             if dups:
@@ -291,6 +326,7 @@ def docs(request):
         # 선택 문서가 '검토 대기'이고 검토 권한이 있으면 검토 폼을 띄운다.
         review_view = None
         dup = None
+        related_candidates = []
         if doc is not None and sel_status in pending_states and can_review_doc(
                 session, request.user, doc):
             from app.db.repositories import DocumentRepository
@@ -306,6 +342,9 @@ def docs(request):
                 doc.identification.file_format.value, exclude_doc_id=sel)
             # 제목이 파일명과 다르면 AI가 제목을 보정한 것 → 검토 폼에서 고지
             review_view.filename_stem = Path(doc.identification.source_filename).stem
+            # 등록 단계에서 수동으로 지정할 수 있는 연관 문서 후보(최근 등록 문서)
+            related_candidates = [d for d in mgr.list_documents(limit=300, indexed_only=True)
+                                  if d["doc_id"] != sel]
 
         # 개정판 연결 후보: 선택 문서와 같은 유형 최근 200건(대량에서도 안전).
         supersede_candidates = []
@@ -352,6 +391,7 @@ def docs(request):
         return render(request, "console/docs.html", {
             "docs": doc_list, "sel": sel, "doc": doc,
             "my_pending": my_pending, "review_view": review_view, "dup": dup,
+            "related_candidates": related_candidates,
             "supersede_candidates": supersede_candidates,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,

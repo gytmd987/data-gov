@@ -96,8 +96,21 @@
         <input name="effective_date" placeholder="YYYY-MM-DD" value="{{ view.lifecycle.effective_date|default_if_none:'' }}"></div>
       <div class="field"><label>유효일(만료)</label>
         <input name="expiry_date" placeholder="YYYY-MM-DD(비우면 무기한)" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></div>
+      <h4 style="margin-top:10px">④ 관련 문서 <span class="msg-note">(선택, 최대 3개)</span></h4>
+      <div class="field"><label>이 문서와 관련된 기존 문서</label>
+        {% for i in "123" %}
+        <select name="related_pick" style="margin-bottom:4px">
+          <option value="">(없음)</option>
+          {% for d in related_candidates %}<option value="{{ d.doc_id }}">{{ d.title|default:d.filename }}</option>{% endfor %}
+        </select>
+        {% endfor %}
+        <span class="msg-note">별첨·참고 등 연관된 문서를 골라 두면 나중에 함께 찾을 수 있습니다.</span></div>
     </div>
   </div>
-  <button class="btn" style="margin-top:12px">✅ 등록 확정 → 검증 후 색인</button>
+  <div style="display:flex;gap:8px;margin-top:12px">
+    <button class="btn">✅ 등록 확정 → 검증 후 색인</button>
+    <button class="btn ghost" formaction="/console/review/{{ view.doc_id }}/cancel" formnovalidate
+            style="color:#c0392b" onclick="return confirm('이 문서의 등록을 취소하고 폐기할까요?')">✕ 취소(폐기)</button>
+  </div>
 </div>
 </form>
