@@ -35,6 +35,15 @@ _PAGE_SIZE = 50            # 문서 관리 목록 한 페이지 행 수(대량�
 _EXPIRE_SOON_DAYS = 30     # 만료 임박 알림 기준
 
 
+def _to_iso(value):
+    """폼 날짜 입력 → 'YYYY-MM-DD'. '2026년 6월 30일' 같은 표기도 받아준다.
+
+    (화면이 한국어 로케일로 날짜를 렌더링해도 저장이 깨지지 않도록 방어.)
+    """
+    from app.ingestion.titletools import to_iso
+    return to_iso(value)
+
+
 def _related_docs(session, doc_id: str) -> list[dict]:
     """이 문서와 연관된 문서 [{doc_id, filename, reason, source}] (파일명 해석)."""
     from app.db.repositories import DocumentRepository, RelationRepository
@@ -134,8 +143,8 @@ def review_submit(request, doc_id: str):
             cls["language"] = p.get("language")
         # expected_qa 는 AI가 채운 값을 유지(폼에서 덮어쓰지 않음)
         life = {"status": p.get("lifecycle_status"),
-                "effective_date": p.get("effective_date") or None,
-                "expiry_date": p.get("expiry_date") or None}
+                "effective_date": _to_iso(p.get("effective_date")),
+                "expiry_date": _to_iso(p.get("expiry_date"))}
 
         # ── 제목+형식 중복 처리 ──────────────────────────────────────────────
         from app.db.repositories import DocumentRepository, RequestRepository
@@ -169,16 +178,10 @@ def review_submit(request, doc_id: str):
             from app.db.repositories import RelationRepository
             mgr = bridge.get_document_manager(session)
             rel = RelationRepository(session)
-            # 유사 문서 관계 확정(후보별: 새 버전 교체 / 연관 연결 / 무관)
-            for key in p:
-                if key.startswith("sim__"):
-                    other = key[len("sim__"):]
-                    act = p.get(key)
-                    if act == "supersede":
-                        mgr.supersede(other, doc_id)   # 기존을 이 문서의 이전 버전으로
-                    elif act == "relate":
-                        rel.link(doc_id, other, source="human", reason="검토 확정",
-                                 created_by=_email_of(request.user))
+            # 등록 단계 '버전 정리': 지정한 옛 문서를 이 문서의 이전 버전으로 처리
+            old_id = (p.get("old_id") or "").strip()
+            if old_id and old_id != doc_id and mgr.get(old_id) is not None:
+                mgr.supersede(old_id, doc_id)
             # 정확 중복(제목+형식) 처리에서 supersede 선택 시
             if dup is not None and dup_action == "supersede":
                 mgr.supersede(dup["doc_id"], doc_id)
@@ -584,8 +587,8 @@ def docs_action(request, doc_id: str):
                    "keywords": [k.strip() for k in (p.get("keywords") or "").split(",") if k.strip()],
                    "related_parties": [x.strip() for x in (p.get("related_parties") or "").split(",") if x.strip()]}
             life = {"status": p.get("lifecycle_status"),
-                    "effective_date": p.get("effective_date") or None,
-                    "expiry_date": p.get("expiry_date") or None}
+                    "effective_date": _to_iso(p.get("effective_date")),
+                    "expiry_date": _to_iso(p.get("expiry_date"))}
             mgr.update_metadata(doc_id, governance=new_gov,
                                 classification_overrides=cls, lifecycle_overrides=life)
             # 폴더(작성부서)나 제목이 바뀌었으면 원본 파일도 해당 폴더 경로로 이동

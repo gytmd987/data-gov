@@ -2,56 +2,97 @@
 {% block title %}채팅 · 인사 어시스턴트{% endblock %}
 {% block head %}
 <style>
-.layout{display:flex;height:calc(100vh - 49px)}
-.side{width:250px;background:var(--panel);border-right:1px solid var(--line);
-      display:flex;flex-direction:column}
-.side .new{margin:12px}
-.side .list{overflow-y:auto;flex:1}
-.side .item{padding:10px 14px;font-size:14px;cursor:pointer;color:var(--sub);
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.side .item:hover,.side .item.on{background:#eef2ff;color:var(--txt)}
-.main{flex:1;display:flex;flex-direction:column;max-width:900px;margin:0 auto;width:100%}
-.stream{flex:1;overflow-y:auto;padding:24px 16px}
-.row{display:flex;margin-bottom:14px}
-.row.user{justify-content:flex-end}
-.bubble{max-width:75%;padding:12px 16px;border-radius:16px;font-size:15px;
-        line-height:1.6;white-space:pre-wrap;word-break:break-word}
-.row.user .bubble{background:var(--user);color:#fff;border-bottom-right-radius:4px}
-.row.asst .bubble{background:var(--asst);border-bottom-left-radius:4px}
-.srcs{margin-top:8px}
-.src{border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff;font-size:13px}
-.src summary{padding:8px 10px;cursor:pointer;color:var(--sub)}
-.src .body{padding:8px 12px;border-top:1px solid var(--line)}
-.src .body p{margin-bottom:8px}
-.src .rel{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line);font-size:12px}
-.fb{display:flex;align-items:center;gap:2px;margin-top:6px;font-size:13px;color:var(--sub)}
-.fb button{border:none;background:none;cursor:pointer;font-size:15px;padding:0 3px}
-.composer{padding:12px 16px 20px}
-.composer .box{display:flex;gap:8px;align-items:flex-end;background:var(--panel);
-               border:1px solid var(--line);border-radius:14px;padding:10px}
-.composer textarea{flex:1;width:auto;border:none;resize:none;outline:none;max-height:140px;background:none}
-.toggle{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:14px;color:var(--sub)}
+.layout{display:flex;height:calc(100vh - 54px)}
+/* 대화 목록 */
+.side{width:238px;background:var(--panel);border-right:1px solid var(--line);
+      display:flex;flex-direction:column;flex:none}
+.side .new{margin:12px;justify-content:flex-start}
+.side .list{overflow-y:auto;flex:1;padding:0 8px 12px}
+.side .item{padding:8px 10px;font-size:var(--fs-sm);cursor:pointer;color:var(--txt2);border-radius:8px;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.side .item:hover{background:var(--bg)}
+.side .item.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+
+/* 본문 — 화면 전체 폭을 쓰되 글줄은 읽기 좋은 폭으로 */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.stream{flex:1;overflow-y:auto;padding:28px 28px 8px}
+.inner{max-width:1100px;margin:0 auto;width:100%}
+.turn{margin-bottom:22px}
+.turn.user{display:flex;justify-content:flex-end}
+.bubble{padding:11px 15px;border-radius:14px;font-size:15px;line-height:1.72;
+        white-space:pre-wrap;word-break:break-word}
+.turn.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px;max-width:72%}
+/* 답변은 말풍선 대신 넓은 카드 — 긴 글 가독성 */
+.turn.asst .bubble{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);
+                   box-shadow:var(--shadow);color:var(--txt);padding:16px 18px}
+.who{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--sub);
+     font-weight:600;margin-bottom:6px}
+.who .ic{stroke:var(--accent)}
+
+/* 출처 */
+.srcs{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.src{border:1px solid var(--line);border-radius:10px;background:#fbfcfe;font-size:var(--fs-sm)}
+.src summary{padding:8px 12px;cursor:pointer;color:var(--txt2);display:flex;align-items:center;gap:7px;
+             list-style:none}
+.src summary::-webkit-details-marker{display:none}
+.src summary:hover{background:var(--accent-weak);border-radius:10px}
+.src .body{padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);
+           border-radius:0 0 10px 10px;line-height:1.7}
+.src .body p{margin-bottom:9px}
+.src .rel{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);font-size:var(--fs-xs)}
+
+/* 피드백 — 답변 말풍선 '밖'에 별도 줄로 */
+.fb{display:flex;align-items:center;gap:6px;margin-top:8px;padding-left:2px;
+    font-size:var(--fs-xs);color:var(--sub)}
+.fb button{border:1px solid var(--line);background:var(--panel);cursor:pointer;border-radius:7px;
+           padding:3px 9px;color:var(--sub);display:inline-flex;align-items:center;gap:4px}
+.fb button:hover{background:var(--accent-weak);border-color:var(--accent-line);color:var(--accent)}
+.fb .fbdone{color:var(--ok)}
+
+/* 입력 */
+.composer{padding:10px 28px 18px;border-top:1px solid var(--line);background:var(--panel)}
+.composer .inner{display:flex;flex-direction:column;gap:8px}
+.opts{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.toggle{display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--txt2)}
 .toggle.disabled{opacity:.4;pointer-events:none}
-.badge-past{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:10px;
-            background:#fbe7c6;color:#8a6d1a;font-size:12px}
-.dscard{margin-top:8px;padding:8px 10px;border:1px solid #c7d6ff;background:#f2f6ff;border-radius:8px;font-size:13px}
-.dstbl{border-collapse:collapse;margin:6px 0;font-size:12px;overflow:auto;display:block;max-width:100%}
-.dstbl th,.dstbl td{border:1px solid var(--line);padding:3px 8px;white-space:nowrap}
-.dssql pre{white-space:pre-wrap;font-size:12px;background:#0d1117;color:#c9d1d9;padding:6px 8px;border-radius:6px}
-.switch{position:relative;width:40px;height:22px}
+.box{display:flex;gap:8px;align-items:flex-end;background:var(--panel);
+     border:1px solid var(--line-strong);border-radius:14px;padding:8px 8px 8px 14px;
+     box-shadow:var(--shadow)}
+.box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.composer textarea{flex:1;width:auto;border:none;resize:none;outline:none;max-height:150px;
+                   background:none;font-size:15px;padding:6px 0;box-shadow:none}
+.badge-past{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 8px;
+            border-radius:999px;background:var(--warn-bg);border:1px solid var(--warn-line);
+            color:var(--warn);font-size:var(--fs-xs)}
+
+/* 데이터 조회(표) 카드 */
+.dscard{margin-top:12px;padding:12px 14px;border:1px solid var(--accent-line);
+        background:var(--accent-weak);border-radius:10px;font-size:var(--fs-sm)}
+.dscard .hd{display:flex;align-items:center;gap:7px;font-weight:650;color:#1e40af;margin-bottom:8px}
+.dstbl{border-collapse:collapse;margin:2px 0 8px;font-size:var(--fs-xs);overflow:auto;
+       display:block;max-width:100%;background:var(--panel);border-radius:8px}
+.dstbl th,.dstbl td{border:1px solid var(--line);padding:5px 10px;white-space:nowrap}
+.dstbl th{background:#f8fafc}
+.dssql summary{cursor:pointer;color:var(--sub);font-size:var(--fs-xs)}
+.dssql pre{white-space:pre-wrap;font-size:var(--fs-xs);background:#0f172a;color:#e2e8f0;
+           padding:8px 10px;border-radius:8px;margin-top:5px;line-height:1.5}
+
+.switch{position:relative;width:38px;height:21px;flex:none}
 .switch input{opacity:0;width:0;height:0}
-.slider{position:absolute;inset:0;background:#ccc;border-radius:22px;cursor:pointer;transition:.2s}
-.slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;
-               background:#fff;border-radius:50%;transition:.2s}
+.slider{position:absolute;inset:0;background:#cbd5e1;border-radius:22px;cursor:pointer;transition:.2s}
+.slider:before{content:"";position:absolute;height:15px;width:15px;left:3px;top:3px;
+               background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .switch input:checked + .slider{background:var(--accent)}
-.switch input:checked + .slider:before{transform:translateX(18px)}
-.hint{font-size:12px;color:var(--sub);text-align:center;margin-top:6px}
+.switch input:checked + .slider:before{transform:translateX(17px)}
+.hint{font-size:var(--fs-xs);color:var(--sub);text-align:center}
+.empty-state{text-align:center;color:var(--sub);margin-top:14vh}
+.empty-state h2{margin-bottom:10px;color:var(--txt)}
 </style>
 {% endblock %}
 {% block content %}
 <div class="layout">
   <div class="side">
-    <button class="btn ghost new" onclick="newChat()">＋ 새 대화</button>
+    <button class="btn ghost new" onclick="newChat()"><svg class="ic sm"><use href="#i-chat"/></svg>새 대화</button>
     <div class="list" id="convs">
       {% for c in conversations %}
       <div class="item" data-id="{{ c.id }}" onclick="openChat({{ c.id }}, this)">{{ c.title }}</div>
@@ -60,35 +101,40 @@
   </div>
   <div class="main">
     <div class="stream" id="stream">
-      <div style="text-align:center;color:var(--sub);margin-top:120px" id="empty">
-        <h2 style="margin-bottom:8px">무엇을 도와드릴까요?</h2>
-        <p>아래 <b>팀 데이터 기반</b>을 켜면 사내 문서에서 근거를 찾아 출처와 함께 답합니다.<br>
-           끄면 일반 질문(문서 검색 없이)에 답합니다.</p>
+      <div class="inner">
+        <div class="empty-state" id="empty">
+          <h2>무엇을 도와드릴까요?</h2>
+          <p><b>팀 데이터 기반</b>을 켜면 사내 문서에서 근거를 찾아 출처와 함께 답합니다.<br>
+             끄면 문서 검색 없이 일반 질문에 답합니다.</p>
+        </div>
       </div>
     </div>
     <div class="composer">
-      <div class="toggle">
-        <label class="switch"><input type="checkbox" id="useRag" checked><span class="slider"></span></label>
-        <span>팀 데이터 기반 답변 <span id="ragState">(켜짐 — 사내 문서에서 근거 검색)</span></span>
+      <div class="inner">
+        <div class="opts">
+          <div class="toggle">
+            <label class="switch"><input type="checkbox" id="useRag" checked><span class="slider"></span></label>
+            <span>팀 데이터 기반 <span id="ragState" class="msg-note">(사내 문서에서 근거 검색)</span></span>
+          </div>
+          <div class="toggle" id="pastToggle">
+            <label class="switch"><input type="checkbox" id="includePast"><span class="slider"></span></label>
+            <span>만료 문서 포함</span>
+          </div>
+          <div class="toggle" id="folderToggle">
+            <svg class="ic sm" style="stroke:var(--sub)"><use href="#i-folder"/></svg>
+            <select id="folderScope" style="width:auto;max-width:280px">
+              <option value="">전체 폴더에서 검색</option>
+              {% for f in folders %}<option value="{{ f.id }}">{{ f.indent }}{{ f.name }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="box">
+          <textarea id="input" rows="1" placeholder="메시지를 입력하세요…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+          <button class="btn" onclick="sendMsg()" id="sendBtn">보내기</button>
+        </div>
+        <div class="hint">{% if offline %}오프라인 데모 모드(외부 서비스 미연결){% else %}Enter 전송 · Shift+Enter 줄바꿈{% endif %}</div>
       </div>
-      <div class="toggle" id="pastToggle">
-        <label class="switch"><input type="checkbox" id="includePast"><span class="slider"></span></label>
-        <span>만료 문서 포함 <span class="msg-note">(만료·이전 버전 문서까지 검색 — 과거 자료로 표시)</span></span>
-      </div>
-      <div class="toggle" id="folderToggle">
-        <span>📁 검색 범위</span>
-        <select id="folderScope" style="width:auto;max-width:320px;padding:4px 8px">
-          <option value="">전체 폴더</option>
-          {% for f in folders %}<option value="{{ f.id }}">{{ f.indent }}{{ f.name }}</option>{% endfor %}
-        </select>
-        <span class="msg-note">상위 폴더를 고르면 하위 폴더까지 함께 검색합니다.</span>
-      </div>
-      <div class="box">
-        <textarea id="input" rows="1" placeholder="메시지를 입력하세요…"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
-        <button class="btn" onclick="sendMsg()" id="sendBtn">보내기</button>
-      </div>
-      <div class="hint">{% if offline %}⚠️ 오프라인 데모 모드(외부 서비스 미연결){% else %}Enter 전송 · Shift+Enter 줄바꿈{% endif %}</div>
     </div>
   </div>
 </div>
@@ -96,61 +142,72 @@
 let convId = null;
 const stream = document.getElementById('stream');
 const csrft = '{{ csrf_token }}';
+const icon = (n, cls) => `<svg class="ic ${cls||'sm'}"><use href="#i-${n}"/></svg>`;
 
 document.getElementById('useRag').addEventListener('change', e => {
   document.getElementById('ragState').textContent =
-    e.target.checked ? '(켜짐 — 사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
-  // 과거 문서 포함·검색 범위는 팀 데이터 기반(RAG)일 때만 의미 있음
+    e.target.checked ? '(사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
   document.getElementById('pastToggle').classList.toggle('disabled', !e.target.checked);
   document.getElementById('folderToggle').classList.toggle('disabled', !e.target.checked);
 });
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function innerEl(){ return stream.querySelector('.inner'); }
 
 function bubble(role, text, sources, meta, dataset){
   document.getElementById('empty')?.remove();
-  const row = document.createElement('div');
-  row.className = 'row ' + (role==='user'?'user':'asst');
-  let html = `<div class="bubble">${esc(text)}`;
+  const turn = document.createElement('div');
+  turn.className = 'turn ' + (role==='user'?'user':'asst');
+
+  let inner = '';
+  if (role !== 'user') inner += `<div class="who">${icon('sparkle')}어시스턴트</div>`;
+  inner += `<div class="bubble">${esc(text)}`;
+
   if (role !== 'user' && dataset){
     const cols = dataset.columns||[], rows = dataset.rows||[];
     let tbl = `<table class="dstbl"><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
     rows.slice(0,10).forEach(r=>{ tbl += `<tr>${r.map(c=>`<td>${esc(c==null?'':String(c))}</td>`).join('')}</tr>`; });
     tbl += `</table>`;
-    const dl = dataset.source_doc_id ? `<a href="/docs/original/${dataset.source_doc_id}">📄 원본 파일</a>` : '';
-    html += `<div class="dscard">📊 <b>데이터 조회</b> · ${esc(dataset.filename||'')} ${dl}
-             ${tbl}
-             <details class="dssql"><summary>실행한 SQL</summary><pre>${esc(dataset.sql||'')}</pre></details></div>`;
+    const dl = dataset.source_doc_id
+      ? `<a href="/docs/original/${dataset.source_doc_id}">${icon('download')} 원본 파일</a>` : '';
+    inner += `<div class="dscard">
+       <div class="hd">${icon('table')} 데이터 조회 · ${esc(dataset.filename||'')}</div>
+       ${tbl}${dl}
+       <details class="dssql"><summary>실행한 SQL 보기</summary><pre>${esc(dataset.sql||'')}</pre></details></div>`;
   }
   if (role !== 'user' && sources && sources.length){
-    html += `<div class="srcs">`;
+    inner += `<div class="srcs">`;
     sources.forEach((s,i)=>{
       const marks = s.markers.map(m=>`[${m}]`).join(' ');
       let passages = s.passages.map(p=>
         `<p><b>[${p.marker}]</b>${p.page?` · p.${p.page}`:''}<br>${esc(p.text)}</p>`).join('');
-      const dl = s.doc_id ? `<a href="/docs/original/${s.doc_id}">📄 원본 파일 다운로드</a>` : '';
-      const pastBadge = s.is_past ? `<span class="badge-past">⚠️ 과거/만료 자료</span>` : '';
+      const dl = s.doc_id
+        ? `<a href="/docs/original/${s.doc_id}">${icon('download')} 원본 파일 다운로드</a>` : '';
+      const pastBadge = s.is_past
+        ? `<span class="badge-past">${icon('clock')} 과거/만료 자료</span>` : '';
       let rel = '';
       if (s.related && s.related.length){
-        rel = `<div class="rel">🔗 관련 문서: ` + s.related.map(r=>
+        rel = `<div class="rel">${icon('link')} 관련 문서: ` + s.related.map(r=>
           `<a href="/docs/original/${r.doc_id}">${esc(r.filename)}</a>`).join(', ') + `</div>`;
       }
-      html += `<details class="src"><summary>📎 출처 ${i+1}. ${esc(s.label||'')} ${marks}${pastBadge}</summary>
+      inner += `<details class="src"><summary>${icon('doc')}<span>출처 ${i+1}. ${esc(s.label||'')} ${marks}</span>${pastBadge}</summary>
                <div class="body">${passages}${dl}${rel}</div></details>`;
     });
-    html += `</div>`;
+    inner += `</div>`;
   }
+  inner += `</div>`;   // /bubble
+
+  // 평가는 말풍선 밖(아래 줄)에 둔다
   if (role !== 'user' && meta){
-    html += `<div class="fb">이 답변이 정확한가요?
-      <button onclick='fb("up", ${JSON.stringify(meta)})'>👍</button>
-      <button onclick='fbBad(${JSON.stringify(meta)})'>👎</button>
+    inner += `<div class="fb"><span>이 답변이 도움이 되었나요?</span>
+      <button onclick='fb("up", ${JSON.stringify(meta)})'>${icon('check')} 정확해요</button>
+      <button onclick='fbBad(${JSON.stringify(meta)})'>${icon('alert')} 틀렸어요</button>
       <span class="fbdone"></span></div>`;
   }
-  html += `</div>`;
-  row.innerHTML = html;
-  stream.appendChild(row);
+  turn.innerHTML = inner;
+  innerEl().appendChild(turn);
   stream.scrollTop = stream.scrollHeight;
-  return row;
+  return turn;
 }
 
 async function sendMsg(){
@@ -171,21 +228,21 @@ async function sendMsg(){
                             folder_node_id: useRag ? (document.getElementById('folderScope').value || null) : null})});
     const d = await r.json();
     thinking.remove();
-    if (!r.ok){ bubble('asst', '⚠️ ' + (d.error || '오류가 발생했습니다.')); return; }
+    if (!r.ok){ bubble('asst', (d.error || '오류가 발생했습니다.')); return; }
     if (!convId){ convId = d.conversation_id; addConvItem(text, convId); }
     bubble('asst', d.text, d.sources, {query:text, answer:d.text,
       cited: (d.sources||[]).map(s=>s.doc_id).filter(Boolean)}, d.dataset_answer);
-  } catch(e){ thinking.remove(); bubble('asst', '⚠️ 서버에 연결할 수 없습니다.'); }
+  } catch(e){ thinking.remove(); bubble('asst', '서버에 연결할 수 없습니다.'); }
   document.getElementById('sendBtn').disabled = false;
 }
 
 async function fb(rating, meta, note){
+  const done = event.target.closest('.fb').querySelector('.fbdone');
   await fetch('/chat/feedback', {method:'POST',
     headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
     body: JSON.stringify({rating, query:meta.query, answer:meta.answer,
                           note: note||null, cited_doc_ids: meta.cited})});
-  event.target.closest('.fb').querySelector('.fbdone').textContent =
-    rating==='up' ? ' 감사합니다!' : ' 기록되었습니다(관리자 검토).';
+  done.textContent = rating==='up' ? '감사합니다!' : '기록되었습니다(관리자 검토).';
 }
 function fbBad(meta){
   const note = prompt('무엇이 틀렸나요? (정답을 알면 함께 적어주세요)');
@@ -204,7 +261,7 @@ async function openChat(id, el){
   convId = id;
   document.querySelectorAll('.side .item').forEach(i=>i.classList.remove('on'));
   el.classList.add('on');
-  stream.innerHTML = '';
+  stream.innerHTML = '<div class="inner"></div>';
   const r = await fetch('/chat/history/'+id);
   const d = await r.json();
   d.messages.forEach(m=>{
@@ -215,8 +272,9 @@ async function openChat(id, el){
 }
 
 function newChat(){
-  convId = null; stream.innerHTML =
-    '<div style="text-align:center;color:var(--sub);margin-top:120px" id="empty"><h2>무엇을 도와드릴까요?</h2></div>';
+  convId = null;
+  stream.innerHTML = '<div class="inner"><div class="empty-state" id="empty">' +
+    '<h2>무엇을 도와드릴까요?</h2><p>질문을 입력해 보세요.</p></div></div>';
   document.querySelectorAll('.side .item').forEach(i=>i.classList.remove('on'));
 }
 </script>

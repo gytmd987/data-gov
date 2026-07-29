@@ -488,6 +488,39 @@ def main() -> int:
         s_bd.close()
     print("[일괄삭제] 여러 문서 한 번에 삭제 ✅")
 
+    # 11j-2) 한국어 로케일 날짜로 저장해도 깨지지 않음 + 문서 정보에서 관련 문서 추가
+    f_d = SimpleUploadedFile("날짜테스트.txt", "날짜 저장 테스트 문서.".encode("utf-8"),
+                             content_type="text/plain")
+    rd = c.post("/console/docs/", {"file": f_d, "folder_node_id": str(pid)})
+    dtid = rd["Location"].split("doc=")[1]
+    c.post(f"/console/review/{dtid}/submit", {"title": "날짜 테스트", "doc_type": "report",
+           "summary": "날짜", "keywords": "날짜", "lifecycle_status": "archived",
+           "author_node_id": str(pid)})
+    # 화면에 표시되던 '2026년 6월 30일' 형식을 그대로 저장해도 성공해야 한다
+    assert c.post(f"/console/docs/{dtid}/action",
+                  {"action": "save", "title": "날짜 테스트", "lifecycle_status": "archived",
+                   "effective_date": "2026년 6월 30일",
+                   "expiry_date": "2027.01.02"}).status_code == 302
+    s_dt = bridge.open_session()
+    try:
+        life = DocumentRepository(s_dt).get(dtid).lifecycle
+        assert str(life.effective_date) == "2026-06-30", f"작성일 저장 실패: {life.effective_date}"
+        assert str(life.expiry_date) == "2027-01-02", f"유효일 저장 실패: {life.expiry_date}"
+    finally:
+        s_dt.close()
+    # 문서 정보에서 관련 문서 '추가'
+    assert c.post(f"/console/docs/{dtid}/relate",
+                  {"action": "add", "other_id": aid}).status_code == 302
+    s_rel = bridge.open_session()
+    try:
+        from app.db.repositories import RelationRepository as _RR
+        assert aid in {r["doc_id"] for r in _RR(s_rel).related_ids(dtid)}, "관련 문서 추가 실패"
+    finally:
+        s_rel.close()
+    dpage2 = c.get(f"/console/docs/?doc={dtid}").content.decode()
+    assert "2026-06-30" in dpage2, "상세에 ISO 날짜가 표시되지 않음"
+    print("[날짜/관련] 한국어 날짜 표기 저장 정상 · 문서 정보에서 관련 문서 추가 ✅")
+
     # 11k) 표 데이터(엑셀 명단) → Tier1 카드 임베딩 + Tier2 DuckDB 적재 + 구조화 답변
     import openpyxl as _oxl
     import tempfile as _tf2
@@ -565,11 +598,14 @@ def main() -> int:
         assert any(c.get("ai_relation") for c in cands), "AI 관계 제안 없음"
     finally:
         s6.close()
-    # 검토 화면 렌더에 관계 선택 UI(라디오)가 나오는지 확인
+    # 등록 화면: 경고형 라디오는 없고, '버전 정리' 피커에 AI 후보가 제안된다
     c.force_login(admin)
-    rpage = c.get(f"/console/review/?doc={v2}").content.decode()
-    assert "유사한 기존 문서" in rpage and 'name="sim__' in rpage, "관계 선택 UI 미노출"
-    print("[유사관계] 유사 문서 감지 + AI 관계 제안 + 관계 선택 UI ✅")
+    rpage = c.get(f"/console/docs/?doc={v2}").content.decode()
+    assert 'name="sim__' not in rpage, "경고형 관계 선택 라디오가 아직 남아 있음"
+    assert 'data-name="old_id"' in rpage, "등록 단계 버전 정리 피커가 없음"
+    assert "이전 버전 후보" in rpage, "AI 이전 버전 후보 제안이 없음"
+    assert rpage.count('data-name="related_pick"') == 1, "관련 문서는 검색 전용이어야 함"
+    print("[유사관계] 유사 문서 감지 · 등록 단계 버전 정리(AI 후보+검색) · 관련문서 검색 전용 ✅")
 
     print("\n✅ Django 웹 스모크 통과")
     return 0

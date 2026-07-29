@@ -3,7 +3,7 @@
 {% block title %}조직도 관리{% endblock %}
 {% block content %}
 <div style="max-width:900px;margin:0 auto;padding:0 16px">
-<h2 style="margin:18px 0 4px">🏢 조직도 관리</h2>
+<h2 style="margin:18px 0 4px">조직도 관리</h2>
 <p class="msg-note">People팀 &gt; 그룹 &gt; 파트 계층을 만듭니다. 여기서 만든 노드로 사용자 소속과 문서 접근 권한이 정해집니다.
   노드를 삭제하면 하위 노드도 함께 삭제되고, 배정된 사용자는 소속이 해제됩니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}

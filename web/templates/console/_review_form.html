@@ -4,39 +4,24 @@
 {% csrf_token %}
 <input type="hidden" name="next" value="/console/docs/?doc={{ view.doc_id }}">
 <div class="card">
-  <b>📝 {{ view.source_filename }} — 등록 전 검토</b>
+  <b><svg class="ic sm"><use href="#i-edit"/></svg> {{ view.source_filename }} — 등록 전 검토</b>
   <span class="msg-note">· {{ view.file_format }} · 조각 {{ view.chunk_count }}개 · 상태 {{ view.status }}</span>
   <p class="msg-note" style="margin-top:4px">AI가 아래 항목을 자동으로 채웠습니다. 확인·수정한 뒤 <b>등록 확정</b>하면 검색에 노출됩니다.</p>
 
   {% if view.auto_filled %}
-  <p class="msg-note" style="margin-top:8px">🤖 AI 자동 채움 신뢰도:
+  <p class="msg-note" style="margin-top:8px"><svg class="ic sm"><use href="#i-sparkle"/></svg> AI 자동 채움 신뢰도:
     {% for a in view.auto_filled %}{{ a.field }} {{ a.confidence }}{% if not forloop.last %} · {% endif %}{% endfor %}
   </p>{% endif %}
 
   {% if view.filename_stem and view.classification.title_normalized != view.filename_stem %}
-  <div style="background:#eef4ff;border:1px solid #c7d6ff;border-radius:8px;padding:8px 10px;margin-top:10px">
-    🤖 파일명이 제목으로 적절치 않아 AI가 제목을 <b>{{ view.classification.title_normalized }}</b>로 수정했습니다
+  <div class="banner info" style="margin-top:10px">
+    <svg class="ic sm"><use href="#i-sparkle"/></svg> 파일명이 제목으로 적절치 않아 AI가 제목을 <b>{{ view.classification.title_normalized }}</b>로 수정했습니다
     <span class="msg-note">(원래 파일명: {{ view.filename_stem }})</span>. 확인 후 등록하세요.
   </div>{% endif %}
 
-  {% if view.revision_candidates %}
-  <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
-    ⚠️ <b>유사한 기존 문서</b>가 있습니다. AI 판단을 참고해 관계를 확정하세요.
-    {% for c in view.revision_candidates %}
-    <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #e6cf8a">
-      <b>{{ c.filename }}</b> <span class="msg-note">· 유사도 {{ c.score }} · 🤖 {{ c.ai_label }}{% if c.ai_reason %} — {{ c.ai_reason }}{% endif %}</span>
-      <div style="display:flex;gap:14px;margin-top:4px;flex-wrap:wrap">
-        <label><input type="radio" name="sim__{{ c.doc_id }}" value="supersede" {% if c.default_action == 'supersede' %}checked{% endif %}> 이 문서의 새 버전으로 (기존을 대체됨 처리)</label>
-        <label><input type="radio" name="sim__{{ c.doc_id }}" value="relate" {% if c.default_action == 'relate' %}checked{% endif %}> 연관 문서로 연결</label>
-        <label><input type="radio" name="sim__{{ c.doc_id }}" value="ignore" {% if c.default_action == 'ignore' %}checked{% endif %}> 무관(별개)</label>
-      </div>
-    </div>
-    {% endfor %}
-  </div>{% endif %}
-
   {% if dup %}
-  <div style="background:#fdecea;border:1px solid #f5b7b1;border-radius:8px;padding:10px;margin-top:10px">
-    ⛔ <b>제목+형식이 같은 문서</b>가 이미 있습니다: <b>{{ dup.filename }}</b>. 처리 방법을 고르세요.
+  <div class="banner warn" style="margin-top:10px">
+    <svg class="ic sm"><use href="#i-alert"/></svg> <b>제목+형식이 같은 문서</b>가 이미 있습니다: <b>{{ dup.filename }}</b>. 처리 방법을 고르세요.
     <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
       <label><input type="radio" name="dup_action" value="supersede"> 기존 문서를 이 문서의 <b>이전 버전</b>으로 처리(교체)</label>
       <label><input type="radio" name="dup_action" value="request_delete"> 기존 문서 <b>삭제 요청</b> →
@@ -61,14 +46,14 @@
       <div class="field"><label>핵심 키워드 <span class="msg-note">(AI 필수 · 쉼표 구분)</span></label>
         <input name="keywords" value="{{ view.classification.keywords|join:', ' }}"></div>
       <div class="field"><label>예상 Q&amp;A <span class="msg-note">(AI 필수 — 자동 생성)</span></label>
-        <div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:#fafafa;font-size:13px;max-height:160px;overflow-y:auto">
+        <div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:#fbfcfe;font-size:var(--fs-sm);max-height:160px;overflow-y:auto;line-height:1.6">
           {% for qa in view.classification.expected_qa %}
           <p style="margin-bottom:6px"><b>Q.</b> {{ qa.question }}<br><b>A.</b> {{ qa.answer }}</p>
-          {% empty %}<span class="msg-note">⚠️ AI가 Q&amp;A를 생성하지 못했습니다(파일 읽기 문제 가능).</span>{% endfor %}
+          {% empty %}<span class="msg-note">AI가 Q&amp;A를 생성하지 못했습니다(파일 읽기 문제 가능).</span>{% endfor %}
         </div></div>
       <div class="field"><label>유관 조직/임직원 <span class="msg-note">(쉼표 구분)</span></label>
         <input name="related_parties" value="{{ view.classification.related_parties|join:', ' }}"></div>
-      <div class="field"><label>작성 부서 <span class="msg-note">(조직도 = 관리 부서)</span></label>
+      <div class="field"><label>폴더 (작성 부서)</label>
         <select name="author_node_id"><option value="">(미지정)</option>
           {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
         </select></div>
@@ -102,20 +87,29 @@
           <div class="dp-selected"></div>
           <input class="dp-search" placeholder="문서명으로 검색해서 추가…" autocomplete="off">
           <div class="dp-results"></div>
+        </div>
+        <span class="msg-note">별첨·참고 등 연관 문서를 검색해 지정합니다. (AI가 찾은 연관 문서는 등록 후 문서 정보에서 확인·정리할 수 있습니다.)</span></div>
+
+      <h4 style="margin-top:10px">⑤ 버전 정리 <span class="msg-note">(선택)</span></h4>
+      <div class="field">
+        <div class="doc-picker" data-name="old_id" data-max="1" data-exclude="{{ view.doc_id }}">
+          <div class="dp-selected"></div>
+          <input class="dp-search" placeholder="이 문서가 대체할 옛 문서를 검색…" autocomplete="off">
+          <div class="dp-results"></div>
           <div class="dp-suggest">
-            {% if view.related_recos %}<div class="msg-note" style="margin:4px 0 2px">🤖 AI 추천</div>{% endif %}
-            {% for c in view.related_recos %}
-            <button type="button" class="dp-add" data-id="{{ c.doc_id }}" data-label="{{ c.filename }}">＋ {{ c.filename }} <span class="msg-note">· 유사도 {{ c.score|floatformat:2 }}</span></button>
-            {% empty %}<span class="msg-note">AI가 추천한 연관 문서가 없습니다. 필요하면 위에서 검색해 추가하세요.</span>{% endfor %}
+            {% if view.revision_candidates %}<div class="msg-note" style="margin:4px 0 2px">AI가 찾은 이전 버전 후보 — 맞으면 선택하세요</div>{% endif %}
+            {% for c in view.revision_candidates %}
+            <button type="button" class="dp-add" data-id="{{ c.doc_id }}" data-label="{{ c.filename }}">＋ {{ c.filename }} <span class="msg-note">· 유사도 {{ c.score|floatformat:2 }}{% if c.ai_reason %} · {{ c.ai_reason }}{% endif %}</span></button>
+            {% endfor %}
           </div>
         </div>
-        <span class="msg-note">별첨·참고 등 연관된 문서를 지정해 두면 나중에 함께 찾을 수 있습니다.</span></div>
+        <span class="msg-note">지정하면 그 문서는 <b>이전 버전</b>으로 처리되어 검색에서 빠집니다. 없으면 비워 두세요.</span></div>
     </div>
   </div>
   <div style="display:flex;gap:8px;margin-top:12px">
-    <button class="btn">✅ 등록 확정 → 검증 후 색인</button>
+    <button class="btn"><svg class="ic sm"><use href="#i-check"/></svg>등록 확정 → 검증 후 색인</button>
     <button class="btn ghost" formaction="/console/review/{{ view.doc_id }}/cancel" formnovalidate
-            style="color:#c0392b" onclick="return confirm('이 문서의 등록을 취소하고 폐기할까요?')">✕ 취소(폐기)</button>
+            onclick="return confirm('이 문서의 등록을 취소하고 폐기할까요?')"><svg class="ic sm"><use href="#i-x"/></svg>취소(폐기)</button>
   </div>
 </div>
 </form>

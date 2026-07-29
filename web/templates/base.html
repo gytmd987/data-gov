@@ -5,63 +5,164 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}인사 어시스턴트{% endblock %}</title>
 <style>
-:root{--bg:#f7f7f8;--panel:#fff;--line:#e5e5e6;--txt:#1a1a1a;--sub:#6b6b6b;
-      --accent:#3b6ef5;--user:#3b6ef5;--asst:#f0f0f2}
+:root{
+  /* 밝고 선명한 팔레트 — 배경은 아주 옅은 블루그레이, 카드/입력은 순백 */
+  --bg:#f6f8fc; --panel:#ffffff; --line:#e3e8f0; --line-strong:#cdd6e4;
+  --txt:#111827; --txt2:#374151; --sub:#64748b;
+  --accent:#2563eb; --accent-weak:#eff4ff; --accent-line:#bfd3ff;
+  --ok:#0f9d58; --warn:#b45309; --warn-bg:#fffbeb; --warn-line:#fde68a;
+  --danger:#dc2626;
+  --radius:10px; --radius-lg:14px;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  --shadow-lg:0 8px 24px rgba(16,24,40,.10);
+  --fs:14px;      /* 본문 기준 */
+  --fs-sm:13px;   /* 보조 */
+  --fs-xs:12px;   /* 라벨·배지 */
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Pretendard','Malgun Gothic',system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+html,body{height:100%}
+body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif;
+     background:var(--bg);color:var(--txt);font-size:var(--fs);line-height:1.55;
+     -webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none}
-.topbar{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);
-        border-bottom:1px solid var(--line)}
-.topbar .brand{font-weight:700}
-.topbar .nav a{margin-right:12px;color:var(--sub)}
-.topbar .nav a.on{color:var(--accent);font-weight:600}
-.topbar .me{margin-left:auto;color:var(--sub);font-size:13px}
-.btn{display:inline-block;padding:8px 14px;border:none;border-radius:8px;background:var(--accent);
-     color:#fff;cursor:pointer;font-size:14px;white-space:nowrap;flex-shrink:0}
-.btn.ghost{background:transparent;color:var(--sub);border:1px solid var(--line)}
-input,select,textarea{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;width:100%;
-                      background:#fff}
+a:hover{text-decoration:underline}
+h2{font-size:20px;font-weight:700;letter-spacing:-.2px}
+h4{font-size:14px;font-weight:650;margin-bottom:6px;color:var(--txt)}
+b,strong{font-weight:650}
+
+/* ── 아이콘(인라인 SVG 스프라이트) ─────────────────────────────────────── */
+.ic{width:17px;height:17px;flex:none;vertical-align:-3px;stroke:currentColor;fill:none;
+    stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ic.sm{width:14px;height:14px;vertical-align:-2px}
+
+/* ── 상단바 ─────────────────────────────────────────────────────────────── */
+.topbar{display:flex;align-items:center;gap:18px;padding:0 20px;height:54px;background:var(--panel);
+        border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50}
+.topbar .brand{font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:7px;color:var(--txt)}
+.topbar .brand .ic{width:19px;height:19px;stroke:var(--accent)}
+.topbar .nav{display:flex;gap:2px}
+.topbar .nav a{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;
+               color:var(--sub);font-size:var(--fs-sm);font-weight:500}
+.topbar .nav a:hover{background:var(--bg);color:var(--txt2);text-decoration:none}
+.topbar .nav a.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.topbar .me{margin-left:auto;color:var(--sub);font-size:var(--fs-sm);display:flex;align-items:center;gap:8px}
+
+/* ── 버튼 ───────────────────────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+     padding:8px 14px;border:1px solid transparent;border-radius:9px;background:var(--accent);
+     color:#fff;cursor:pointer;font-size:var(--fs-sm);font-weight:600;white-space:nowrap;flex-shrink:0;
+     font-family:inherit;transition:filter .12s,background .12s,border-color .12s}
+.btn:hover{filter:brightness(1.06);text-decoration:none}
+.btn:active{filter:brightness(.95)}
+.btn:disabled{opacity:.6;cursor:default}
+.btn.ghost{background:var(--panel);color:var(--txt2);border-color:var(--line-strong)}
+.btn.ghost:hover{background:var(--bg);border-color:var(--sub)}
+.btn.sm{padding:5px 10px;font-size:var(--fs-xs)}
+.btn.danger{background:var(--danger);color:#fff;border-color:transparent}
+.btn.ghost.danger{background:var(--panel);color:var(--danger);border-color:#f3c2c2}
+
+/* ── 입력 요소(크기·굵기 통일) ─────────────────────────────────────────── */
+input,select,textarea,button{font-family:inherit}
+input,select,textarea{font-size:var(--fs-sm);padding:7px 10px;border:1px solid var(--line-strong);
+                      border-radius:8px;width:100%;background:var(--panel);color:var(--txt);
+                      transition:border-color .12s,box-shadow .12s}
+input::placeholder,textarea::placeholder{color:#9aa5b4}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
+                                        box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+input[type=checkbox],input[type=radio]{width:auto;padding:0;accent-color:var(--accent)}
+input[type=file]{padding:6px 8px;background:var(--bg);border-style:dashed;cursor:pointer}
+label{font-size:var(--fs-sm)}
+/* select 은 '고르는 칸'임이 분명히 보이도록 화살표 + 옅은 배경 */
+select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
+       background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+       background-repeat:no-repeat;background-position:right 9px center;
+       background-color:#fbfcfe}
+select:hover{background-color:var(--accent-weak);border-color:var(--accent-line)}
 .field{margin:10px 0}
-.field>label{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+.field>label{display:block;font-size:var(--fs-xs);font-weight:600;color:var(--sub);margin-bottom:5px;
+             letter-spacing:.1px}
+
 /* 체크박스 드롭다운(다중 선택) — <details class="dd"> */
 .dd{position:relative}
-.dd>summary{list-style:none;cursor:pointer;padding:8px;border:1px solid var(--line);border-radius:8px;
-            background:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-            padding-right:26px}
+.dd>summary{list-style:none;cursor:pointer;padding:7px 30px 7px 10px;border:1px solid var(--line-strong);
+            border-radius:8px;background:#fbfcfe;font-size:var(--fs-sm);white-space:nowrap;
+            overflow:hidden;text-overflow:ellipsis}
+.dd>summary:hover{background:var(--accent-weak);border-color:var(--accent-line)}
 .dd>summary::-webkit-details-marker{display:none}
-.dd>summary::after{content:"▾";position:absolute;right:10px;color:var(--sub)}
-.dd .menu{position:absolute;z-index:20;left:0;right:0;margin-top:4px;background:#fff;
-          border:1px solid var(--line);border-radius:8px;max-height:220px;overflow-y:auto;
-          box-shadow:0 4px 14px rgba(0,0,0,.1);padding:4px}
+.dd>summary::after{content:"";position:absolute;right:10px;top:50%;width:14px;height:14px;
+  margin-top:-7px;background-repeat:no-repeat;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>")}
+.dd .menu{position:absolute;z-index:30;left:0;right:0;margin-top:4px;background:var(--panel);
+          border:1px solid var(--line);border-radius:10px;max-height:230px;overflow-y:auto;
+          box-shadow:var(--shadow-lg);padding:5px}
 .dd .menu label{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;
-                cursor:pointer;font-size:14px;white-space:nowrap}
-.dd .menu label:hover{background:#eef2ff}
-.dd .menu input[type=checkbox]{width:auto;margin:0}
-table{border-collapse:collapse;width:100%;background:var(--panel)}
-th,td{border:1px solid var(--line);padding:8px 10px;font-size:14px;text-align:left}
-th{background:#fafafa}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin:16px 0}
-.msg-note{color:var(--sub);font-size:13px}
+                cursor:pointer;font-size:var(--fs-sm);white-space:nowrap}
+.dd .menu label:hover{background:var(--accent-weak)}
+
+/* ── 표 ─────────────────────────────────────────────────────────────────── */
+table{border-collapse:separate;border-spacing:0;width:100%;background:var(--panel);
+      border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+th,td{padding:9px 12px;font-size:var(--fs-sm);text-align:left;border-bottom:1px solid var(--line)}
+th{background:#f8fafc;color:var(--sub);font-weight:600;font-size:var(--fs-xs);
+   text-transform:none;letter-spacing:.2px}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td,table tr:hover td{background:#fbfcfe}
+
+/* ── 카드·기타 ──────────────────────────────────────────────────────────── */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-lg);
+      padding:16px 18px;margin:14px 0;box-shadow:var(--shadow)}
+.msg-note{color:var(--sub);font-size:var(--fs-sm)}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--accent-weak);
+      border:1px solid var(--accent-line);color:#1d4ed8;border-radius:999px;
+      padding:2px 10px;font-size:var(--fs-xs)}
+.tag{display:inline-block;background:#f1f5f9;border:1px solid var(--line);border-radius:999px;
+     padding:2px 10px;font-size:var(--fs-xs);color:var(--txt2)}
+.banner{border-radius:var(--radius);padding:11px 14px;font-size:var(--fs-sm)}
+.banner.info{background:var(--accent-weak);border:1px solid var(--accent-line);color:#1e40af}
+.banner.warn{background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn)}
 </style>
 {% block head %}{% endblock %}
 </head>
 <body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-brand" viewBox="0 0 24 24"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/><path d="M9 10h.01M15 10h.01M9 13h.01M15 13h.01"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.8-.9L3 21l1.9-4.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-org" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1.2"/><rect x="2" y="16" width="6" height="5" rx="1.2"/><rect x="16" y="16" width="6" height="5" rx="1.2"/><path d="M12 7v4M5 16v-2h14v2"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20"/><circle cx="9" cy="7" r="3.2"/><path d="M22 20v-1.5a4 4 0 0 0-3-3.8M16.5 3.8a4 4 0 0 1 0 6.4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M12 3v13M7 8l5-5 5 5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M12 16V3M7 11l5 5 5-5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.4 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.4-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.8 1.1z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></symbol>
+  <symbol id="i-broom" viewBox="0 0 24 24"><path d="M14 3l7 7M11.5 5.5 18.5 12.5"/><path d="M9 8l7 7-4.5 4.5a3 3 0 0 1-2.1.9H4l1.6-3.2a3 3 0 0 1 .6-.8z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></symbol>
+</svg>
 <div class="topbar">
-  <span class="brand">🏢 인사 어시스턴트</span>
+  <span class="brand"><svg class="ic"><use href="#i-brand"/></svg>인사 어시스턴트</span>
   <span class="nav">
-    <a href="/" class="{% if request.path == '/' %}on{% endif %}">💬 채팅</a>
+    <a href="/" class="{% if request.path == '/' %}on{% endif %}"><svg class="ic sm"><use href="#i-chat"/></svg>채팅</a>
     {% if user.is_authenticated %}
-    <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}">📄 문서</a>
+    <a href="/console/docs/" class="{% if '/console/docs' in request.path %}on{% endif %}"><svg class="ic sm"><use href="#i-doc"/></svg>문서</a>
     {% endif %}
     {% if is_admin %}
-    <a href="/console/org/" class="{% if '/console/org' in request.path %}on{% endif %}">🏢 조직도</a>
-    <a href="/console/users/" class="{% if '/console/users' in request.path %}on{% endif %}">👤 사용자 관리</a>
+    <a href="/console/org/" class="{% if '/console/org' in request.path %}on{% endif %}"><svg class="ic sm"><use href="#i-org"/></svg>조직도</a>
+    <a href="/console/users/" class="{% if '/console/users' in request.path %}on{% endif %}"><svg class="ic sm"><use href="#i-users"/></svg>사용자</a>
     {% endif %}
   </span>
   <span class="me">
-    {% if user.is_authenticated %}{{ user.username }} ·
+    {% if user.is_authenticated %}{{ user.username }}
       <form method="post" action="/accounts/logout/" style="display:inline">{% csrf_token %}
-        <button class="btn ghost" style="padding:2px 8px">로그아웃</button></form>
+        <button class="btn ghost sm"><svg class="ic sm"><use href="#i-logout"/></svg>로그아웃</button></form>
     {% endif %}
   </span>
 </div>

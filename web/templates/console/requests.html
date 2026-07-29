@@ -3,7 +3,7 @@
 {% block title %}수정·삭제 요청{% endblock %}
 {% block content %}
 <div style="max-width:900px;margin:0 auto;padding:0 16px">
-<h2 style="margin:18px 0 4px">📨 수정·삭제 요청 승인</h2>
+<h2 style="margin:18px 0 4px"> 수정·삭제 요청 승인</h2>
 <p class="msg-note">파트원이 올린 문서 수정·삭제 요청입니다. 관리자는 전체, 부서장은 자기 부서 문서만 처리할 수 있습니다.
   삭제 승인 시 문서는 영구 삭제됩니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
@@ -13,7 +13,7 @@
   <tr><th>유형</th><th>문서</th><th>요청자</th><th>메모</th><th style="width:180px"></th></tr>
   {% for r in rows %}
   <tr>
-    <td>{% if r.request_type == "delete" %}🗑️ 삭제{% else %}✏️ 수정{% endif %}</td>
+    <td>{% if r.request_type == "delete" %} 삭제{% else %} 수정{% endif %}</td>
     <td>{{ r.doc_title|default:r.doc_id }}</td>
     <td>{{ r.requester_id }}{% if r.target_admin_id %}<br><span class="msg-note">→ {{ r.target_admin_id }}</span>{% endif %}</td>
     <td class="msg-note">{{ r.note|default:"—" }}</td>

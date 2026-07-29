@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from app.ingestion.titletools import compose_title, extract_date
+from app.ingestion.titletools import compose_title, extract_date, to_iso
 
 
 def test_extract_various_date_formats():
@@ -39,3 +39,14 @@ def test_uninformative_filename_uses_ai_title():
 def test_length_bounded():
     long = "아주" * 60
     assert len(compose_title(long + ".txt")) <= 60
+
+
+def test_to_iso_accepts_localized_and_common_formats():
+    # 화면이 한국어 로케일로 렌더한 날짜를 그대로 저장해도 깨지지 않아야 한다
+    assert to_iso("2026년 6월 30일") == "2026-06-30"
+    assert to_iso("2026-06-30") == "2026-06-30"
+    assert to_iso("2026.06.30") == "2026-06-30"
+    assert to_iso("20260630") == "2026-06-30"
+    assert to_iso(date(2026, 6, 30)) == "2026-06-30"
+    assert to_iso("") is None and to_iso(None) is None
+    assert to_iso("아무 날짜 아님") is None

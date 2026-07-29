@@ -91,6 +91,27 @@ def parse_iso(value) -> Optional[date]:
         return None
 
 
+def parse_date_loose(value) -> Optional[date]:
+    """사람이 입력/화면에서 복사한 어떤 날짜 표기든 date 로 해석한다.
+
+    'YYYY-MM-DD' 뿐 아니라 '2026년 6월 30일', '2026.06.30', '20260630' 등도 허용한다.
+    (화면이 한국어 로케일로 날짜를 렌더링해도 저장이 깨지지 않도록.)
+    해석 불가면 None.
+    """
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return parse_iso(text) or extract_date(text)[0]
+
+
+def to_iso(value) -> Optional[str]:
+    """느슨한 날짜 입력 → 'YYYY-MM-DD' 문자열(해석 실패 시 None)."""
+    d = parse_date_loose(value)
+    return d.isoformat() if d else None
+
+
 def compose_title(filename: str, ai_title: Optional[str] = None,
                   ai_date=None, max_len: int = _MAX_TITLE_LEN) -> str:
     """파일명 + (파일명/AI) 날짜 → `(YY-MMDD) 제목` 형태의 통일된 제목.
