@@ -188,6 +188,7 @@ def review_submit(request, doc_id: str):
                 if mgr.get(other) is not None:
                     rel.link(doc_id, other, source="human", reason="등록 시 지정",
                              created_by=_email_of(request.user))
+            svc.finalize_original_name(doc_id)   # 서버 원본 파일명을 제목으로
             session.commit()
             # 여러 건을 올렸으면 남은 검토 대기 문서로 자동 이동(순차 검토)
             remaining = [d for d in svc.list_pending(author_id=_email_of(request.user))
@@ -326,34 +327,41 @@ def docs(request):
         # 선택 문서가 '검토 대기'이고 검토 권한이 있으면 검토 폼을 띄운다.
         review_view = None
         dup = None
-        related_candidates = []
         if doc is not None and sel_status in pending_states and can_review_doc(
                 session, request.user, doc):
             from app.db.repositories import DocumentRepository
             from app.relations.classify import RELATION_LABELS
+            from app.relations.detect import DUP_THRESHOLD
             review_view = svc.get_review(sel)
+            # 개정판(교체) 후보 vs AI 추천 연관 문서로 분리
             for c in review_view.similar_candidates:
-                rel = c.get("ai_relation") or "revision"
-                c["ai_label"] = RELATION_LABELS.get(rel, rel)
+                relk = c.get("ai_relation") or "revision"
+                c["ai_label"] = RELATION_LABELS.get(relk, relk)
                 c["default_action"] = {"revision": "supersede", "related": "relate",
-                                       "unrelated": "ignore"}.get(rel, "supersede")
+                                       "unrelated": "ignore"}.get(relk, "supersede")
+            review_view.revision_candidates = [
+                c for c in review_view.similar_candidates if c.get("score", 0) >= DUP_THRESHOLD]
+            review_view.related_recos = [
+                c for c in review_view.similar_candidates if c.get("score", 0) < DUP_THRESHOLD]
             dup = DocumentRepository(session).find_active_by_title_format(
                 doc.classification.title_normalized,
                 doc.identification.file_format.value, exclude_doc_id=sel)
             # 제목이 파일명과 다르면 AI가 제목을 보정한 것 → 검토 폼에서 고지
             review_view.filename_stem = Path(doc.identification.source_filename).stem
-            # 등록 단계에서 수동으로 지정할 수 있는 연관 문서 후보(최근 등록 문서)
-            related_candidates = [d for d in mgr.list_documents(limit=300, indexed_only=True)
-                                  if d["doc_id"] != sel]
 
-        # 개정판 연결 후보: 선택 문서와 같은 유형 최근 200건(대량에서도 안전).
-        supersede_candidates = []
+        # 버전 정리: 같은 제목(날짜 접두 제외) 기준 '옛 버전 추정' 문서만 제안(없으면 검색).
+        supersede_suggestions = []
         if doc is not None and review_view is None:
-            supersede_candidates = [
-                d for d in mgr.list_documents(
-                    doc_type=doc.classification.doc_type.value, limit=200,
-                    indexed_only=True)
-                if d["doc_id"] != sel]
+            from app.ingestion.titletools import strip_date_prefix
+            this_base = strip_date_prefix(
+                doc.classification.title_normalized or doc.identification.source_filename).lower()
+            for d in mgr.list_documents(doc_type=doc.classification.doc_type.value,
+                                        limit=300, indexed_only=True):
+                if d["doc_id"] == sel:
+                    continue
+                base = strip_date_prefix(d["title"] or d["filename"]).lower()
+                if base and base == this_base:
+                    supersede_suggestions.append(d)
 
         from app.db.repositories import OrgRepository
         node_opts = _org_options(OrgRepository(session))
@@ -391,8 +399,7 @@ def docs(request):
         return render(request, "console/docs.html", {
             "docs": doc_list, "sel": sel, "doc": doc,
             "my_pending": my_pending, "review_view": review_view, "dup": dup,
-            "related_candidates": related_candidates,
-            "supersede_candidates": supersede_candidates,
+            "supersede_suggestions": supersede_suggestions,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,
             "statuses": USER_DOC_STATUSES, "doc_types": ENUM_OPTIONS["doc_type"],
@@ -424,6 +431,26 @@ def docs_sweep(request):
         else:
             messages.info(request, "만료 처리할 문서가 없습니다.")
         return redirect(request.POST.get("next") or "console_docs")
+    finally:
+        session.close()
+
+
+@login_required
+def docs_search(request):
+    """문서명(제목·파일명) 검색 → JSON. 연관/버전 지정 시 자동완성용(대량에서도 안전)."""
+    from django.http import JsonResponse
+    session = bridge.open_session()
+    try:
+        q = (request.GET.get("q") or "").strip()
+        exclude = request.GET.get("exclude")
+        if not q:
+            return JsonResponse({"results": []})
+        mgr = bridge.get_document_manager(session)
+        rows = mgr.list_documents(text=q, indexed_only=True, limit=20)
+        out = [{"doc_id": r["doc_id"], "title": r["title"] or r["filename"],
+                "filename": r["filename"]}
+               for r in rows if r["doc_id"] != exclude]
+        return JsonResponse({"results": out})
     finally:
         session.close()
 

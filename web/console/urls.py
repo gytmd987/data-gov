@@ -7,6 +7,7 @@ urlpatterns = [
     path("review/<str:doc_id>/submit", views.review_submit, name="console_review_submit"),
     path("review/<str:doc_id>/cancel", views.review_cancel, name="console_review_cancel"),
     path("docs/", views.docs, name="console_docs"),
+    path("docs/search", views.docs_search, name="console_docs_search"),
     path("docs/sweep", views.docs_sweep, name="console_docs_sweep"),
     path("docs/<str:doc_id>/action", views.docs_action, name="console_docs_action"),
     path("docs/<str:doc_id>/request", views.docs_request, name="console_docs_request"),

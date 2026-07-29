@@ -343,6 +343,31 @@ def main() -> int:
     assert c.get(f"/console/docs/?doc={did2}").status_code == 200
     print("[내구성 ] 어휘 밖 doc_type 문서도 오류 없이 로딩·표시 ✅")
 
+    # 11g) 제목 날짜 정규화 + 문서명 검색 API + 다운로드명=제목
+    respT = c.post("/console/docs/", {"file": _f("인사평가결과_2025-07-28.txt", "인사평가 결과 요약.")})
+    tid2 = respT["Location"].split("doc=")[1]
+    s_t = bridge.open_session()
+    try:
+        title = DocumentRepository(s_t).get(tid2).classification.title_normalized
+        assert title.startswith("(25-0728)") and "인사평가결과" in title, f"제목 날짜 정규화 실패: {title}"
+    finally:
+        s_t.close()
+    c.post(f"/console/review/{tid2}/submit",
+           {"title": title, "doc_type": "report", "summary": "요약", "keywords": "평가",
+            "lifecycle_status": "active"})
+    # 문서명 검색 API
+    import json as _json
+    from urllib.parse import quote as _quote
+    sr = c.get("/console/docs/search?q=" + _quote("인사평가"))
+    hits = _json.loads(sr.content)["results"]
+    assert any(h["doc_id"] == tid2 for h in hits), "문서명 검색에서 등록 문서를 찾지 못함"
+    # 다운로드 파일명 = 제목
+    dl = c.get(f"/docs/original/{tid2}")
+    assert dl.status_code in (200, 404)
+    if dl.status_code == 200:
+        assert "25-0728" in dl.get("Content-Disposition", ""), "다운로드 파일명이 제목 기반이 아님"
+    print("[제목/검색] 날짜 (YY-MMDD) 정규화 · 문서명 검색 API · 다운로드명=제목 ✅")
+
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()
     try:

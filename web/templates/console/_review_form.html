@@ -19,10 +19,10 @@
     <span class="msg-note">(원래 파일명: {{ view.filename_stem }})</span>. 확인 후 등록하세요.
   </div>{% endif %}
 
-  {% if view.similar_candidates %}
+  {% if view.revision_candidates %}
   <div style="background:#fff8e6;border:1px solid #f0d48a;border-radius:8px;padding:10px;margin-top:10px">
     ⚠️ <b>유사한 기존 문서</b>가 있습니다. AI 판단을 참고해 관계를 확정하세요.
-    {% for c in view.similar_candidates %}
+    {% for c in view.revision_candidates %}
     <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #e6cf8a">
       <b>{{ c.filename }}</b> <span class="msg-note">· 유사도 {{ c.score }} · 🤖 {{ c.ai_label }}{% if c.ai_reason %} — {{ c.ai_reason }}{% endif %}</span>
       <div style="display:flex;gap:14px;margin-top:4px;flex-wrap:wrap">
@@ -97,14 +97,19 @@
       <div class="field"><label>유효일(만료)</label>
         <input name="expiry_date" placeholder="YYYY-MM-DD(비우면 무기한)" value="{{ view.lifecycle.expiry_date|default_if_none:'' }}"></div>
       <h4 style="margin-top:10px">④ 관련 문서 <span class="msg-note">(선택, 최대 3개)</span></h4>
-      <div class="field"><label>이 문서와 관련된 기존 문서</label>
-        {% for i in "123" %}
-        <select name="related_pick" style="margin-bottom:4px">
-          <option value="">(없음)</option>
-          {% for d in related_candidates %}<option value="{{ d.doc_id }}">{{ d.title|default:d.filename }}</option>{% endfor %}
-        </select>
-        {% endfor %}
-        <span class="msg-note">별첨·참고 등 연관된 문서를 골라 두면 나중에 함께 찾을 수 있습니다.</span></div>
+      <div class="field">
+        <div class="doc-picker" data-name="related_pick" data-max="3" data-exclude="{{ view.doc_id }}">
+          <div class="dp-selected"></div>
+          <input class="dp-search" placeholder="문서명으로 검색해서 추가…" autocomplete="off">
+          <div class="dp-results"></div>
+          <div class="dp-suggest">
+            {% if view.related_recos %}<div class="msg-note" style="margin:4px 0 2px">🤖 AI 추천</div>{% endif %}
+            {% for c in view.related_recos %}
+            <button type="button" class="dp-add" data-id="{{ c.doc_id }}" data-label="{{ c.filename }}">＋ {{ c.filename }} <span class="msg-note">· 유사도 {{ c.score|floatformat:2 }}</span></button>
+            {% empty %}<span class="msg-note">AI가 추천한 연관 문서가 없습니다. 필요하면 위에서 검색해 추가하세요.</span>{% endfor %}
+          </div>
+        </div>
+        <span class="msg-note">별첨·참고 등 연관된 문서를 지정해 두면 나중에 함께 찾을 수 있습니다.</span></div>
     </div>
   </div>
   <div style="display:flex;gap:8px;margin-top:12px">

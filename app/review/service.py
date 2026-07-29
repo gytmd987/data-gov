@@ -82,6 +82,8 @@ class ReviewView:
     governance: dict[str, Any] = field(default_factory=dict)
     known_groups: list[str] = field(default_factory=list)
     similar_candidates: list[dict[str, Any]] = field(default_factory=list)
+    revision_candidates: list[dict[str, Any]] = field(default_factory=list)  # 개정판(교체) 후보
+    related_recos: list[dict[str, Any]] = field(default_factory=list)        # AI 추천 연관 문서
     last_validation: Optional[dict[str, Any]] = None
     filename_stem: Optional[str] = None   # 제목 보정 고지용(제목≠파일명이면 배너)
 
@@ -112,11 +114,12 @@ class ReviewService:
             llm=self.llm, llm_model=self.llm_model, ocr=self.ocr,
             hash_lookup=persistent_hash_lookup(repo),
         )
-        # 제목 기본값 = 파일명(확장자 제외). AI가 파일명이 부적절하다고 판단해 고쳤으면 그 값 유지.
-        from pathlib import Path
-        if not (ctx.doc.classification.title_normalized or "").strip():
-            ctx.doc.classification.title_normalized = Path(
-                ctx.doc.identification.source_filename).stem
+        # 제목 = 파일명 기반 + 날짜 정규화(YY-MMDD 앞쪽). 파일명이 의미없으면 AI 제안 사용.
+        from app.ingestion.titletools import compose_title
+        ctx.doc.classification.title_normalized = compose_title(
+            ctx.doc.identification.source_filename,
+            ai_title=ctx.doc.classification.title_normalized,
+            ai_date=ctx.doc.lifecycle.effective_date)
 
         # 작성자 기본값 = 업로더 + 그의 대표 소속 노드(부서장 관리 범위 판정)
         author = self.users.get_user(ingested_by)
@@ -147,6 +150,28 @@ class ReviewService:
         self.session.commit()
         return ctx.doc.identification.doc_id
 
+    def finalize_original_name(self, doc_id: str) -> None:
+        """등록 확정 후, 서버에 보관된 원본 파일명을 '제목'으로 바꾼다(충돌 시 짧은 id 접미)."""
+        import os
+        from pathlib import Path
+        from app.ingestion.titletools import safe_filename
+        doc = self.docs.get(doc_id)
+        path = self.docs.get_original_path(doc_id)
+        if doc is None or not path or not os.path.exists(path):
+            return
+        ext = Path(path).suffix or f".{doc.identification.file_format.value}"
+        title = doc.classification.title_normalized or Path(path).stem
+        dest = Path(path).with_name(f"{safe_filename(title)}{ext}")
+        if dest == Path(path):
+            return
+        if dest.exists():
+            dest = Path(path).with_name(f"{safe_filename(title)}_{doc_id[:6]}{ext}")
+        try:
+            os.replace(path, dest)
+            self.docs.set_original_path(doc_id, str(dest))
+        except OSError:
+            pass   # 이름 변경 실패해도 원본은 유지(다운로드는 제목명으로 제공)
+
     def _store_original(self, src_path: str, doc_id: str, ext: str) -> None:
         try:
             import shutil
@@ -173,10 +198,12 @@ class ReviewService:
             # 한 번의 검색으로 개정판(>=0.88)과 연관 후보(중간대)를 함께 얻는다.
             cands = find_similar(client, collection, self.embedder, text,
                                  exclude_doc_id=doc_id, threshold=RELATED_FLOOR)
-            dup = [c for c in cands if c["score"] >= DUP_THRESHOLD]
-            if dup:
-                self._classify_candidates(ctx.doc, dup)   # AI 관계 제안 부착
-                self.docs.set_similar_candidates(doc_id, dup)
+            if cands:
+                dup = [c for c in cands if c["score"] >= DUP_THRESHOLD]
+                if dup:
+                    self._classify_candidates(ctx.doc, dup)   # AI 관계 제안 부착
+                # 개정판(dup) + 연관 추천(중간대)을 함께 보관 → 검토 화면에서 활용
+                self.docs.set_similar_candidates(doc_id, cands[:8])
             self._auto_link_relations(ctx, sim_candidates=cands)
         except Exception:
             pass  # 탐지는 부가 기능 — 실패해도 적재는 계속

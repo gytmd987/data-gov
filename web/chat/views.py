@@ -198,7 +198,12 @@ def original_file(request, doc_id: str):
         path = repo.get_original_path(doc_id)
         if not path or not os.path.exists(path):
             raise Http404
-        return FileResponse(open(path, "rb"), as_attachment=True,
-                            filename=doc.identification.source_filename)
+        # 다운로드 파일명 = 제목(+원본 확장자). 제목이 없으면 원본 파일명.
+        from pathlib import Path as _P
+        from app.ingestion.titletools import safe_filename
+        title = (doc.classification.title_normalized or "").strip()
+        ext = _P(path).suffix or _P(doc.identification.source_filename).suffix
+        download_name = f"{safe_filename(title)}{ext}" if title else doc.identification.source_filename
+        return FileResponse(open(path, "rb"), as_attachment=True, filename=download_name)
     finally:
         session.close()

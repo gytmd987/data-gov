@@ -139,21 +139,21 @@
     <a href="/docs/original/{{ sel }}" class="btn ghost" style="padding:3px 10px;margin-left:auto">⬇️ 원본 다운로드</a>
   </div>
 
-  <!-- 상세 정보(읽기 전용 요약) -->
-  <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin-top:12px;font-size:13px">
-    <span class="msg-note">파일</span><span>{{ doc.identification.source_filename }} <span class="msg-note">· {{ doc.identification.file_format }}{% if doc.identification.page_count %} · {{ doc.identification.page_count }}쪽{% endif %}</span></span>
-    <span class="msg-note">문서 종류</span><span>{{ doc.classification.doc_type.value|klabel }}</span>
-    <span class="msg-note">작성자</span><span>{{ doc.governance.author_name|default_if_none:'—' }} <span class="msg-note">{{ doc.governance.author_id|default_if_none:'' }}</span></span>
-    <span class="msg-note">작성 부서</span><span>{{ doc.classification.department|default_if_none:'—' }}</span>
-    <span class="msg-note">열람 대상</span><span>
+  <!-- 상세 정보(읽기 전용) — 화면 폭을 채우도록 카드형으로 배치 -->
+  <div class="info-grid" style="margin-top:14px">
+    <div class="info-cell"><div class="k">파일</div><div class="v">{{ doc.identification.source_filename }} <span class="msg-note">· {{ doc.identification.file_format }}{% if doc.identification.page_count %} · {{ doc.identification.page_count }}쪽{% endif %}</span></div></div>
+    <div class="info-cell"><div class="k">문서 종류</div><div class="v">{{ doc.classification.doc_type.value|klabel }}</div></div>
+    <div class="info-cell"><div class="k">작성자</div><div class="v">{{ doc.governance.author_name|default_if_none:'—' }} <span class="msg-note">{{ doc.governance.author_id|default_if_none:'' }}</span></div></div>
+    <div class="info-cell"><div class="k">작성 부서</div><div class="v">{{ doc.classification.department|default_if_none:'—' }}</div></div>
+    <div class="info-cell"><div class="k">작성일</div><div class="v">{{ doc.lifecycle.effective_date|default_if_none:'—' }}</div></div>
+    <div class="info-cell"><div class="k">유효일</div><div class="v">{{ doc.lifecycle.expiry_date|default_if_none:'무기한' }}</div></div>
+    <div class="info-cell" style="grid-column:1/-1"><div class="k">열람 대상</div><div class="v">
       {% if doc.governance.access_selections %}
-        {% for n in node_opts %}{% if n.sel_node %}{{ n.name }}(부서 전체){% if not forloop.last %}{% endif %} {% endif %}{% if n.sel_head %}{{ n.name }}(부서장){% endif %}{% endfor %}
-      {% else %}팀 전체 (제한 없음){% endif %}</span>
-    <span class="msg-note">작성일</span><span>{{ doc.lifecycle.effective_date|default_if_none:'—' }}</span>
-    <span class="msg-note">유효일</span><span>{{ doc.lifecycle.expiry_date|default_if_none:'무기한' }}</span>
-    {% if doc.lifecycle.superseded_by %}<span class="msg-note">대체됨 →</span><span>{{ doc.lifecycle.superseded_by }}</span>{% endif %}
-    {% if doc.governance.reporting_line %}<span class="msg-note">보고선</span><span>{{ doc.governance.reporting_line|join:" → " }}</span>{% endif %}
-    {% if doc.classification.related_parties %}<span class="msg-note">유관 조직/인물</span><span>{{ doc.classification.related_parties|join:", " }}</span>{% endif %}
+        {% for n in node_opts %}{% if n.sel_node %}{{ n.name }}(부서 전체) {% endif %}{% if n.sel_head %}{{ n.name }}(부서장) {% endif %}{% endfor %}
+      {% else %}팀 전체 (제한 없음){% endif %}</div></div>
+    {% if doc.lifecycle.superseded_by %}<div class="info-cell"><div class="k">대체됨 →</div><div class="v">{{ doc.lifecycle.superseded_by }}</div></div>{% endif %}
+    {% if doc.governance.reporting_line %}<div class="info-cell"><div class="k">보고선</div><div class="v">{{ doc.governance.reporting_line|join:" → " }}</div></div>{% endif %}
+    {% if doc.classification.related_parties %}<div class="info-cell" style="grid-column:1/-1"><div class="k">유관 조직/인물</div><div class="v">{{ doc.classification.related_parties|join:", " }}</div></div>{% endif %}
   </div>
 
   <div style="margin-top:12px">
@@ -221,11 +221,19 @@
         <h4>🔗 버전·정리</h4>
         <form method="post" action="/console/docs/{{ sel }}/action">
           {% csrf_token %}<input type="hidden" name="action" value="supersede">
-          <p class="msg-note">이 문서가 대체할 <b>옛 문서</b>를 고르면, 옛 문서는 검색에서 제외됩니다.</p>
-          <p><select name="old_id"><option value="">(선택)</option>
-            {% for d in supersede_candidates %}<option value="{{ d.doc_id }}">{{ d.title|default:d.filename }}</option>{% endfor %}
-          </select></p>
-          <button class="btn ghost">새 버전으로 지정</button>
+          <p class="msg-note">이 문서가 대체할 <b>옛 문서</b>를 지정하면, 옛 문서는 검색에서 제외됩니다.</p>
+          <div class="doc-picker" data-name="old_id" data-max="1" data-exclude="{{ sel }}">
+            <div class="dp-selected"></div>
+            <input class="dp-search" placeholder="옛 문서를 문서명으로 검색…" autocomplete="off">
+            <div class="dp-results"></div>
+            <div class="dp-suggest">
+              {% if supersede_suggestions %}<div class="msg-note" style="margin:4px 0 2px">🔎 옛 버전 추정</div>{% endif %}
+              {% for d in supersede_suggestions %}
+              <button type="button" class="dp-add" data-id="{{ d.doc_id }}" data-label="{{ d.title|default:d.filename }}">＋ {{ d.title|default:d.filename }}</button>
+              {% empty %}<span class="msg-note">추정되는 옛 버전이 없습니다. 필요하면 위에서 검색해 지정하세요.</span>{% endfor %}
+            </div>
+          </div>
+          <button class="btn ghost" style="margin-top:6px">새 버전으로 지정</button>
         </form>
         <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:10px">
           {% csrf_token %}<input type="hidden" name="action" value="archive">
@@ -291,4 +299,61 @@
 </div>
 {% endif %}
 </div>
+<style>
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px}
+.info-cell .k{font-size:12px;color:var(--sub);margin-bottom:2px}
+.info-cell .v{font-size:13px;word-break:break-word}
+.doc-picker .dp-search{width:100%;padding:6px 8px;margin-bottom:4px}
+.doc-picker .dp-results{border:1px solid var(--line);border-radius:6px;max-height:160px;overflow:auto;display:none}
+.doc-picker .dp-results.on{display:block}
+.doc-picker .dp-add{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 8px;cursor:pointer;font-size:13px}
+.doc-picker .dp-add:hover{background:var(--line)}
+.doc-picker .dp-suggest{margin-top:4px}
+.doc-picker .chip{display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d6ff;border-radius:14px;padding:3px 10px;margin:2px 4px 2px 0;font-size:12px}
+.doc-picker .chip button{border:0;background:none;cursor:pointer;color:#c0392b;font-size:13px;line-height:1}
+</style>
+<script>
+(function(){
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  document.querySelectorAll('.doc-picker').forEach(function(p){
+    var name=p.dataset.name, max=parseInt(p.dataset.max||'3',10), exclude=p.dataset.exclude||'';
+    var sel=p.querySelector('.dp-selected'), search=p.querySelector('.dp-search'),
+        results=p.querySelector('.dp-results');
+    function count(){return sel.querySelectorAll('.chip').length;}
+    function has(id){return !!sel.querySelector('.chip[data-id="'+id+'"]');}
+    function add(id,label){
+      if(!id||has(id))return;
+      if(count()>=max){ if(max===1){ sel.innerHTML=''; } else { alert('최대 '+max+'개까지 지정할 수 있어요.'); return; } }
+      var chip=document.createElement('span');chip.className='chip';chip.dataset.id=id;
+      chip.innerHTML=esc(label)+' <button type="button" aria-label="remove">✕</button>'+
+        '<input type="hidden" name="'+name+'" value="'+esc(id)+'">';
+      chip.querySelector('button').addEventListener('click',function(){chip.remove();});
+      sel.appendChild(chip);
+      results.classList.remove('on');results.innerHTML='';search.value='';
+    }
+    p.querySelectorAll('.dp-suggest .dp-add').forEach(function(b){
+      b.addEventListener('click',function(){add(b.dataset.id,b.dataset.label);});
+    });
+    var t=null;
+    search.addEventListener('input',function(){
+      clearTimeout(t);var q=search.value.trim();
+      if(q.length<1){results.classList.remove('on');results.innerHTML='';return;}
+      t=setTimeout(function(){
+        fetch('/console/docs/search?q='+encodeURIComponent(q)+'&exclude='+encodeURIComponent(exclude))
+          .then(function(r){return r.json();}).then(function(data){
+            results.innerHTML='';
+            (data.results||[]).forEach(function(d){
+              var b=document.createElement('button');b.type='button';b.className='dp-add';
+              b.innerHTML='＋ '+esc(d.title)+' <span class="msg-note">· '+esc(d.filename)+'</span>';
+              b.addEventListener('click',function(){add(d.doc_id,d.title);});
+              results.appendChild(b);
+            });
+            if(!(data.results||[]).length){results.innerHTML='<div class="msg-note" style="padding:6px 8px">검색 결과가 없습니다.</div>';}
+            results.classList.add('on');
+          });
+      },250);
+    });
+  });
+})();
+</script>
 {% endblock %}
