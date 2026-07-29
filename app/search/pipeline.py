@@ -32,8 +32,10 @@ class SearchPipeline:
     top_k: int = 6
 
     def answer(self, query: str, user: UserContext, today=None,
-               include_past: bool = False) -> Answer:
-        policy = AccessPolicy.for_user(user, today=today, include_past=include_past)
+               include_past: bool = False, folder_node_ids=None) -> Answer:
+        policy = AccessPolicy.for_user(
+            user, today=today, include_past=include_past,
+            folder_node_ids=frozenset(folder_node_ids) if folder_node_ids else None)
 
         candidates = self.retriever.retrieve(query, policy, top_n=self.top_n)
         reranked = rerank_chunks(self.reranker, query, candidates, top_k=self.top_k)

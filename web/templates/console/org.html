@@ -18,7 +18,7 @@
     </select>
     <select name="parent_id" style="width:auto">
       <option value="">(최상위 — 상위 없음)</option>
-      {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
+      {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }}</option>{% endfor %}
     </select>
     <button class="btn">＋ 추가</button>
   </form>
@@ -26,11 +26,10 @@
 
 {% if rows %}
 <table>
-  <tr><th>조직</th><th>유형</th><th>구성원</th><th style="width:230px">부서장</th><th style="width:200px"></th></tr>
+  <tr><th>조직</th><th>구성원</th><th style="width:230px">부서장</th><th style="width:200px"></th></tr>
   {% for r in rows %}
   <tr>
     <td><span style="display:inline-block;width:{{ r.depth }}0px"></span>{% if r.depth %}└ {% endif %}<b>{{ r.name }}</b></td>
-    <td>{{ r.node_type|klabel }}</td>
     <td>{% for m in r.members %}{{ m.display_name|default:m.user_id }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="msg-note">—</span>{% endfor %}</td>
     <td>
       <form method="post" style="display:flex;gap:4px;align-items:flex-start">

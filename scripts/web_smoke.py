@@ -292,34 +292,84 @@ def main() -> int:
         assert da.governance.access_selections == [f"node:{gid}"], "권한 저장 안 됨"
     finally:
         s_a2.close()
-    # 다음 업로드가 직전 작성부서·권한으로 프리필되는지
-    respB = c.post("/console/docs/", {"file": _f("교육 지원 안내.txt", "교육비 지원 제도 안내입니다.")})
+    # 업로드 시 고른 '폴더'가 작성부서·권한·저장경로를 정한다
+    respB = c.post("/console/docs/", {"file": _f("교육 지원 안내.txt", "교육비 지원 제도 안내입니다."),
+                                      "folder_node_id": str(pid)})
     bid = respB["Location"].split("doc=")[1]
     s_b = bridge.open_session()
     try:
-        db = DocumentRepository(s_b).get(bid)
-        assert db.governance.author_node_id == pid, "이전 업로드 작성부서 프리필 안 됨"
-        assert db.governance.access_selections == [f"node:{gid}"], "이전 업로드 권한 프리필 안 됨"
+        drepo_b = DocumentRepository(s_b)
+        db = drepo_b.get(bid)
+        assert db.governance.author_node_id == pid, "폴더 기준 작성부서 세팅 안 됨"
+        assert db.governance.access_selections == [f"node:{pid}"], "폴더 기준 권한 세팅 안 됨"
+        stored = drepo_b.get_original_path(bid) or ""
+        assert "인터뷰파트" in stored, f"폴더 경로에 저장되지 않음: {stored}"
     finally:
         s_b.close()
-    print("[기본값 ] 제목=파일명 · 작성부서=조직노드 · 이전 업로드 부서·권한 프리필 ✅")
+    print("[폴더   ] 업로드 폴더가 작성부서·열람권한·저장경로를 결정 ✅")
 
-    # 11d) 다중 업로드 → 순차 검토: 첫 건 확정 시 다음 건으로 이동 + 2번째가 1번째 확정본 상속
+    # 11d) 다중 업로드(폴더 지정) → 순차 검토: 첫 건 확정 시 다음 건으로 이동
     resp = c.post("/console/docs/", {"file": [_f("규정1.txt", "첫 번째 규정 내용."),
-                                              _f("규정2.txt", "두 번째 규정 내용.")]})
+                                              _f("규정2.txt", "두 번째 규정 내용.")],
+                                     "folder_node_id": str(pid)})
     m1 = resp["Location"].split("doc=")[1]
-    # 첫 건을 '인터뷰파트(pid)' 작성부서로 확정 → 다음 건 자동 이동
     r_next = c.post(f"/console/review/{m1}/submit",
                     {"title": "규정1", "doc_type": "notice", "summary": "규정1",
                      "keywords": "규정", "lifecycle_status": "archived",
-                     "author_node_id": str(pid), "access": [f"node:{gid}"]})
+                     "author_node_id": str(pid), "access": [f"node:{pid}"]})
     assert r_next.status_code == 302 and "doc=" in r_next["Location"], "다음 검토 문서로 이동 안 함"
     m2 = r_next["Location"].split("doc=")[1]
     assert m2 != m1, "순차 이동이 같은 문서를 가리킴"
-    # 2번째 검토 폼이 1번째 '확정본' 작성부서(pid)를 기본 선택으로 상속하는지
+    # 2번째 파일도 같은 폴더 기준으로 작성부서가 세팅돼 있어야 한다
     p2 = c.get(f"/console/docs/?doc={m2}").content.decode()
-    assert f'value="{pid}" selected' in p2, "2번째 파일이 직전 확정본 작성부서를 상속하지 않음"
-    print("[다중   ] 동시 업로드 · 순차 검토 자동 이동 · 직전 확정본 설정 상속 ✅")
+    assert f'value="{pid}" selected' in p2, "2번째 파일의 폴더(작성부서) 기본 선택이 없음"
+    print("[다중   ] 폴더 지정 동시 업로드 · 순차 검토 자동 이동 ✅")
+
+    # 11d-2) 문서 관리 폴더 트리/필터 + 조직도 이름변경 재배치 + 문서 있는 폴더 삭제 차단
+    lp = c.get("/console/docs/").content.decode()
+    assert 'class="folder-pane"' in lp and "docs-layout" in lp, "폴더 트리/3분할 레이아웃 없음"
+    # 상위(팀) 폴더로 필터해도 하위(파트) 문서가 보인다
+    lp_team = c.get(f"/console/docs/?folder={tid}").content.decode()
+    assert "규정1" in lp_team, "상위 폴더 필터에 하위 폴더 문서가 안 보임"
+    # 조직도 이름 변경 → 저장 경로 재배치(다운로드 정상)
+    assert c.post("/console/org/", {"action": "rename", "node_id": str(pid),
+                                    "name": "면접파트"}).status_code == 302
+    s_rn = bridge.open_session()
+    try:
+        moved_path = DocumentRepository(s_rn).get_original_path(m1) or ""
+        assert "면접파트" in moved_path, f"이름변경 후 경로 재배치 안 됨: {moved_path}"
+    finally:
+        s_rn.close()
+    assert c.get(f"/docs/original/{m1}").status_code in (200, 404)
+    # 문서가 있는 폴더는 삭제 차단
+    assert c.post("/console/org/", {"action": "delete", "node_id": str(pid)}).status_code == 302
+    s_dl = bridge.open_session()
+    try:
+        assert OrgRepository(s_dl).get(pid) is not None, "문서가 있는데도 폴더가 삭제됨"
+    finally:
+        s_dl.close()
+    print("[폴더UI ] 폴더 트리·상위필터(하위포함) · 이름변경 재배치 · 문서 있는 폴더 삭제 차단 ✅")
+
+    # 11d-3) 채팅 검색의 폴더 스코프: 상위 폴더 선택 시 하위 문서 포함, 다른 폴더는 제외
+    s_fs = bridge.open_session()
+    try:
+        from app.schemas.metadata import doc_level_payload
+        from app.search.access import AccessPolicy as _AP
+        from app.search.access import UserContext as _UC
+        pay = doc_level_payload(DocumentRepository(s_fs).get(m1))
+        tree_fs = OrgRepository(s_fs).load_tree()
+        u = _UC(user_id="admin@company.com", groups=frozenset({f"n:{pid}"}))
+        assert _AP.for_user(u, folder_node_ids=frozenset(tree_fs.subtree(tid))).allows(pay), \
+            "상위 폴더 스코프에 하위 문서가 안 잡힘"
+        other = OrgRepository(s_fs).create_node("타그룹", "group", parent_id=tid)
+        s_fs.commit()
+        assert not _AP.for_user(u, folder_node_ids=frozenset(tree_fs.subtree(other.id))).allows(pay), \
+            "다른 폴더 스코프인데 문서가 잡힘"
+    finally:
+        s_fs.close()
+    cpage = c.get("/").content.decode()
+    assert 'id="folderScope"' in cpage, "채팅에 검색 범위(폴더) 선택이 없음"
+    print("[검색범위] 채팅 폴더 스코프(상위 선택 시 하위 포함) ✅")
 
     # 11e) 검토 취소(폐기) + 등록 단계 연관 문서 지정 + 어휘 변경 내구성
     respC = c.post("/console/docs/", {"file": _f("취소할문서.txt", "취소 테스트용 문서.")})

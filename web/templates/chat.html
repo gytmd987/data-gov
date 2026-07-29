@@ -75,6 +75,14 @@
         <label class="switch"><input type="checkbox" id="includePast"><span class="slider"></span></label>
         <span>만료 문서 포함 <span class="msg-note">(만료·이전 버전 문서까지 검색 — 과거 자료로 표시)</span></span>
       </div>
+      <div class="toggle" id="folderToggle">
+        <span>📁 검색 범위</span>
+        <select id="folderScope" style="width:auto;max-width:320px;padding:4px 8px">
+          <option value="">전체 폴더</option>
+          {% for f in folders %}<option value="{{ f.id }}">{{ f.indent }}{{ f.name }}</option>{% endfor %}
+        </select>
+        <span class="msg-note">상위 폴더를 고르면 하위 폴더까지 함께 검색합니다.</span>
+      </div>
       <div class="box">
         <textarea id="input" rows="1" placeholder="메시지를 입력하세요…"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
@@ -92,8 +100,9 @@ const csrft = '{{ csrf_token }}';
 document.getElementById('useRag').addEventListener('change', e => {
   document.getElementById('ragState').textContent =
     e.target.checked ? '(켜짐 — 사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
-  // 과거 문서 포함은 팀 데이터 기반(RAG)일 때만 의미 있음
+  // 과거 문서 포함·검색 범위는 팀 데이터 기반(RAG)일 때만 의미 있음
   document.getElementById('pastToggle').classList.toggle('disabled', !e.target.checked);
+  document.getElementById('folderToggle').classList.toggle('disabled', !e.target.checked);
 });
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
@@ -158,7 +167,8 @@ async function sendMsg(){
     const r = await fetch('/chat/send', {method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
       body: JSON.stringify({conversation_id: convId, text, use_rag: useRag,
-                            include_past: includePast})});
+                            include_past: includePast,
+                            folder_node_id: useRag ? (document.getElementById('folderScope').value || null) : null})});
     const d = await r.json();
     thinking.remove();
     if (!r.ok){ bubble('asst', '⚠️ ' + (d.error || '오류가 발생했습니다.')); return; }

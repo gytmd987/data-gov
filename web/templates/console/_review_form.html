@@ -70,7 +70,7 @@
         <input name="related_parties" value="{{ view.classification.related_parties|join:', ' }}"></div>
       <div class="field"><label>작성 부서 <span class="msg-note">(조직도 = 관리 부서)</span></label>
         <select name="author_node_id"><option value="">(미지정)</option>
-          {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
+          {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
         </select></div>
     </div>
     <div style="flex:1;min-width:300px">

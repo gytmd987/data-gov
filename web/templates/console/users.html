@@ -31,7 +31,6 @@
         <input type="checkbox" name="org_node_id" value="{{ n.id }}"
                {% if n.id in edit_node_ids %}checked{% endif %}>
         <span style="color:var(--sub)">{{ n.indent }}</span>{{ n.name }}
-        <span class="msg-note">· {{ n.node_type|klabel }}</span>
       </label>
       {% empty %}
       <span class="msg-note">조직도가 비어 있습니다. 먼저 <a href="/console/org/">조직도 관리</a>에서 부서를 만드세요.</span>

@@ -108,7 +108,13 @@ class ReviewService:
         return UserRepository(self.session)
 
     # ── 적재 시작(자동 단계) ────────────────────────────────────────────────
-    def start_ingestion(self, path: str, ingested_by: str) -> str:
+    def start_ingestion(self, path: str, ingested_by: str,
+                        folder_node_id: Optional[int] = None) -> str:
+        """업로드 → 자동 채움 → 검토 대기.
+
+        folder_node_id(폴더=조직노드)를 주면 작성부서·접근권한·저장경로가 그 폴더 기준으로
+        세팅된다. 없으면 업로더의 대표 소속 노드로 폴백한다.
+        """
         repo = self.docs
         ctx = run_auto_stages(
             path, ingested_by=ingested_by,
@@ -129,62 +135,57 @@ class ReviewService:
         ctx.doc.governance.author_id = ingested_by
         if author is not None:
             ctx.doc.governance.author_name = author.display_name
-        # 작성부서·권한 기본값: 직전 업로드와 동일하게(보통 같음). 없으면 대표 소속 노드.
-        prev = repo.last_upload_defaults(ingested_by)
-        node_id = None
-        if prev is not None:
-            node_id = prev.get("author_node_id")
-            if prev.get("access_selections"):
-                ctx.doc.governance.access_selections = list(prev["access_selections"])
-        if node_id is None:
-            node_id = self.users.primary_node(ingested_by)
+        # 작성부서·권한 기본값 = 업로드할 때 고른 '폴더'(조직노드) 기준.
+        # 폴더를 안 골랐으면 업로더의 대표 소속 노드로 폴백.
+        node_id = folder_node_id or self.users.primary_node(ingested_by)
         ctx.doc.governance.author_node_id = node_id
-        if node_id is not None:                    # 작성부서(표시용) = 노드 이름
+        if node_id is not None:
             from app.db.repositories import OrgRepository
             node = OrgRepository(self.session).get(node_id)
             if node is not None:
-                ctx.doc.classification.department = node.name
+                ctx.doc.classification.department = node.name   # 작성부서(표시용)
+            # 열람 권한 기본값 = 그 폴더 부서 전체
+            ctx.doc.governance.access_selections = [f"node:{node_id}"]
         save_ingestion(repo, ctx)
-        # 원본 파일 보관(열람/다운로드용)
+        # 원본 파일 보관(폴더=조직노드 경로에 저장)
         self._store_original(path, ctx.doc.identification.doc_id,
-                             ctx.doc.identification.file_format.value)
+                             ctx.doc.identification.file_format.value,
+                             node_id=node_id,
+                             title=ctx.doc.classification.title_normalized)
         # 유사(개정판 가능) 문서 자동 탐지 → 검토 화면에서 사람이 판단
         self._detect_similar(ctx)
         self.session.commit()
         return ctx.doc.identification.doc_id
 
     def finalize_original_name(self, doc_id: str) -> None:
-        """등록 확정 후, 서버에 보관된 원본 파일명을 '제목'으로 바꾼다(충돌 시 짧은 id 접미)."""
-        import os
+        """등록 확정 후, 원본을 '폴더(작성부서) 경로 + 제목' 위치로 정리한다."""
         from pathlib import Path
-        from app.ingestion.titletools import safe_filename
+        from app.manage.storage import place
         doc = self.docs.get(doc_id)
         path = self.docs.get_original_path(doc_id)
-        if doc is None or not path or not os.path.exists(path):
+        if doc is None or not path:
             return
         ext = Path(path).suffix or f".{doc.identification.file_format.value}"
         title = doc.classification.title_normalized or Path(path).stem
-        dest = Path(path).with_name(f"{safe_filename(title)}{ext}")
-        if dest == Path(path):
-            return
-        if dest.exists():
-            dest = Path(path).with_name(f"{safe_filename(title)}_{doc_id[:6]}{ext}")
-        try:
-            os.replace(path, dest)
-            self.docs.set_original_path(doc_id, str(dest))
-        except OSError:
-            pass   # 이름 변경 실패해도 원본은 유지(다운로드는 제목명으로 제공)
+        place(self.session, doc_id, doc.governance.author_node_id, title, ext)
 
-    def _store_original(self, src_path: str, doc_id: str, ext: str) -> None:
+    def _store_original(self, src_path: str, doc_id: str, ext: str,
+                        node_id: Optional[int] = None,
+                        title: Optional[str] = None) -> None:
+        """원본을 폴더(조직노드) 경로에 보관. 폴더가 없으면 `_미분류`."""
         try:
             import shutil
             from pathlib import Path
-            from app.config import settings
-            dest_dir = Path(settings.storage_dir)
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = (dest_dir / f"{doc_id}.{ext}").resolve()   # 절대경로로 보관
+            from app.db.repositories import OrgRepository
+            from app.manage.storage import target_path
+            tree = OrgRepository(self.session).load_tree()
+            stem = title or Path(src_path).stem
+            dest = target_path(tree, node_id, stem, ext, doc_id)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                dest = dest.with_name(f"{dest.stem}_{doc_id[:6]}{dest.suffix}")
             shutil.copyfile(src_path, dest)
-            self.docs.set_original_path(doc_id, str(dest))
+            self.docs.set_original_path(doc_id, str(dest.resolve()))
         except Exception:
             pass  # 원본 보관 실패해도 적재는 계속(열람만 불가)
 

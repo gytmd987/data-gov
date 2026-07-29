@@ -271,6 +271,7 @@ def docs(request):
         # 업로더가 확인·등록한다. 첫 문서로 이동해 순차 검토를 시작한다.
         if request.method == "POST" and request.FILES.getlist("file"):
             svc = bridge.get_review_service(session)
+            folder_id = _int(request.POST.get("folder_node_id"), 0) or None
             first_id, ok_n, dups, errs = None, 0, [], []
             for f in request.FILES.getlist("file"):
                 dest = Path(tempfile.gettempdir()) / f.name
@@ -278,7 +279,8 @@ def docs(request):
                     for chunk in f.chunks():
                         out.write(chunk)
                 try:
-                    new_id = svc.start_ingestion(str(dest), ingested_by=me)
+                    new_id = svc.start_ingestion(str(dest), ingested_by=me,
+                                                 folder_node_id=folder_id)
                     ok_n += 1
                     first_id = first_id or new_id
                 except DuplicateError:
@@ -313,6 +315,17 @@ def docs(request):
                 mine = set(UserRepository(session).member_nodes(_email_of(request.user)))
                 author_ids = mine or {-1}
 
+        # 폴더(조직노드) 필터 — 상위 폴더 선택 시 하위 폴더 문서까지 포함(subtree)
+        from app.db.repositories import OrgRepository
+        org = OrgRepository(session)
+        tree = org.load_tree()
+        folder_sel = _int(request.GET.get("folder"), 0) or None
+        if folder_sel is not None:
+            sub = set(tree.subtree(folder_sel))
+            author_ids = sub if author_ids is None else (set(author_ids) & sub)
+            if not author_ids:
+                author_ids = {-1}           # 권한 밖 폴더 → 빈 결과
+
         # 목록은 등록(색인) 완료 문서만. 검토 대기는 아래 '내 검토 대기'로 분리.
         total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type,
                                     author_node_ids=author_ids, indexed_only=True)
@@ -320,6 +333,21 @@ def docs(request):
                                       limit=_PAGE_SIZE, offset=offset,
                                       author_node_ids=author_ids, indexed_only=True)
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
+
+        # 폴더 트리(각 노드의 subtree 문서 수 = 내 권한 범위 내)
+        base_ids = None if is_adm else (scope or set())
+        if not is_adm and not base_ids:
+            from app.db.repositories import UserRepository
+            base_ids = set(UserRepository(session).member_nodes(me)) or {-1}
+        folder_tree = _org_options(org)
+        for n in folder_tree:
+            ids = set(tree.subtree(n["id"]))
+            if base_ids is not None:
+                ids &= set(base_ids)
+            n["doc_count"] = (mgr.count_documents(author_node_ids=ids or {-1},
+                                                  indexed_only=True) if ids else 0)
+            n["selected"] = (n["id"] == folder_sel)
+        folder_total = mgr.count_documents(author_node_ids=base_ids, indexed_only=True)
 
         # 내가 올린 검토 대기 문서(등록 전 — 업로더가 확인해야 함)
         svc = bridge.get_review_service(session)
@@ -369,23 +397,15 @@ def docs(request):
                 if base and base == this_base:
                     supersede_suggestions.append(d)
 
-        from app.db.repositories import OrgRepository
-        node_opts = _org_options(OrgRepository(session))
+        # 작성부서·권한 기본값 = 업로드할 때 고른 폴더(= doc.governance 에 이미 반영됨)
+        node_opts = _org_options(org)
         if doc is not None:
             sels = set(doc.governance.access_selections)
             author_node = doc.governance.author_node_id
-            # 검토 대기 문서는 '직전 확정본'의 부서·권한을 기본값으로 상속(순차 검토 체이닝)
-            if review_view is not None:
-                from app.db.repositories import DocumentRepository
-                inherit = DocumentRepository(session).last_upload_defaults(me)
-                if inherit is not None:
-                    author_node = inherit.get("author_node_id") or author_node
-                    if inherit.get("access_selections"):
-                        sels = set(inherit["access_selections"])
             for n in node_opts:
                 n["sel_node"] = f"node:{n['id']}" in sels
                 n["sel_head"] = f"head:{n['id']}" in sels
-                n["sel_author"] = (n["id"] == author_node)   # 작성부서 기본 선택
+                n["sel_author"] = (n["id"] == author_node)   # 폴더(작성부서) 기본 선택
 
         today = date.today()
         expiring_soon = mgr.repo.count_expiring_soon(
@@ -393,7 +413,8 @@ def docs(request):
 
         # 필터 유지용 쿼리스트링(페이징 링크에 재사용)
         qs = {k: v for k, v in (("q", q), ("status", status),
-                                ("doc_type", doc_type)) if v}
+                                ("doc_type", doc_type),
+                                ("folder", folder_sel)) if v}
 
         # 선택 문서 권한: 수정(본인 파트 포함) / 삭제(부서장·관리자만)
         can_edit_sel = doc is not None and can_edit_doc(session, request.user, doc)
@@ -415,6 +436,9 @@ def docs(request):
             "my_pending": my_pending, "review_view": review_view, "dup": dup,
             "supersede_suggestions": supersede_suggestions,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
+            "folder_tree": folder_tree, "folder_sel": folder_sel,
+            "folder_total": folder_total,
+            "folder_path": " / ".join(tree.name_path(folder_sel)) if folder_sel else "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,
             "statuses": USER_DOC_STATUSES, "doc_types": ENUM_OPTIONS["doc_type"],
             "total": total, "page": page, "num_pages": num_pages,
@@ -564,6 +588,17 @@ def docs_action(request, doc_id: str):
                     "expiry_date": p.get("expiry_date") or None}
             mgr.update_metadata(doc_id, governance=new_gov,
                                 classification_overrides=cls, lifecycle_overrides=life)
+            # 폴더(작성부서)나 제목이 바뀌었으면 원본 파일도 해당 폴더 경로로 이동
+            try:
+                from pathlib import Path as _P
+                from app.manage.storage import place
+                cur = mgr.repo.get_original_path(doc_id)
+                if cur:
+                    place(session, doc_id, node_id,
+                          cls["title_normalized"] or _P(cur).stem, _P(cur).suffix)
+                    session.commit()
+            except Exception:
+                pass
             messages.success(request, "저장 완료 — 검색에 즉시 반영되었습니다.")
         elif action == "supersede":
             old = request.POST.get("old_id")
@@ -791,11 +826,27 @@ def org_console(request):
             elif action == "rename":
                 name = (p.get("name") or "").strip()
                 if name:
-                    repo.rename_node(int(p["node_id"]), name)
+                    node_id = int(p["node_id"])
+                    repo.rename_node(node_id, name)
                     session.commit()
-                    messages.success(request, "이름을 변경했습니다.")
+                    # 폴더 이름이 바뀌었으니 디스크의 저장 경로도 재정렬
+                    from app.manage.storage import relocate_subtree
+                    moved = relocate_subtree(session, node_id)
+                    session.commit()
+                    extra = f" (파일 {moved}건 이동)" if moved else ""
+                    messages.success(request, f"이름을 변경했습니다.{extra}")
             elif action == "delete":
-                repo.delete_node(int(p["node_id"]))
+                node_id = int(p["node_id"])
+                # 폴더에 문서가 있으면 삭제 차단(먼저 비우도록 안내)
+                ids = set(repo.load_tree().subtree(node_id))
+                n_docs = bridge.get_document_manager(session).count_documents(
+                    author_node_ids=ids) if ids else 0
+                if n_docs:
+                    messages.error(
+                        request, f"이 조직(하위 포함)에 문서 {n_docs}건이 있어 삭제할 수 없습니다. "
+                        "문서를 다른 폴더로 옮기거나 삭제한 뒤 다시 시도하세요.")
+                    return redirect("console_org")
+                repo.delete_node(node_id)
                 session.commit()
                 messages.warning(request, "노드를 삭제했습니다(하위 포함, 배정 사용자는 해제).")
             return redirect("console_org")

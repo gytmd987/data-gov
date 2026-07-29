@@ -30,11 +30,15 @@ _HISTORY_TURNS = 10   # 일반 채팅 멀티턴 문맥으로 넣을 최근 메�
 def chat_page(request):
     session = bridge.open_session()
     try:
-        from app.db.repositories import ChatRepository
+        from app.db.repositories import ChatRepository, OrgRepository
         convs = ChatRepository(session).list_conversations(_email_of(request.user))
+        # 검색 범위(폴더) 선택용 조직도 목록
+        from web.console.views import _org_options
+        folders = _org_options(OrgRepository(session))
     finally:
         session.close()
     return render(request, "chat.html", {"conversations": convs,
+                                         "folders": folders,
                                          "offline": bridge.is_offline()})
 
 
@@ -112,7 +116,17 @@ def send(request):
             from app.search.present import group_sources
             pipe = bridge.get_search_pipeline(session)
             today = date.today()
-            ans = pipe.answer(text, user_ctx, today=today, include_past=include_past)
+            # 폴더 스코프: 상위 폴더를 고르면 하위 폴더 문서까지 포함(subtree)
+            folder_ids = None
+            folder_id = body.get("folder_node_id")
+            if folder_id:
+                from app.db.repositories import OrgRepository
+                try:
+                    folder_ids = set(OrgRepository(session).load_tree().subtree(int(folder_id)))
+                except (TypeError, ValueError):
+                    folder_ids = None
+            ans = pipe.answer(text, user_ctx, today=today, include_past=include_past,
+                              folder_node_ids=folder_ids)
             answer_text = ans.text
             sources = group_sources(ans, today=today)
             _attach_related(session, sources, user_ctx, today)

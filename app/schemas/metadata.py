@@ -161,6 +161,8 @@ def doc_level_payload(doc: DocumentMetadata) -> dict:
         "status": life.status.value,
         "expiry_date": life.expiry_date.isoformat() if life.expiry_date else None,
         "superseded_by": life.superseded_by,
+        # 폴더(조직노드) 스코프 검색용
+        "author_node_id": gov.author_node_id,
         # 인용·평가용
         "doc_type": doc.classification.doc_type.value,
         "title": cls.title_normalized,

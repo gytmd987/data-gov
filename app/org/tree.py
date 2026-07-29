@@ -66,6 +66,18 @@ class OrgTree:
             cur = self._by_id.get(cur.parent_id)
         return out
 
+    def name_path(self, node_id: int) -> list[str]:
+        """루트부터 이 노드까지의 이름 경로(저장 폴더 경로 구성용). 없으면 빈 목록."""
+        node = self._by_id.get(node_id)
+        if node is None:
+            return []
+        names = [node.name]
+        for a in self.ancestors(node_id):
+            anc = self._by_id.get(a)
+            if anc is not None:
+                names.append(anc.name)
+        return list(reversed(names))
+
     def subtree(self, node_id: int) -> list[int]:
         """자기 포함, 모든 하위."""
         if node_id not in self._by_id:

@@ -2,19 +2,24 @@
 {% load klabels %}
 {% block title %}문서{% endblock %}
 {% block content %}
-<div style="max-width:1100px;margin:0 auto;padding:0 16px">
+<div style="max-width:1500px;margin:0 auto;padding:0 16px">
 <h2 style="margin:18px 0 4px">📄 문서 <span class="msg-note" style="font-size:14px">· 총 {{ total }}건</span></h2>
 <p class="msg-note">등록하면 AI가 요약·키워드·예상 Q&amp;A를 채웁니다. <b>올린 사람이 내용을 확인·수정하고 등록을 확정</b>하면 검색에 노출됩니다. 본인 소속 부서의 문서는 직접 수정할 수 있고, 삭제는 부서장·관리자가 합니다.</p>
 {% for m in messages %}<div class="card" style="padding:10px 14px">{{ m }}</div>{% endfor %}
 
-<!-- 문서 등록(업로드) — 여러 파일 동시 선택 가능 -->
+<!-- 문서 등록(업로드) — 여러 파일 동시 선택 + 저장 폴더 선택 -->
 <div class="card">
   <b>📤 문서 등록</b> <span class="msg-note">여러 개를 한 번에 올리면 순서대로 검토합니다.</span>
-  <form id="uploadForm" method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;margin-top:8px">
+  <form id="uploadForm" method="post" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
     {% csrf_token %}
-    <input type="file" name="file" multiple required style="flex:1">
+    <select name="folder_node_id" style="width:auto;min-width:200px">
+      <option value="">📁 폴더 선택 (미지정 = 내 소속)</option>
+      {% for n in folder_tree %}<option value="{{ n.id }}" {% if n.id == folder_sel %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
+    </select>
+    <input type="file" name="file" multiple required style="flex:1;min-width:220px">
     <button id="uploadBtn" class="btn">올리기 (AI 자동 채움 → 검토)</button>
   </form>
+  <div class="msg-note" style="margin-top:6px">고른 폴더가 <b>작성 부서</b>가 되고, 열람 권한도 <b>그 부서 전체</b>로 기본 설정됩니다. 파일도 해당 폴더 경로에 저장됩니다.</div>
   <div id="uploadProgress" style="display:none;align-items:center;gap:8px;margin-top:10px;color:var(--sub);font-size:13px">
     <span class="spin" aria-hidden="true"></span>
     <span>업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요. 이 화면을 유지해 주세요.</span>
@@ -83,10 +88,31 @@
 {% include "console/_review_form.html" with view=review_view %}
 {% endif %}
 
+<!-- 3분할: 폴더 트리 · 목록 · 상세 패널 -->
+<div class="docs-layout">
+
+<!-- ① 좌측 폴더 트리 -->
+<aside class="folder-pane">
+  <div style="font-weight:600;margin-bottom:6px">📁 폴더</div>
+  <a class="folder-item {% if not folder_sel %}on{% endif %}" href="?">
+    전체 <span class="cnt">{{ folder_total }}</span></a>
+  {% for n in folder_tree %}
+  <a class="folder-item {% if n.selected %}on{% endif %}" href="?folder={{ n.id }}"
+     style="padding-left:{{ n.depth }}2px">
+    {% if n.depth %}└ {% endif %}{{ n.name }} <span class="cnt">{{ n.doc_count }}</span></a>
+  {% empty %}
+  <div class="msg-note">조직도가 비어 있습니다. <a href="/console/org/">조직도 관리</a>에서 폴더를 만드세요.</div>
+  {% endfor %}
+</aside>
+
+<!-- ② 중앙 목록 -->
+<main class="list-pane">
+{% if folder_path %}<div class="msg-note" style="margin-bottom:6px">📂 {{ folder_path }} <span>(하위 폴더 포함)</span></div>{% endif %}
 <!-- 필터 -->
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px">
   <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0">
-    <input name="q" value="{{ q }}" placeholder="파일명·제목 검색" style="max-width:260px;width:auto">
+    {% if folder_sel %}<input type="hidden" name="folder" value="{{ folder_sel }}">{% endif %}
+    <input name="q" value="{{ q }}" placeholder="파일명·제목 검색" style="max-width:220px;width:auto">
     <select name="status" style="width:auto">
       <option value="">전체 상태</option>
       {% for s in statuses %}<option value="{{ s }}" {% if s == status_sel %}selected{% endif %}>{{ s|klabel }}</option>{% endfor %}
@@ -120,7 +146,7 @@
   <table>
     <tr>
       {% if can_manage %}<th style="width:28px"><input type="checkbox" id="checkAll" style="width:auto"></th>{% endif %}
-      <th>파일</th><th>종류</th><th>상태</th><th>작성자</th><th>작성일</th><th>만료일</th>
+      <th>파일</th><th>종류</th><th>상태</th><th>작성자</th><th>작성일</th>
     </tr>
     {% for d in docs %}
     <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
@@ -130,10 +156,9 @@
       <td>{{ d.lifecycle_status|klabel }}</td>
       <td>{{ d.owner|default_if_none:"—" }}</td>
       <td>{{ d.effective_date|default_if_none:"—" }}</td>
-      <td>{{ d.expiry_date|default_if_none:"—" }}</td>
     </tr>
     {% empty %}
-    <tr><td colspan="7" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
+    <tr><td colspan="6" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
     {% endfor %}
   </table>
 </form>
@@ -147,14 +172,18 @@
 </div>
 {% endif %}
 
-<!-- 등록(색인)된 문서 상세 -->
+</main>
+
+<!-- ③ 우측 상세/수정 패널 (클릭한 문서가 바로 옆에 뜬다) -->
+<aside class="detail-pane">
 {% if doc and not review_view %}
-<div class="card">
+<div class="card" style="margin:0">
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <b style="font-size:16px">{{ doc.classification.title_normalized|default:doc.identification.source_filename }}</b>
+    <b style="font-size:15px">{{ doc.classification.title_normalized|default:doc.identification.source_filename }}</b>
     <span class="msg-note">{{ doc.lifecycle.status.value|klabel }}</span>
-    <a href="/docs/original/{{ sel }}" class="btn ghost" style="padding:3px 10px;margin-left:auto">⬇️ 원본 다운로드</a>
+    <a href="?{% for k, v in filter_qs.items %}{{ k }}={{ v }}&{% endfor %}" class="msg-note" style="margin-left:auto">✕ 닫기</a>
   </div>
+  <a href="/docs/original/{{ sel }}" class="btn ghost" style="padding:3px 10px;margin-top:6px;display:inline-block">⬇️ 원본 다운로드</a>
 
   <!-- 상세 정보(읽기 전용) — 화면 폭을 채우도록 카드형으로 배치 -->
   <div class="info-grid" style="margin-top:14px">
@@ -196,8 +225,8 @@
   {% if can_edit_sel %}
   <!-- 본인 파트 이상: 직접 수정 -->
   <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
-    <div style="display:flex;gap:24px;flex-wrap:wrap">
-      <form method="post" action="/console/docs/{{ sel }}/action" style="flex:1;min-width:300px">
+    <div style="display:flex;gap:18px;flex-wrap:wrap;flex-direction:column">
+      <form method="post" action="/console/docs/{{ sel }}/action">
         {% csrf_token %}<input type="hidden" name="action" value="save">
         <h4>✏️ 내용 수정</h4>
         <div class="field"><label>문서 종류</label>
@@ -211,9 +240,9 @@
           <input name="keywords" value="{{ doc.classification.keywords|join:', ' }}"></div>
         <div class="field"><label>유관 조직/임직원 <span class="msg-note">(쉼표 구분)</span></label>
           <input name="related_parties" value="{{ doc.classification.related_parties|join:', ' }}"></div>
-        <div class="field"><label>작성 부서 <span class="msg-note">(조직도 = 관리 부서)</span></label>
+        <div class="field"><label>📁 폴더 (작성 부서) <span class="msg-note">(바꾸면 파일도 이동)</span></label>
           <select name="author_node_id"><option value="">(미지정)</option>
-            {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }} · {{ n.node_type|klabel }}</option>{% endfor %}
+            {% for n in node_opts %}<option value="{{ n.id }}" {% if n.sel_author %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>{% endfor %}
           </select></div>
         <!-- 접근·생애주기도 같은 저장에 포함 -->
         <div class="field"><label>열람 가능 대상 <span class="msg-note">(기본: 팀 전체)</span></label>
@@ -310,12 +339,30 @@
   </div>
   {% endif %}
 </div>
+{% else %}
+<div class="card msg-note" style="margin:0;text-align:center;padding:26px 14px">
+  왼쪽 목록에서 <b>파일 이름</b>을 누르면<br>여기에 문서 정보가 표시됩니다.
+</div>
 {% endif %}
+</aside>
+</div><!-- /docs-layout -->
 </div>
 <style>
-.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px}
+.docs-layout{display:grid;grid-template-columns:210px minmax(0,1fr) 390px;gap:16px;align-items:start}
+@media (max-width:1200px){.docs-layout{grid-template-columns:180px minmax(0,1fr)}
+  .docs-layout .detail-pane{grid-column:1/-1}}
+@media (max-width:820px){.docs-layout{grid-template-columns:1fr}}
+.folder-pane{position:sticky;top:12px;border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff;max-height:80vh;overflow:auto;font-size:13px}
+.folder-item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;text-decoration:none;color:inherit}
+.folder-item:hover{background:var(--line)}
+.folder-item.on{background:#eef2ff;font-weight:600}
+.folder-item .cnt{margin-left:auto;font-size:11px;color:var(--sub)}
+.detail-pane{position:sticky;top:12px;max-height:88vh;overflow:auto}
+.detail-pane .field input,.detail-pane .field select,.detail-pane .field textarea{width:100%}
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px}
 .info-cell .k{font-size:12px;color:var(--sub);margin-bottom:2px}
 .info-cell .v{font-size:13px;word-break:break-word}
+.list-pane table{width:100%}
 </style>
 {% include "console/_docpicker_assets.html" %}
 <script>

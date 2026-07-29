@@ -34,11 +34,15 @@ class AccessPolicy:
     user: UserContext
     today: date
     include_past: bool = False   # True 면 만료/대체/비active 문서도 허용(권한·민감도는 유지)
+    # 폴더(조직노드) 스코프 — 지정하면 그 노드들에 속한 문서만. None 이면 전체.
+    folder_node_ids: Optional[frozenset[int]] = None
 
     @classmethod
     def for_user(cls, user: UserContext, today: Optional[date] = None,
-                 include_past: bool = False) -> "AccessPolicy":
-        return cls(user=user, today=today or date.today(), include_past=include_past)
+                 include_past: bool = False,
+                 folder_node_ids: Optional[frozenset[int]] = None) -> "AccessPolicy":
+        return cls(user=user, today=today or date.today(), include_past=include_past,
+                   folder_node_ids=folder_node_ids)
 
     # ── 파이썬 재검증(방어적 이중 체크) ────────────────────────────────────
     def allows(self, payload: dict[str, Any]) -> bool:
@@ -46,6 +50,10 @@ class AccessPolicy:
         groups = payload.get("access_groups") or []
         if "*" not in groups and not (set(groups) & self.user.groups):
             return False
+        # 0. 폴더 스코프(선택) — 지정된 폴더(하위 포함) 문서만
+        if self.folder_node_ids is not None:
+            if payload.get("author_node_id") not in self.folder_node_ids:
+                return False
         # 과거 문서 포함 모드: 상태/만료/대체 검사는 생략(조직 토큰은 위에서 이미 적용)
         if self.include_past:
             return True
@@ -85,4 +93,9 @@ class AccessPolicy:
         if not self.include_past:
             must.append(qm.FieldCondition(
                 key="status", match=qm.MatchAny(any=["active", "archived"])))
+        # 폴더 스코프(선택) — 상위 폴더 선택 시 호출측에서 subtree 를 펼쳐 전달한다
+        if self.folder_node_ids:
+            must.append(qm.FieldCondition(
+                key="author_node_id",
+                match=qm.MatchAny(any=sorted(self.folder_node_ids))))
         return qm.Filter(must=must)
