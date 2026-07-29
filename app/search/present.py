@@ -13,8 +13,8 @@ from .types import Answer
 
 
 def _is_past(payload: dict[str, Any], today: date) -> bool:
-    """이 문서가 현행이 아닌 과거(만료·대체·비active) 자료인지."""
-    if payload.get("status") not in (None, "active"):
+    """이 문서가 현행이 아닌 과거(만료·대체) 자료인지. 유효·보관은 현행."""
+    if payload.get("status") not in (None, "active", "archived"):
         return True
     expiry = payload.get("expiry_date")
     if expiry:

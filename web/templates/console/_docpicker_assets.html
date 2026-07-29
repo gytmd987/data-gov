@@ -1,0 +1,62 @@
+{# 재사용 검색 피커(문서/사람) 스타일·스크립트. data-url 로 검색 엔드포인트 지정. #}
+<style>
+.doc-picker .dp-search{width:100%;padding:6px 8px;margin-bottom:4px}
+.doc-picker .dp-results{border:1px solid var(--line);border-radius:6px;max-height:160px;overflow:auto;display:none}
+.doc-picker .dp-results.on{display:block}
+.doc-picker .dp-add{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 8px;cursor:pointer;font-size:13px}
+.doc-picker .dp-add:hover{background:var(--line)}
+.doc-picker .dp-suggest{margin-top:4px}
+.doc-picker .chip{display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d6ff;border-radius:14px;padding:3px 10px;margin:2px 4px 2px 0;font-size:12px}
+.doc-picker .chip button{border:0;background:none;cursor:pointer;color:#c0392b;font-size:13px;line-height:1}
+</style>
+<script>
+(function(){
+  function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+  document.querySelectorAll('.doc-picker').forEach(function(p){
+    if(p.dataset.wired) return; p.dataset.wired='1';
+    var name=p.dataset.name, max=parseInt(p.dataset.max||'3',10), exclude=p.dataset.exclude||'';
+    var url=p.dataset.url||'/console/docs/search';
+    var sel=p.querySelector('.dp-selected'), search=p.querySelector('.dp-search'),
+        results=p.querySelector('.dp-results');
+    function count(){return sel.querySelectorAll('.chip').length;}
+    function has(id){return !!sel.querySelector('.chip[data-id="'+id+'"]');}
+    function add(id,label){
+      if(!id||has(id))return;
+      if(count()>=max){ if(max===1){ sel.innerHTML=''; } else { alert('최대 '+max+'개까지 지정할 수 있어요.'); return; } }
+      var chip=document.createElement('span');chip.className='chip';chip.dataset.id=id;
+      chip.innerHTML=esc(label)+' <button type="button" aria-label="remove">✕</button>'+
+        '<input type="hidden" name="'+name+'" value="'+esc(id)+'">';
+      chip.querySelector('button').addEventListener('click',function(){chip.remove();});
+      sel.appendChild(chip);
+      results.classList.remove('on');results.innerHTML='';search.value='';
+    }
+    p.querySelectorAll('.dp-suggest .dp-add').forEach(function(b){
+      b.addEventListener('click',function(){add(b.dataset.id,b.dataset.label);});
+    });
+    // 서버가 미리 채운 chip 의 제거 버튼도 연결
+    sel.querySelectorAll('.chip button').forEach(function(btn){
+      btn.addEventListener('click',function(){btn.closest('.chip').remove();});
+    });
+    var t=null;
+    if(!search) return;
+    search.addEventListener('input',function(){
+      clearTimeout(t);var q=search.value.trim();
+      if(q.length<1){results.classList.remove('on');results.innerHTML='';return;}
+      t=setTimeout(function(){
+        fetch(url+'?q='+encodeURIComponent(q)+'&exclude='+encodeURIComponent(exclude))
+          .then(function(r){return r.json();}).then(function(data){
+            results.innerHTML='';
+            (data.results||[]).forEach(function(d){
+              var b=document.createElement('button');b.type='button';b.className='dp-add';
+              b.innerHTML='＋ '+esc(d.label)+(d.sub?' <span class="msg-note">· '+esc(d.sub)+'</span>':'');
+              b.addEventListener('click',function(){add(d.id,d.label+(d.sub?' ('+d.sub+')':''));});
+              results.appendChild(b);
+            });
+            if(!(data.results||[]).length){results.innerHTML='<div class="msg-note" style="padding:6px 8px">검색 결과가 없습니다.</div>';}
+            results.classList.add('on');
+          });
+      },250);
+    });
+  });
+})();
+</script>

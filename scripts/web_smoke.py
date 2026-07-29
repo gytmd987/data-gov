@@ -107,25 +107,45 @@ def main() -> int:
     assert c.get("/console/docs/").status_code == 200
     print("[등록   ] 문서 탭 통합 · /submit/ → /console/docs/ 이동 ✅")
 
-    # 8) 관리 콘솔: 필터·페이징·보관(개별)·만료 정리
+    # 8) 관리 콘솔: 필터·페이징·만료 정리. 보관 문서는 기본 검색에 노출됨.
     c.force_login(admin)
-    assert c.get("/console/docs/?status=active&doc_type=report&page=1").status_code == 200
-    resp = c.post(f"/console/docs/{doc_id}/action", {"action": "archive"})
-    assert resp.status_code == 302
-    resp = c.post("/console/docs/sweep", {})
-    assert resp.status_code == 302
-    print("[콘솔+  ] 필터·페이징·보관·만료 정리 동작 ✅")
+    assert c.get("/console/docs/?status=archived&doc_type=report&page=1").status_code == 200
+    assert c.post("/console/docs/sweep", {}).status_code == 302
+    # 시드 문서를 '보관'으로 바꿔도 기본 검색에 그대로 노출되는지 확인용으로 보관 처리
+    from app.schemas.enums import DocStatus
+    s_ar = bridge.open_session()
+    try:
+        bridge.get_document_manager(s_ar).set_status(doc_id, DocStatus.ARCHIVED)
+    finally:
+        s_ar.close()
+    print("[콘솔+  ] 필터·페이징·만료 정리 · 보관 전환 ✅")
 
-    # 9) 과거 문서 포함 검색: 방금 보관한 문서도 include_past 로 검색됨
+    # 9) 보관 문서 = 기본 검색 노출 / 만료 문서 = 만료포함일 때만 노출
     c.force_login(staffer)
-    resp = c.post("/chat/send", json.dumps({"text": "연차는 며칠인가요?",
-                  "use_rag": True, "include_past": True}),
-                  content_type="application/json")
-    d3 = resp.json()
-    assert resp.status_code == 200
-    assert d3["sources"] and any(s.get("is_past") for s in d3["sources"]), \
-        "과거 포함 검색에서 보관 문서(is_past)가 나와야 함"
-    print(f"[과거검색] 보관 문서 포함 검색 · 과거 배지 {len(d3['sources'])}건 ✅")
+    r_arch = c.post("/chat/send", json.dumps({"text": "연차는 며칠인가요?", "use_rag": True}),
+                    content_type="application/json").json()
+    assert any(s["doc_id"] == doc_id for s in r_arch.get("sources", [])), \
+        "보관 문서가 기본 검색에 나와야 함"
+    # 만료로 전환 → 기본 검색 제외, 만료 포함 검색에만 노출
+    s_ex = bridge.open_session()
+    try:
+        bridge.get_document_manager(s_ex).set_status(doc_id, DocStatus.EXPIRED)
+    finally:
+        s_ex.close()
+    r_def = c.post("/chat/send", json.dumps({"text": "연차는 며칠인가요?", "use_rag": True}),
+                   content_type="application/json").json()
+    assert not any(s["doc_id"] == doc_id for s in r_def.get("sources", [])), "만료 문서가 기본 검색에 노출됨"
+    d3 = c.post("/chat/send", json.dumps({"text": "연차는 며칠인가요?", "use_rag": True,
+                "include_past": True}), content_type="application/json").json()
+    assert any(s.get("is_past") and s["doc_id"] == doc_id for s in d3.get("sources", [])), \
+        "만료 포함 검색에서 만료 문서(is_past)가 나와야 함"
+    # 다시 보관으로 되돌려 이후 섹션에 영향 없게
+    s_rb = bridge.open_session()
+    try:
+        bridge.get_document_manager(s_rb).set_status(doc_id, DocStatus.ARCHIVED)
+    finally:
+        s_rb.close()
+    print("[검색상태] 보관=검색노출 · 만료=만료포함시에만 노출 ✅")
 
     # 10) 조직도 관리(관리자 전용): 팀>그룹>파트 생성 + 사용자 배정
     c.force_login(admin)
@@ -284,17 +304,22 @@ def main() -> int:
         s_b.close()
     print("[기본값 ] 제목=파일명 · 작성부서=조직노드 · 이전 업로드 부서·권한 프리필 ✅")
 
-    # 11d) 다중 업로드 → 순차 검토(첫 건 확정 시 다음 건으로 자동 이동)
+    # 11d) 다중 업로드 → 순차 검토: 첫 건 확정 시 다음 건으로 이동 + 2번째가 1번째 확정본 상속
     resp = c.post("/console/docs/", {"file": [_f("규정1.txt", "첫 번째 규정 내용."),
                                               _f("규정2.txt", "두 번째 규정 내용.")]})
     m1 = resp["Location"].split("doc=")[1]
-    # 첫 건 확정 → 남은 검토 대기 문서로 자동 이동(순차 검토)
+    # 첫 건을 '인터뷰파트(pid)' 작성부서로 확정 → 다음 건 자동 이동
     r_next = c.post(f"/console/review/{m1}/submit",
                     {"title": "규정1", "doc_type": "notice", "summary": "규정1",
-                     "keywords": "규정", "lifecycle_status": "active"})
+                     "keywords": "규정", "lifecycle_status": "archived",
+                     "author_node_id": str(pid), "access": [f"node:{gid}"]})
     assert r_next.status_code == 302 and "doc=" in r_next["Location"], "다음 검토 문서로 이동 안 함"
-    assert r_next["Location"].split("doc=")[1] != m1, "순차 이동이 같은 문서를 가리킴"
-    print("[다중   ] 여러 파일 동시 업로드 · 순차 검토 자동 이동 ✅")
+    m2 = r_next["Location"].split("doc=")[1]
+    assert m2 != m1, "순차 이동이 같은 문서를 가리킴"
+    # 2번째 검토 폼이 1번째 '확정본' 작성부서(pid)를 기본 선택으로 상속하는지
+    p2 = c.get(f"/console/docs/?doc={m2}").content.decode()
+    assert f'value="{pid}" selected' in p2, "2번째 파일이 직전 확정본 작성부서를 상속하지 않음"
+    print("[다중   ] 동시 업로드 · 순차 검토 자동 이동 · 직전 확정본 설정 상속 ✅")
 
     # 11e) 검토 취소(폐기) + 등록 단계 연관 문서 지정 + 어휘 변경 내구성
     respC = c.post("/console/docs/", {"file": _f("취소할문서.txt", "취소 테스트용 문서.")})
@@ -360,13 +385,58 @@ def main() -> int:
     from urllib.parse import quote as _quote
     sr = c.get("/console/docs/search?q=" + _quote("인사평가"))
     hits = _json.loads(sr.content)["results"]
-    assert any(h["doc_id"] == tid2 for h in hits), "문서명 검색에서 등록 문서를 찾지 못함"
+    assert any(h["id"] == tid2 for h in hits), "문서명 검색에서 등록 문서를 찾지 못함"
     # 다운로드 파일명 = 제목
     dl = c.get(f"/docs/original/{tid2}")
     assert dl.status_code in (200, 404)
     if dl.status_code == 200:
         assert "25-0728" in dl.get("Content-Disposition", ""), "다운로드 파일명이 제목 기반이 아님"
     print("[제목/검색] 날짜 (YY-MMDD) 정규화 · 문서명 검색 API · 다운로드명=제목 ✅")
+
+    # 11h) 올리다 만(검토대기) 문서가 재업로드를 막지 않음(stale 교체)
+    c.force_login(admin)
+    stale = SimpleUploadedFile("stale_test.txt", "재업로드 테스트 문서.".encode("utf-8"),
+                               content_type="text/plain")
+    r1 = c.post("/console/docs/", {"file": stale})
+    old_id = r1["Location"].split("doc=")[1]   # 검토 대기(미확정) 상태로 남김
+    stale2 = SimpleUploadedFile("stale_test.txt", "재업로드 테스트 문서.".encode("utf-8"),
+                                content_type="text/plain")
+    r2 = c.post("/console/docs/", {"file": stale2})
+    assert r2.status_code == 302 and "doc=" in r2["Location"], "stale 문서가 재업로드를 막음"
+    assert r2["Location"].split("doc=")[1] != old_id
+    s_st = bridge.open_session()
+    try:
+        assert DocumentRepository(s_st).get(old_id) is None, "stale 문서가 폐기되지 않음"
+    finally:
+        s_st.close()
+    print("[재업로드] 올리다 만 문서가 재업로드를 막지 않음(stale 교체) ✅")
+
+    # 11i) 사람 검색 API(이름+아이디) + 목록 작성자/작성일 열
+    import json as _j
+    hs = _j.loads(c.get("/console/users/search?q=" + _quote("admin")).content)["results"]
+    assert any(h["id"] == "admin@company.com" and h["sub"] == "admin@company.com" for h in hs), \
+        "사람 검색에 이름+아이디가 안 나옴"
+    lp = c.get("/console/docs/").content.decode()
+    assert "작성자" in lp and "작성일" in lp, "목록에 작성자·작성일 열이 없음"
+    print("[사람검색] 이름+아이디 검색 API · 목록 작성자·작성일 열 ✅")
+
+    # 11j) 여러 파일 일괄 삭제
+    f_a = SimpleUploadedFile("bulk_a.txt", "일괄삭제 A".encode("utf-8"), content_type="text/plain")
+    f_b = SimpleUploadedFile("bulk_b.txt", "일괄삭제 B".encode("utf-8"), content_type="text/plain")
+    ra = c.post("/console/docs/", {"file": f_a}); ida = ra["Location"].split("doc=")[1]
+    c.post(f"/console/review/{ida}/submit", {"title": "일괄 A", "doc_type": "report",
+           "summary": "A", "keywords": "a", "lifecycle_status": "archived"})
+    rb = c.post("/console/docs/", {"file": f_b}); idb = rb["Location"].split("doc=")[1]
+    c.post(f"/console/review/{idb}/submit", {"title": "일괄 B", "doc_type": "report",
+           "summary": "B", "keywords": "b", "lifecycle_status": "archived"})
+    assert c.post("/console/docs/bulk-delete", {"doc_ids": [ida, idb]}).status_code == 302
+    s_bd = bridge.open_session()
+    try:
+        dr = DocumentRepository(s_bd)
+        assert dr.get(ida) is None and dr.get(idb) is None, "일괄 삭제가 안 됨"
+    finally:
+        s_bd.close()
+    print("[일괄삭제] 여러 문서 한 번에 삭제 ✅")
 
     # 12) 연관 자동 감지: 보고서 + 같은 어간 별첨 업로드 → 자동 연결
     s5 = bridge.open_session()

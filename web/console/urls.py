@@ -8,6 +8,7 @@ urlpatterns = [
     path("review/<str:doc_id>/cancel", views.review_cancel, name="console_review_cancel"),
     path("docs/", views.docs, name="console_docs"),
     path("docs/search", views.docs_search, name="console_docs_search"),
+    path("docs/bulk-delete", views.docs_bulk_delete, name="console_docs_bulk_delete"),
     path("docs/sweep", views.docs_sweep, name="console_docs_sweep"),
     path("docs/<str:doc_id>/action", views.docs_action, name="console_docs_action"),
     path("docs/<str:doc_id>/request", views.docs_request, name="console_docs_request"),
@@ -15,5 +16,6 @@ urlpatterns = [
     path("requests/", views.requests_queue, name="console_requests"),
     path("requests/<int:req_id>/resolve", views.request_resolve, name="console_request_resolve"),
     path("users/", views.users, name="console_users"),
+    path("users/search", views.users_search, name="console_users_search"),
     path("org/", views.org_console, name="console_org"),
 ]

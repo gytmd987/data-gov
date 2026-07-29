@@ -57,10 +57,11 @@ def test_document_roundtrip_and_hash_lookup(session, tmp_path: Path):
     ctx = run_auto_stages(str(p), ingested_by="admin",
                           llm=FakeLLM(), llm_model="m")
     save_ingestion(repo, ctx)
+    doc_id = ctx.doc.identification.doc_id
+    repo.set_status(doc_id, IngestionStatus.INDEXED)   # 등록 완료여야 중복으로 인식됨
     session.commit()
 
-    doc_id = ctx.doc.identification.doc_id
-    # hash_lookup 으로 중복 탐지 가능
+    # hash_lookup 으로 중복 탐지 가능(색인 완료 문서만)
     assert repo.hash_lookup(ctx.doc.identification.file_hash) == doc_id
     # 메타데이터 roundtrip
     loaded = repo.get(doc_id)
@@ -68,7 +69,7 @@ def test_document_roundtrip_and_hash_lookup(session, tmp_path: Path):
     assert loaded.classification.doc_type == DocType.REPORT
     assert loaded.identification.source_filename == "a.txt"
     # 상태 조회
-    assert repo.list_by_status(IngestionStatus.PENDING_REVIEW) == [doc_id]
+    assert repo.list_by_status(IngestionStatus.INDEXED) == [doc_id]
 
 
 def test_dedup_blocks_second_ingest(session, tmp_path: Path):
@@ -78,9 +79,19 @@ def test_dedup_blocks_second_ingest(session, tmp_path: Path):
 
     ctx = run_auto_stages(str(p), ingested_by="admin", llm=FakeLLM(), llm_model="m")
     save_ingestion(repo, ctx)
+    doc_id = ctx.doc.identification.doc_id
     session.commit()
 
-    # 같은 파일 재적재 시도 → 중복 탐지
+    # 아직 색인 전(검토대기) → 재업로드는 중복 아님(stale 문서 교체 후 진행)
+    assert intake(str(p), ingested_by="admin",
+                  hash_lookup=persistent_hash_lookup(repo)) is not None
+    assert repo.get(doc_id) is None   # 예전 stale 문서는 폐기됨
+
+    # 색인 완료 문서가 있으면 같은 파일 재적재는 중복 차단
+    ctx2 = run_auto_stages(str(p), ingested_by="admin", llm=FakeLLM(), llm_model="m")
+    save_ingestion(repo, ctx2)
+    repo.set_status(ctx2.doc.identification.doc_id, IngestionStatus.INDEXED)
+    session.commit()
     with pytest.raises(DuplicateError):
         intake(str(p), ingested_by="admin",
                hash_lookup=persistent_hash_lookup(repo))

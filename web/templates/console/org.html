@@ -33,12 +33,15 @@
     <td>{{ r.node_type|klabel }}</td>
     <td>{% for m in r.members %}{{ m.display_name|default:m.user_id }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="msg-note">—</span>{% endfor %}</td>
     <td>
-      <form method="post" style="display:inline-flex;gap:4px">
+      <form method="post" style="display:flex;gap:4px;align-items:flex-start">
         {% csrf_token %}<input type="hidden" name="action" value="set_leader"><input type="hidden" name="node_id" value="{{ r.id }}">
-        <select name="leader_id" style="width:150px;padding:4px 6px">
-          <option value="">(없음)</option>
-          {% for u in all_users %}<option value="{{ u.user_id }}" {% if r.leader and r.leader.user_id == u.user_id %}selected{% endif %}>{{ u.display_name|default:u.user_id }}</option>{% endfor %}
-        </select>
+        <div class="doc-picker" data-name="leader_id" data-max="1" data-url="/console/users/search" style="width:190px">
+          <div class="dp-selected">
+            {% if r.leader %}<span class="chip" data-id="{{ r.leader.user_id }}">{{ r.leader.display_name|default:r.leader.user_id }} ({{ r.leader.user_id }}) <button type="button">✕</button><input type="hidden" name="leader_id" value="{{ r.leader.user_id }}"></span>{% endif %}
+          </div>
+          <input class="dp-search" placeholder="이름·아이디 검색…" autocomplete="off">
+          <div class="dp-results"></div>
+        </div>
         <button class="btn ghost" style="padding:4px 8px">지정</button>
       </form>
     </td>
@@ -59,5 +62,6 @@
 {% else %}
 <div class="card">아직 조직도가 없습니다. 위에서 최상위 팀(예: People팀)부터 추가하세요.</div>
 {% endif %}
+{% include "console/_docpicker_assets.html" %}
 </div>
 {% endblock %}

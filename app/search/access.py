@@ -5,11 +5,11 @@
 
 하드 필터 조건(검색 후보에서 원천 제외):
   1. access_groups ∩ 사용자 토큰 ≠ ∅ (문서에 "*" 가 있으면 전체 공개 — 토큰 검사 통과)
-  2. status == active
+  2. status ∈ {active(유효), archived(보관)}  ← 대부분 문서는 보관이라 보관도 검색 노출
   3. expiry_date 없음 또는 오늘 이후(만료 제외)
   4. superseded_by 없음(대체된 문서 제외)
 
-include_past=True 이면 2~4(상태/만료/대체)를 완화해 과거·만료 문서도 검색된다.
+include_past=True 이면 2~4(상태/만료/대체)를 완화해 만료·대체 문서도 검색된다.
 단 1(조직 토큰)은 항상 적용되어 권한 없는 문서가 과거라고 뚫리지 않는다.
 
 - to_qdrant_filter(): Qdrant 검색 쿼리에 주입할 필터(후보 단계에서 배제).
@@ -49,8 +49,8 @@ class AccessPolicy:
         # 과거 문서 포함 모드: 상태/만료/대체 검사는 생략(조직 토큰은 위에서 이미 적용)
         if self.include_past:
             return True
-        # 2. 상태
-        if payload.get("status") != "active":
+        # 2. 상태 — 기본 검색은 '유효'와 '보관'을 노출(만료·대체·초안 제외)
+        if payload.get("status") not in ("active", "archived"):
             return False
         # 3. 만료
         expiry = payload.get("expiry_date")
@@ -81,7 +81,8 @@ class AccessPolicy:
                 match=qm.MatchAny(any=[*self.user.groups, "*"]),
             ),
         ]
-        # 과거 문서 포함 모드가 아니면 active 상태만 후보로(기본 동작)
+        # 과거 문서 포함 모드가 아니면 '유효+보관' 상태만 후보로(기본 동작)
         if not self.include_past:
-            must.append(qm.FieldCondition(key="status", match=qm.MatchValue(value="active")))
+            must.append(qm.FieldCondition(
+                key="status", match=qm.MatchAny(any=["active", "archived"])))
         return qm.Filter(must=must)

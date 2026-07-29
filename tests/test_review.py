@@ -123,9 +123,15 @@ def test_blocked_then_resubmit_indexes(session, tmp_path):
     assert svc._status_of(doc_id) == IngestionStatus.INDEXED.value
 
 
-def test_duplicate_ingestion_raises(session, tmp_path):
+def test_duplicate_only_blocks_after_indexed(session, tmp_path):
     svc = _service(session)
     path = _make_file(tmp_path)
-    svc.start_ingestion(path, ingested_by="admin")
+    d1 = svc.start_ingestion(path, ingested_by="admin")
+    # 아직 검토 대기(색인 전) → 같은 파일 재업로드는 stale 교체로 허용
+    d2 = svc.start_ingestion(path, ingested_by="admin")
+    assert d2 != d1 and svc.docs.get(d1) is None
+    # 등록 확정(색인) 후에는 중복 차단
+    svc.submit_review(d2, governance=GovernanceBlock(),
+                      lifecycle_overrides={"status": "active"})
     with pytest.raises(DuplicateError):
         svc.start_ingestion(path, ingested_by="admin")

@@ -83,9 +83,14 @@ def test_update_metadata_syncs_access(env):
     assert "leave_2025.txt" not in files               # 권한 변경이 검색에 반영 ✅
 
 
-def test_archive_excludes_from_search(env):
+def test_archived_searchable_but_expired_excluded(env):
+    from app.schemas.enums import DocStatus
     session, pipe, manager, user, a, b = env
+    # 보관은 기본 검색에 노출(대부분 문서가 보관)
     manager.archive(a)
+    assert "leave_2025.txt" in _files(pipe, user)
+    # 만료는 기본 검색에서 제외
+    manager.set_status(a, DocStatus.EXPIRED)
     assert "leave_2025.txt" not in _files(pipe, user)
 
 

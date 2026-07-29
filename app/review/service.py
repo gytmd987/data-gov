@@ -35,9 +35,10 @@ from app.schemas.metadata import GovernanceBlock
 OCRFn = Callable[[bytes], str]
 
 
-# 사용자에게 노출하는 생애주기 상태(내부 draft/superseded 는 숨김)
+# 사용자에게 노출하는 생애주기 상태(내부 draft/superseded 는 숨김).
+# 대부분 문서가 '보관'이라 보관을 앞에 두고 등록 기본값으로 쓴다.
 USER_DOC_STATUSES: list[str] = [
-    DocStatus.ACTIVE.value, DocStatus.EXPIRED.value, DocStatus.ARCHIVED.value]
+    DocStatus.ARCHIVED.value, DocStatus.ACTIVE.value, DocStatus.EXPIRED.value]
 
 
 def _doc_type_options() -> list[str]:
@@ -120,6 +121,8 @@ class ReviewService:
             ctx.doc.identification.source_filename,
             ai_title=ctx.doc.classification.title_normalized,
             ai_date=ctx.doc.lifecycle.effective_date)
+        # 등록 기본 상태 = 보관(대부분 문서가 보관이며 보관도 검색에 노출됨)
+        ctx.doc.lifecycle.status = DocStatus.ARCHIVED
 
         # 작성자 기본값 = 업로더 + 그의 대표 소속 노드(부서장 관리 범위 판정)
         author = self.users.get_user(ingested_by)

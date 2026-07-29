@@ -368,6 +368,14 @@ def docs(request):
         if doc is not None:
             sels = set(doc.governance.access_selections)
             author_node = doc.governance.author_node_id
+            # 검토 대기 문서는 '직전 확정본'의 부서·권한을 기본값으로 상속(순차 검토 체이닝)
+            if review_view is not None:
+                from app.db.repositories import DocumentRepository
+                inherit = DocumentRepository(session).last_upload_defaults(me)
+                if inherit is not None:
+                    author_node = inherit.get("author_node_id") or author_node
+                    if inherit.get("access_selections"):
+                        sels = set(inherit["access_selections"])
             for n in node_opts:
                 n["sel_node"] = f"node:{n['id']}" in sels
                 n["sel_head"] = f"head:{n['id']}" in sels
@@ -437,7 +445,7 @@ def docs_sweep(request):
 
 @login_required
 def docs_search(request):
-    """문서명(제목·파일명) 검색 → JSON. 연관/버전 지정 시 자동완성용(대량에서도 안전)."""
+    """문서명(제목·파일명) 검색 → JSON {id,label,sub}. 연관/버전 지정 자동완성용."""
     from django.http import JsonResponse
     session = bridge.open_session()
     try:
@@ -447,10 +455,59 @@ def docs_search(request):
             return JsonResponse({"results": []})
         mgr = bridge.get_document_manager(session)
         rows = mgr.list_documents(text=q, indexed_only=True, limit=20)
-        out = [{"doc_id": r["doc_id"], "title": r["title"] or r["filename"],
-                "filename": r["filename"]}
+        out = [{"id": r["doc_id"], "label": r["title"] or r["filename"],
+                "sub": r["filename"]}
                for r in rows if r["doc_id"] != exclude]
         return JsonResponse({"results": out})
+    finally:
+        session.close()
+
+
+@login_required
+def users_search(request):
+    """사람 검색 → JSON {id,label,sub}. 동명이인 구분 위해 이름+아이디를 함께 준다."""
+    from django.http import JsonResponse
+    from app.db.repositories import UserRepository
+    session = bridge.open_session()
+    try:
+        q = (request.GET.get("q") or "").strip().lower()
+        out = []
+        for u in UserRepository(session).list_users():
+            name = u.get("display_name") or ""
+            uid = u["user_id"]
+            if not q or q in uid.lower() or q in name.lower():
+                out.append({"id": uid, "label": name or uid, "sub": uid})
+            if len(out) >= 20:
+                break
+        return JsonResponse({"results": out})
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def docs_bulk_delete(request):
+    """선택한 여러 문서를 한 번에 삭제(각 문서마다 삭제 권한 확인)."""
+    session = bridge.open_session()
+    try:
+        mgr = bridge.get_document_manager(session)
+        ids = request.POST.getlist("doc_ids")
+        deleted, skipped = 0, 0
+        for doc_id in ids:
+            doc = mgr.get(doc_id)
+            if doc is not None and can_delete_doc(session, request.user, doc):
+                mgr.delete(doc_id, hard=True)
+                deleted += 1
+            else:
+                skipped += 1
+        if deleted:
+            messages.warning(request, f"{deleted}건을 영구 삭제했습니다." +
+                             (f" ({skipped}건은 권한 없음으로 제외)" if skipped else ""))
+        elif skipped:
+            messages.error(request, "삭제 권한이 있는 문서가 없습니다. '삭제 요청'을 이용하세요.")
+        else:
+            messages.warning(request, "선택된 문서가 없습니다.")
+        return redirect(request.POST.get("next") or "console_docs")
     finally:
         session.close()
 
@@ -507,9 +564,6 @@ def docs_action(request, doc_id: str):
             if old:
                 mgr.supersede(old, doc_id)
                 messages.success(request, "옛 버전을 검색에서 제외했습니다.")
-        elif action == "archive":
-            mgr.archive(doc_id)
-            messages.success(request, "보관 처리했습니다(검색 제외, 기록 유지).")
         return redirect(f"/console/docs/?doc={doc_id}")
     finally:
         session.close()

@@ -31,10 +31,22 @@ class DocumentRepository:
         self.session = session
 
     def hash_lookup(self, file_hash: str) -> Optional[str]:
-        """중복 탐지: file_hash로 기존 doc_id 반환(intake에 주입)."""
-        return self.session.execute(
-            select(Document.doc_id).where(Document.file_hash == file_hash)
-        ).scalar_one_or_none()
+        """중복 탐지: file_hash로 기존 doc_id 반환(intake에 주입).
+
+        '등록 완료(INDEXED)' 문서만 진짜 중복으로 본다. 예전에 올리다 만
+        (검토대기/차단) 문서가 같은 해시로 남아 있으면 재업로드를 막을 뿐 목록엔
+        안 보이므로, 그 stale 행은 제거하고 None 을 반환해 재업로드를 허용한다.
+        """
+        row = self.session.execute(
+            select(Document.doc_id, Document.status).where(
+                Document.file_hash == file_hash)).first()
+        if row is None:
+            return None
+        doc_id, status = row
+        if status == IngestionStatus.INDEXED.value:
+            return doc_id
+        self.delete(doc_id)   # 색인 전 stale 문서 폐기(청크 cascade) → 재업로드 진행
+        return None
 
     def upsert_document(self, doc: DocumentMetadata, status: IngestionStatus) -> None:
         values = document_row_values(doc, status)
@@ -112,15 +124,16 @@ class DocumentRepository:
         return conds
 
     def last_upload_defaults(self, author_id: str) -> Optional[dict[str, Any]]:
-        """이 사람이 올린 가장 최근 문서의 작성부서·접근권한(다음 업로드 기본값).
+        """이 사람이 **확정(등록 완료)** 한 가장 최근 문서의 작성부서·접근권한.
 
-        보통 같은 부서·같은 권한으로 연속 업로드하므로 직전 값을 미리 채워 준다.
-        최근 문서(updated_at desc)를 훑어 governance.author_id 가 일치하는 첫 건을 쓴다.
+        다음 업로드/검토의 기본값으로 쓴다. 검토 대기(미확정) 문서는 제외하므로,
+        여러 파일을 연속 검토할 때 '직전에 확정한 문서'의 설정이 그대로 이어진다.
         """
         if not author_id:
             return None
         rows = self.session.execute(
-            select(Document).order_by(Document.updated_at.desc()).limit(100)).scalars()
+            select(Document).where(Document.status == IngestionStatus.INDEXED.value)
+            .order_by(Document.updated_at.desc()).limit(100)).scalars()
         for row in rows:
             meta = row.metadata_json or {}
             gov = meta.get("governance", {}) if isinstance(meta, dict) else {}
@@ -173,6 +186,7 @@ class DocumentRepository:
                 "status": r.status, "lifecycle_status": r.lifecycle_status,
                 "access_groups": r.access_groups, "owner": r.owner,
                 "author_node_id": r.author_node_id,
+                "effective_date": r.effective_date.isoformat() if r.effective_date else None,
                 "expiry_date": r.expiry_date.isoformat() if r.expiry_date else None,
                 "superseded_by": r.superseded_by,
             })
@@ -191,20 +205,22 @@ class DocumentRepository:
         return self.session.scalar(stmt) or 0
 
     # ── 생애주기(만료) 조회 ──────────────────────────────────────────────────
+    _SEARCHABLE = ("active", "archived")   # 검색 노출 상태(유효·보관)
+
     def doc_ids_to_expire(self, today: date) -> list[str]:
-        """만료일이 지났는데도 아직 active 인 문서 id 목록(자동 만료 대상)."""
+        """만료일이 지났는데도 아직 유효/보관 인 문서 id 목록(자동 만료 대상)."""
         return list(self.session.execute(
             select(Document.doc_id).where(
-                Document.lifecycle_status == "active",
+                Document.lifecycle_status.in_(self._SEARCHABLE),
                 Document.expiry_date.is_not(None),
                 Document.expiry_date < today)
         ).scalars())
 
     def count_expiring_soon(self, today: date, until: date) -> int:
-        """[today, until] 사이에 만료 예정인 active 문서 수(임박 알림용)."""
+        """[today, until] 사이에 만료 예정인 유효/보관 문서 수(임박 알림용)."""
         return self.session.scalar(
             select(func.count()).select_from(Document).where(
-                Document.lifecycle_status == "active",
+                Document.lifecycle_status.in_(self._SEARCHABLE),
                 Document.expiry_date.is_not(None),
                 Document.expiry_date >= today,
                 Document.expiry_date <= until)) or 0

@@ -100,26 +100,43 @@
   </form>
   {% if can_manage %}
   <form method="post" action="/console/docs/sweep" style="margin:0 0 0 auto"
-        onsubmit="return confirm('만료일이 지난 active 문서를 모두 만료 처리할까요?')">
+        onsubmit="return confirm('만료일이 지난 문서를 모두 만료 처리할까요?')">
     {% csrf_token %}<button class="btn ghost">🧹 만료 문서 정리</button>
   </form>
   {% endif %}
 </div>
 
 <!-- 목록 — 파일 이름을 누르면 상세·수정 화면이 열립니다 -->
-<table>
-  <tr><th>파일</th><th>종류</th><th>상태</th><th>만료일</th></tr>
-  {% for d in docs %}
-  <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
-    <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">{{ d.title|default:d.filename }}</a>{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
-    <td>{{ d.doc_type|klabel }}</td>
-    <td>{{ d.lifecycle_status|klabel }}</td>
-    <td>{{ d.expiry_date|default_if_none:"—" }}</td>
-  </tr>
-  {% empty %}
-  <tr><td colspan="4" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
-  {% endfor %}
-</table>
+<form method="post" action="/console/docs/bulk-delete" id="bulkDeleteForm"
+      onsubmit="return confirm('선택한 문서를 영구 삭제할까요? (권한 없는 문서는 제외)')">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  {% if can_manage %}
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <button class="btn ghost" style="color:#c0392b;padding:4px 10px">🗑️ 선택 삭제</button>
+    <span class="msg-note" id="delCount"></span>
+  </div>
+  {% endif %}
+  <table>
+    <tr>
+      {% if can_manage %}<th style="width:28px"><input type="checkbox" id="checkAll" style="width:auto"></th>{% endif %}
+      <th>파일</th><th>종류</th><th>상태</th><th>작성자</th><th>작성일</th><th>만료일</th>
+    </tr>
+    {% for d in docs %}
+    <tr {% if d.doc_id == sel %}style="background:#eef2ff"{% endif %}>
+      {% if can_manage %}<td><input type="checkbox" name="doc_ids" value="{{ d.doc_id }}" class="rowchk" style="width:auto"></td>{% endif %}
+      <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">{{ d.title|default:d.filename }}</a>{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
+      <td>{{ d.doc_type|klabel }}</td>
+      <td>{{ d.lifecycle_status|klabel }}</td>
+      <td>{{ d.owner|default_if_none:"—" }}</td>
+      <td>{{ d.effective_date|default_if_none:"—" }}</td>
+      <td>{{ d.expiry_date|default_if_none:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7" class="msg-note" style="text-align:center;padding:20px">조건에 맞는 문서가 없습니다.</td></tr>
+    {% endfor %}
+  </table>
+</form>
 
 <!-- 페이징 -->
 {% if num_pages > 1 %}
@@ -235,10 +252,6 @@
           </div>
           <button class="btn ghost" style="margin-top:6px">새 버전으로 지정</button>
         </form>
-        <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:10px">
-          {% csrf_token %}<input type="hidden" name="action" value="archive">
-          <button class="btn ghost">🗄️ 보관(검색 제외)</button>
-        </form>
         {% if can_delete_sel %}
         <form method="post" action="/console/docs/{{ sel }}/action" style="margin-top:8px"
               onsubmit="return confirm('정말 영구 삭제할까요? 되돌릴 수 없습니다.')">
@@ -303,57 +316,17 @@
 .info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px}
 .info-cell .k{font-size:12px;color:var(--sub);margin-bottom:2px}
 .info-cell .v{font-size:13px;word-break:break-word}
-.doc-picker .dp-search{width:100%;padding:6px 8px;margin-bottom:4px}
-.doc-picker .dp-results{border:1px solid var(--line);border-radius:6px;max-height:160px;overflow:auto;display:none}
-.doc-picker .dp-results.on{display:block}
-.doc-picker .dp-add{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 8px;cursor:pointer;font-size:13px}
-.doc-picker .dp-add:hover{background:var(--line)}
-.doc-picker .dp-suggest{margin-top:4px}
-.doc-picker .chip{display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d6ff;border-radius:14px;padding:3px 10px;margin:2px 4px 2px 0;font-size:12px}
-.doc-picker .chip button{border:0;background:none;cursor:pointer;color:#c0392b;font-size:13px;line-height:1}
 </style>
+{% include "console/_docpicker_assets.html" %}
 <script>
 (function(){
-  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
-  document.querySelectorAll('.doc-picker').forEach(function(p){
-    var name=p.dataset.name, max=parseInt(p.dataset.max||'3',10), exclude=p.dataset.exclude||'';
-    var sel=p.querySelector('.dp-selected'), search=p.querySelector('.dp-search'),
-        results=p.querySelector('.dp-results');
-    function count(){return sel.querySelectorAll('.chip').length;}
-    function has(id){return !!sel.querySelector('.chip[data-id="'+id+'"]');}
-    function add(id,label){
-      if(!id||has(id))return;
-      if(count()>=max){ if(max===1){ sel.innerHTML=''; } else { alert('최대 '+max+'개까지 지정할 수 있어요.'); return; } }
-      var chip=document.createElement('span');chip.className='chip';chip.dataset.id=id;
-      chip.innerHTML=esc(label)+' <button type="button" aria-label="remove">✕</button>'+
-        '<input type="hidden" name="'+name+'" value="'+esc(id)+'">';
-      chip.querySelector('button').addEventListener('click',function(){chip.remove();});
-      sel.appendChild(chip);
-      results.classList.remove('on');results.innerHTML='';search.value='';
-    }
-    p.querySelectorAll('.dp-suggest .dp-add').forEach(function(b){
-      b.addEventListener('click',function(){add(b.dataset.id,b.dataset.label);});
-    });
-    var t=null;
-    search.addEventListener('input',function(){
-      clearTimeout(t);var q=search.value.trim();
-      if(q.length<1){results.classList.remove('on');results.innerHTML='';return;}
-      t=setTimeout(function(){
-        fetch('/console/docs/search?q='+encodeURIComponent(q)+'&exclude='+encodeURIComponent(exclude))
-          .then(function(r){return r.json();}).then(function(data){
-            results.innerHTML='';
-            (data.results||[]).forEach(function(d){
-              var b=document.createElement('button');b.type='button';b.className='dp-add';
-              b.innerHTML='＋ '+esc(d.title)+' <span class="msg-note">· '+esc(d.filename)+'</span>';
-              b.addEventListener('click',function(){add(d.doc_id,d.title);});
-              results.appendChild(b);
-            });
-            if(!(data.results||[]).length){results.innerHTML='<div class="msg-note" style="padding:6px 8px">검색 결과가 없습니다.</div>';}
-            results.classList.add('on');
-          });
-      },250);
-    });
-  });
+  // 목록 전체선택 + 선택 수 표시(일괄 삭제)
+  var all=document.getElementById('checkAll');
+  var rows=function(){return [].slice.call(document.querySelectorAll('.rowchk'));};
+  var cnt=function(){var n=rows().filter(function(c){return c.checked;}).length;
+    var el=document.getElementById('delCount'); if(el) el.textContent=n?n+'건 선택됨':'';};
+  if(all){all.addEventListener('change',function(){rows().forEach(function(c){c.checked=all.checked;});cnt();});}
+  rows().forEach(function(c){c.addEventListener('change',cnt);});
 })();
 </script>
 {% endblock %}

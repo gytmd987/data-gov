@@ -46,9 +46,13 @@ def test_allows_head_token_matches_head_scoped_doc():
     assert AccessPolicy.for_user(_user(groups=("n:1", "h:1"))).allows(doc)
 
 
-def test_allows_denies_non_active_expired_superseded():
+def test_allows_active_and_archived_but_denies_expired_superseded_draft():
     pol = AccessPolicy.for_user(_user(), today=date(2026, 7, 16))
-    assert not pol.allows(_chunk("d::0", status="archived").payload)
+    # 유효·보관은 기본 검색 노출
+    assert pol.allows(_chunk("d::0", status="active").payload)
+    assert pol.allows(_chunk("d::0", status="archived").payload)
+    # 초안·만료·대체는 제외
+    assert not pol.allows(_chunk("d::0", status="draft").payload)
     assert not pol.allows(_chunk("d::0", expiry="2020-01-01").payload)
     assert not pol.allows(_chunk("d::0", superseded="newdoc").payload)
 
