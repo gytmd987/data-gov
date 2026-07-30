@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db.mapping import document_row_values, row_to_document
@@ -13,6 +13,7 @@ from app.db.models import (
     AuditLog,
     Chunk,
     Document,
+    DocumentAccessToken,
     DocumentRelation,
     DocumentRequest,
     Feedback,
@@ -23,7 +24,7 @@ from app.db.models import (
 from app.org.tree import OrgNodeView, OrgTree
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import DocumentMetadata
-from app.search.access import UserContext
+from app.search.access import UserContext, Visibility
 
 
 class DocumentRepository:
@@ -56,6 +57,24 @@ class DocumentRepository:
         else:
             for k, v in values.items():
                 setattr(row, k, v)
+        self.session.flush()
+        self.sync_access_tokens(doc.identification.doc_id, values["access_groups"])
+
+    def sync_access_tokens(self, doc_id: str, tokens: Iterable[str]) -> None:
+        """documents.access_groups → document_access_tokens 행 동기화.
+
+        열람 권한이 바뀌면 반드시 여기를 통과해야 목록·검색 필터가 최신이 된다.
+        """
+        wanted = {str(t) for t in (tokens or []) if str(t).strip()} or {"*"}
+        current = set(self.session.execute(
+            select(DocumentAccessToken.token)
+            .where(DocumentAccessToken.doc_id == doc_id)).scalars())
+        for gone in current - wanted:
+            self.session.execute(delete(DocumentAccessToken).where(
+                DocumentAccessToken.doc_id == doc_id,
+                DocumentAccessToken.token == gone))
+        for added in wanted - current:
+            self.session.add(DocumentAccessToken(doc_id=doc_id, token=added))
         self.session.flush()
 
     def upsert_chunks(self, parent_doc_id: str, chunks) -> None:
@@ -104,10 +123,30 @@ class DocumentRepository:
         ).scalar_one_or_none()
 
     @staticmethod
-    def _doc_filters(text: Optional[str], lifecycle_status: Optional[str],
+    def _visibility_cond(visible_to: Optional["Visibility"]):
+        """'열람 권한이 있거나(토큰) 관리 대상인(작성부서)' 문서 조건. None 이면 무제한.
+
+        읽기와 관리는 별개다. 부서장은 자기 부서 문서를 (열람 토큰이 없어도) 관리해야
+        하고, 반대로 상위 부서 공개 문서는 내 부서가 아니어도 읽을 수 있어야 한다.
+        """
+        if visible_to is None or visible_to.unrestricted:
+            return None
+        clauses = []
+        tokens = set(visible_to.read_tokens or set()) | {"*"}
+        clauses.append(Document.doc_id.in_(
+            select(DocumentAccessToken.doc_id).where(
+                DocumentAccessToken.token.in_(sorted(tokens)))))
+        if visible_to.manage_node_ids:
+            clauses.append(Document.author_node_id.in_(
+                sorted(visible_to.manage_node_ids)))
+        return or_(*clauses)
+
+    @classmethod
+    def _doc_filters(cls, text: Optional[str], lifecycle_status: Optional[str],
                      doc_type: Optional[str],
                      author_node_ids: Optional[Iterable[int]] = None,
-                     indexed_only: bool = False) -> list:
+                     indexed_only: bool = False,
+                     visible_to: Optional["Visibility"] = None) -> list:
         conds: list = []
         if text:
             like = f"%{text}%"
@@ -121,7 +160,24 @@ class DocumentRepository:
             conds.append(Document.author_node_id.in_(list(author_node_ids)))
         if indexed_only:                 # 검토 대기·차단 문서는 목록에서 제외
             conds.append(Document.status == IngestionStatus.INDEXED.value)
+        vis = cls._visibility_cond(visible_to)
+        if vis is not None:
+            conds.append(vis)
         return conds
+
+    def readable_doc_ids(self, doc_ids: Iterable[str],
+                         visible_to: Optional["Visibility"]) -> set[str]:
+        """주어진 문서들 중 이 사용자가 볼 수 있는 것만 추린다(연관 문서 표시 등)."""
+        ids = [d for d in dict.fromkeys(doc_ids) if d]
+        if not ids:
+            return set()
+        if visible_to is None or visible_to.unrestricted:
+            return set(ids)
+        stmt = select(Document.doc_id).where(Document.doc_id.in_(ids))
+        vis = self._visibility_cond(visible_to)
+        if vis is not None:
+            stmt = stmt.where(vis)
+        return set(self.session.execute(stmt).scalars())
 
     def last_upload_defaults(self, author_id: str) -> Optional[dict[str, Any]]:
         """이 사람이 **확정(등록 완료)** 한 가장 최근 문서의 작성부서·접근권한.
@@ -164,15 +220,18 @@ class DocumentRepository:
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
         author_node_ids: Optional[Iterable[int]] = None, indexed_only: bool = False,
+        visible_to: Optional[Visibility] = None,
     ) -> list[dict[str, Any]]:
         """문서 목록(관리용 요약). 필터(파일명·제목/상태/유형) + 페이징.
 
         limit=None 이면 전체 반환(소규모·테스트용). 대량(수만 건)에서는 limit을 지정해
         화면이 한 번에 모든 행을 로드하지 않도록 한다.
+
+        visible_to 를 주면 권한 밖 문서는 **쿼리 단에서** 빠진다(건수·페이징도 일치).
         """
         stmt = select(Document)
         conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids,
-                                  indexed_only)
+                                  indexed_only, visible_to)
         if conds:
             stmt = stmt.where(and_(*conds))
         stmt = stmt.order_by(Document.updated_at.desc())
@@ -196,10 +255,11 @@ class DocumentRepository:
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None,
         author_node_ids: Optional[Iterable[int]] = None, indexed_only: bool = False,
+        visible_to: Optional[Visibility] = None,
     ) -> int:
         stmt = select(func.count()).select_from(Document)
         conds = self._doc_filters(text, lifecycle_status, doc_type, author_node_ids,
-                                  indexed_only)
+                                  indexed_only, visible_to)
         if conds:
             stmt = stmt.where(and_(*conds))
         return self.session.scalar(stmt) or 0

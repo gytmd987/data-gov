@@ -52,6 +52,39 @@ def manage_scope(session, user):
     return False, scope
 
 
+def visibility_for(session, user):
+    """이 사용자에게 관리 화면에서 보여도 되는 문서 범위(Visibility).
+
+    목록·건수·문서 검색·상세 모두 이걸 통해서만 조회해야 한다. 화면에서 거르면
+    페이징·건수가 어긋나고, 자동완성 같은 곁길로 제목이 새어 나간다.
+    """
+    from app.search.access import Visibility
+    if is_admin(user):
+        return Visibility.admin()
+    ctx = domain_user_context(session, user)
+    _, scope = manage_scope(session, user)
+    return Visibility(
+        read_tokens=frozenset(ctx.groups if ctx is not None else set()),
+        manage_node_ids=frozenset(scope or set()))
+
+
+def _token_readable(session, user, doc) -> bool:
+    """문서 열람 토큰만으로 판정(관리 권한 무관). 생애주기는 보지 않는다.
+
+    만료·대체는 '검색에 안 나온다'는 뜻이지 '못 읽는다'가 아니므로 권한 판정에서 뺀다.
+    """
+    if doc is None:
+        return False
+    return visibility_for(session, user).allows_tokens(doc.governance.access_tokens)
+
+
+def can_read_doc(session, user, doc) -> bool:
+    """열람 권한: 문서 열람 토큰과 겹치거나(공개 포함) 관리 대상이면 True."""
+    if doc is None:
+        return False
+    return _token_readable(session, user, doc) or can_manage_doc(session, user, doc)
+
+
 def can_manage_doc(session, user, doc) -> bool:
     """관리자 또는 문서 작성부서가 내 관리 범위(subtree)에 드는 부서장."""
     is_adm, scope = manage_scope(session, user)
@@ -65,6 +98,8 @@ def can_edit_doc(session, user, doc) -> bool:
     """수정 권한: 관리자 · 부서장(내 subtree) · 본인 소속 부서(파트)의 문서.
 
     파트원도 자기 파트(소속 노드)의 문서는 직접 수정할 수 있다. 삭제는 별도(부서장만).
+    단, **열람 권한이 없는 문서는 수정도 못 한다** — 같은 파트에 있다는 이유만으로
+    권한이 좁혀진 문서를 열어볼 수 있으면 권한 설정이 무의미해진다.
     """
     if can_manage_doc(session, user, doc):
         return True
@@ -73,7 +108,7 @@ def can_edit_doc(session, user, doc) -> bool:
     if node is None:
         return False
     mine = set(UserRepository(session).member_nodes(_email_of(user)))
-    return node in mine
+    return node in mine and _token_readable(session, user, doc)
 
 
 def can_delete_doc(session, user, doc) -> bool:

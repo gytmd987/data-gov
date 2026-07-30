@@ -37,7 +37,13 @@
     <div style="flex:1;min-width:300px">
       <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>
       <div class="field"><label>문서 종류</label>
-        <select name="doc_type">{% for o in opts.doc_type %}
+        {# AI가 판단 못 한(unknown) 경우 목록에 맞는 항목이 없다. 그냥 두면 브라우저가
+           맨 첫 항목을 고른 것처럼 보여 엉뚱한 종류로 저장된다 → 빈 선택지를 먼저 둔다. #}
+        <select name="doc_type" required>
+          {% if view.classification.doc_type not in opts.doc_type %}
+          <option value="" selected>― 문서 종류를 고르세요 (AI가 판단하지 못함) ―</option>
+          {% endif %}
+          {% for o in opts.doc_type %}
           <option value="{{ o }}" {% if o == view.classification.doc_type %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
       <div class="field"><label>제목</label>
         <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></div>

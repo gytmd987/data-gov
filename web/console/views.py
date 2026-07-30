@@ -18,9 +18,11 @@ from web.authz import (
     can_delete_doc,
     can_edit_doc,
     can_manage_doc,
+    can_read_doc,
     can_review_doc,
     is_admin,
     manage_scope,
+    visibility_for,
 )
 
 from app import system_config
@@ -44,12 +46,20 @@ def _to_iso(value):
     return to_iso(value)
 
 
-def _related_docs(session, doc_id: str) -> list[dict]:
-    """이 문서와 연관된 문서 [{doc_id, filename, reason, source}] (파일명 해석)."""
+def _related_docs(session, doc_id: str, visible_to=None) -> list[dict]:
+    """이 문서와 연관된 문서 [{doc_id, filename, reason, source}] (파일명 해석).
+
+    visible_to 를 주면 **열람 권한이 있는 연관 문서만** 보여준다(연결을 타고 남의
+    부서 문서 제목이 새어 나가지 않도록).
+    """
     from app.db.repositories import DocumentRepository, RelationRepository
     drepo = DocumentRepository(session)
+    links = RelationRepository(session).related_ids(doc_id)
+    allowed = drepo.readable_doc_ids([r["doc_id"] for r in links], visible_to)
     out = []
-    for r in RelationRepository(session).related_ids(doc_id):
+    for r in links:
+        if r["doc_id"] not in allowed:
+            continue
         d = drepo.get(r["doc_id"])
         if d is not None:
             out.append({"doc_id": r["doc_id"],
@@ -123,6 +133,10 @@ def review_submit(request, doc_id: str):
             messages.error(request, "이 문서를 검토·등록할 권한이 없습니다.")
             return redirect("console_docs")
         p = request.POST
+        # AI가 종류를 판단 못 했으면 사람이 반드시 고르게 한다(빈 값으로 등록 금지).
+        if p.get("doc_type") not in ENUM_OPTIONS["doc_type"]:
+            messages.error(request, "문서 종류를 골라주세요.")
+            return redirect(f"/console/docs/?doc={doc_id}")
         node_id, dept_name = _dept_from_form(session, p)
         if node_id is None:              # 작성부서 미선택 → 적재 시 기본값 유지
             node_id, dept_name = _doc.governance.author_node_id, _doc.classification.department
@@ -149,10 +163,11 @@ def review_submit(request, doc_id: str):
         # ── 제목+형식 중복 처리 ──────────────────────────────────────────────
         from app.db.repositories import DocumentRepository, RequestRepository
         drepo = DocumentRepository(session)
+        vis = visibility_for(session, request.user)
         existing = drepo.get(doc_id)
         fmt = existing.identification.file_format.value if existing else None
         title = cls["title_normalized"]
-        dup = drepo.find_active_by_title_format(title, fmt, exclude_doc_id=doc_id) if fmt else None
+        dup = _visible_dup(session, drepo, vis, title, fmt, exclude=doc_id)
         dup_action = p.get("dup_action")
         back = f"/console/docs/?doc={doc_id}"
         if dup is not None:
@@ -178,19 +193,20 @@ def review_submit(request, doc_id: str):
             from app.db.repositories import RelationRepository
             mgr = bridge.get_document_manager(session)
             rel = RelationRepository(session)
-            # 등록 단계 '버전 정리': 지정한 옛 문서를 이 문서의 이전 버전으로 처리
+            # 등록 단계 '버전 정리': 지정한 옛 문서를 이 문서의 이전 버전으로 처리.
+            # 폼 값은 조작될 수 있으므로 볼 수 있는 문서인지 서버에서 다시 확인한다.
             old_id = (p.get("old_id") or "").strip()
-            if old_id and old_id != doc_id and mgr.get(old_id) is not None:
+            if (old_id and old_id != doc_id
+                    and drepo.readable_doc_ids([old_id], vis)):
                 mgr.supersede(old_id, doc_id)
             # 정확 중복(제목+형식) 처리에서 supersede 선택 시
             if dup is not None and dup_action == "supersede":
                 mgr.supersede(dup["doc_id"], doc_id)
             # 등록 단계에서 수동 지정한 연관 문서(최대 3개)
             picked = [x for x in dict.fromkeys(p.getlist("related_pick")) if x][:3]
-            for other in picked:
-                if mgr.get(other) is not None:
-                    rel.link(doc_id, other, source="human", reason="등록 시 지정",
-                             created_by=_email_of(request.user))
+            for other in drepo.readable_doc_ids(picked, vis):
+                rel.link(doc_id, other, source="human", reason="등록 시 지정",
+                         created_by=_email_of(request.user))
             svc.finalize_original_name(doc_id)   # 서버 원본 파일명을 제목으로
             # 표 데이터(엑셀 명단 등)면 DuckDB 에 구조화 적재(Tier 2)
             try:
@@ -239,6 +255,20 @@ def review_cancel(request, doc_id: str):
         return redirect("console_docs")
     finally:
         session.close()
+
+
+def _visible_dup(session, drepo, visible_to, title, fmt, exclude=None):
+    """제목+형식이 같은 기존 문서 — 단, **내가 볼 수 있는 것만**.
+
+    볼 수 없는 문서를 중복으로 알려주면 '어떤 제목의 문서가 존재하는지'가 새어 나가고,
+    등록까지 막히면서 그 사실이 한 번 더 확인된다. 안 보이는 문서는 없는 것으로 취급한다.
+    """
+    if not title or not fmt:
+        return None
+    dup = drepo.find_active_by_title_format(title, fmt, exclude_doc_id=exclude)
+    if dup is None:
+        return None
+    return dup if drepo.readable_doc_ids([dup["doc_id"]], visible_to) else None
 
 
 # ── 문서 관리 ────────────────────────────────────────────────────────────────
@@ -306,51 +336,37 @@ def docs(request):
         page = max(1, _int(request.GET.get("page"), 1))
         offset = (page - 1) * _PAGE_SIZE
 
-        # 접근 범위: 관리자=전체, 부서장=내 subtree, 파트원=내 소속 노드(요청만 가능)
+        # 보이는 범위 = '열람 권한이 있는 문서' ∪ '부서장으로서 관리하는 문서'.
+        # (예전엔 작성부서만 봐서, 상위 부서 공개 문서가 형제 파트에 안 보였다.)
         is_adm, scope = manage_scope(session, request.user)
-        author_ids = None
-        can_manage = is_adm
-        if not is_adm:
-            from app.db.repositories import UserRepository
-            if scope:                       # 부서장
-                author_ids, can_manage = scope, True
-            else:                           # 파트원: 내 소속 부서 문서(요청만)
-                mine = set(UserRepository(session).member_nodes(_email_of(request.user)))
-                author_ids = mine or {-1}
+        vis = visibility_for(session, request.user)
+        can_manage = is_adm or bool(scope)
 
         # 폴더(조직노드) 필터 — 상위 폴더 선택 시 하위 폴더 문서까지 포함(subtree)
         from app.db.repositories import OrgRepository
         org = OrgRepository(session)
         tree = org.load_tree()
         folder_sel = _int(request.GET.get("folder"), 0) or None
-        if folder_sel is not None:
-            sub = set(tree.subtree(folder_sel))
-            author_ids = sub if author_ids is None else (set(author_ids) & sub)
-            if not author_ids:
-                author_ids = {-1}           # 권한 밖 폴더 → 빈 결과
+        author_ids = set(tree.subtree(folder_sel)) or {-1} if folder_sel else None
 
         # 목록은 등록(색인) 완료 문서만. 검토 대기는 아래 '내 검토 대기'로 분리.
         total = mgr.count_documents(text=q, lifecycle_status=status, doc_type=doc_type,
-                                    author_node_ids=author_ids, indexed_only=True)
+                                    author_node_ids=author_ids, indexed_only=True,
+                                    visible_to=vis)
         doc_list = mgr.list_documents(text=q, lifecycle_status=status, doc_type=doc_type,
                                       limit=_PAGE_SIZE, offset=offset,
-                                      author_node_ids=author_ids, indexed_only=True)
+                                      author_node_ids=author_ids, indexed_only=True,
+                                      visible_to=vis)
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
-        # 폴더 트리(각 노드의 subtree 문서 수 = 내 권한 범위 내)
-        base_ids = None if is_adm else (scope or set())
-        if not is_adm and not base_ids:
-            from app.db.repositories import UserRepository
-            base_ids = set(UserRepository(session).member_nodes(me)) or {-1}
+        # 폴더 트리(각 노드의 subtree 문서 수 = 내가 볼 수 있는 것만)
         folder_tree = _org_options(org)
         for n in folder_tree:
-            ids = set(tree.subtree(n["id"]))
-            if base_ids is not None:
-                ids &= set(base_ids)
-            n["doc_count"] = (mgr.count_documents(author_node_ids=ids or {-1},
-                                                  indexed_only=True) if ids else 0)
+            n["doc_count"] = mgr.count_documents(
+                author_node_ids=set(tree.subtree(n["id"])) or {-1},
+                indexed_only=True, visible_to=vis)
             n["selected"] = (n["id"] == folder_sel)
-        folder_total = mgr.count_documents(author_node_ids=base_ids, indexed_only=True)
+        folder_total = mgr.count_documents(indexed_only=True, visible_to=vis)
 
         # 내가 올린 검토 대기 문서(등록 전 — 업로더가 확인해야 함)
         svc = bridge.get_review_service(session)
@@ -358,6 +374,12 @@ def docs(request):
 
         sel = request.GET.get("doc")
         doc = mgr.get(sel) if sel else None
+        # 상세는 URL 로 직접 열 수 있으므로 여기서 반드시 열람 권한을 확인한다.
+        # (검토 대기 문서는 업로더 본인이 확인해야 하므로 검토 권한도 인정)
+        if doc is not None and not (can_read_doc(session, request.user, doc)
+                                    or can_review_doc(session, request.user, doc)):
+            messages.error(request, "이 문서를 볼 권한이 없습니다.")
+            return redirect("console_docs")
         sel_status = svc.docs.get_status(sel) if sel else None
         pending_states = {IngestionStatus.PENDING_REVIEW.value, IngestionStatus.BLOCKED.value}
 
@@ -370,6 +392,12 @@ def docs(request):
             from app.relations.classify import RELATION_LABELS
             from app.relations.detect import DUP_THRESHOLD
             review_view = svc.get_review(sel)
+            # AI 유사 문서 탐지는 벡터 검색이라 권한을 모른다 → 여기서 걸러낸다.
+            # (안 거르면 업로드만 해도 남의 부서 파일명이 후보로 노출된다)
+            _seen = DocumentRepository(session).readable_doc_ids(
+                [c.get("doc_id") for c in review_view.similar_candidates], vis)
+            review_view.similar_candidates = [
+                c for c in review_view.similar_candidates if c.get("doc_id") in _seen]
             # 개정판(교체) 후보 vs AI 추천 연관 문서로 분리
             for c in review_view.similar_candidates:
                 relk = c.get("ai_relation") or "revision"
@@ -380,9 +408,9 @@ def docs(request):
                 c for c in review_view.similar_candidates if c.get("score", 0) >= DUP_THRESHOLD]
             review_view.related_recos = [
                 c for c in review_view.similar_candidates if c.get("score", 0) < DUP_THRESHOLD]
-            dup = DocumentRepository(session).find_active_by_title_format(
-                doc.classification.title_normalized,
-                doc.identification.file_format.value, exclude_doc_id=sel)
+            dup = _visible_dup(session, DocumentRepository(session), vis,
+                               doc.classification.title_normalized,
+                               doc.identification.file_format.value, exclude=sel)
             # 제목이 파일명과 다르면 AI가 제목을 보정한 것 → 검토 폼에서 고지
             review_view.filename_stem = Path(doc.identification.source_filename).stem
 
@@ -393,7 +421,7 @@ def docs(request):
             this_base = strip_date_prefix(
                 doc.classification.title_normalized or doc.identification.source_filename).lower()
             for d in mgr.list_documents(doc_type=doc.classification.doc_type.value,
-                                        limit=300, indexed_only=True):
+                                        limit=300, indexed_only=True, visible_to=vis):
                 if d["doc_id"] == sel:
                     continue
                 base = strip_date_prefix(d["title"] or d["filename"]).lower()
@@ -452,7 +480,7 @@ def docs(request):
             "can_edit_sel": can_edit_sel, "can_delete_sel": can_delete_sel,
             "pending_requests": pending_requests,
             "admins": system_config.admin_emails(),
-            "related": _related_docs(session, sel) if doc else [],
+            "related": _related_docs(session, sel, vis) if doc else [],
         })
     finally:
         session.close()
@@ -477,7 +505,11 @@ def docs_sweep(request):
 
 @login_required
 def docs_search(request):
-    """문서명(제목·파일명) 검색 → JSON {id,label,sub}. 연관/버전 지정 자동완성용."""
+    """문서명(제목·파일명) 검색 → JSON {id,label,sub}. 연관/버전 지정 자동완성용.
+
+    **열람 권한이 있는 문서만** 돌려준다. 이 자동완성이 권한을 안 걸면 제목·파일명이
+    전 직원에게 노출되어 접근 통제가 사실상 무력해진다.
+    """
     from django.http import JsonResponse
     session = bridge.open_session()
     try:
@@ -486,7 +518,8 @@ def docs_search(request):
         if not q:
             return JsonResponse({"results": []})
         mgr = bridge.get_document_manager(session)
-        rows = mgr.list_documents(text=q, indexed_only=True, limit=20)
+        rows = mgr.list_documents(text=q, indexed_only=True, limit=20,
+                                  visible_to=visibility_for(session, request.user))
         out = [{"id": r["doc_id"], "label": r["title"] or r["filename"],
                 "sub": r["filename"]}
                for r in rows if r["doc_id"] != exclude]
@@ -551,7 +584,7 @@ def docs_action(request, doc_id: str):
     try:
         mgr = bridge.get_document_manager(session)
         doc = mgr.get(doc_id)
-        if doc is None:
+        if doc is None or not can_read_doc(session, request.user, doc):
             return redirect("console_docs")
         action = request.POST.get("action")
 
@@ -570,6 +603,9 @@ def docs_action(request, doc_id: str):
 
         if action == "save":
             p = request.POST
+            if p.get("doc_type") and p["doc_type"] not in ENUM_OPTIONS["doc_type"]:
+                messages.error(request, "문서 종류를 골라주세요.")
+                return redirect(f"/console/docs/?doc={doc_id}")
             gov = doc.governance
             # 작성부서(조직 노드) 변경 반영. 미선택이면 기존 값 유지.
             node_id, dept_name = _dept_from_form(session, p)
@@ -628,10 +664,15 @@ def docs_relate(request, doc_id: str):
         if request.POST.get("action") == "unlink" and other:
             rel.unlink(doc_id, other)
             messages.success(request, "연관을 해제했습니다.")
-        elif request.POST.get("action") == "add" and other and mgr.get(other) is not None:
-            rel.link(doc_id, other, source="human", reason="수동",
-                     created_by=_email_of(request.user))
-            messages.success(request, "연관 문서로 연결했습니다.")
+        elif request.POST.get("action") == "add" and other:
+            # 볼 수 없는 문서는 연결도 불가 — 연결하면 상세 화면에 제목이 드러난다.
+            target = mgr.get(other)
+            if target is None or not can_read_doc(session, request.user, target):
+                messages.error(request, "연결할 수 없는 문서입니다(권한 없음).")
+            else:
+                rel.link(doc_id, other, source="human", reason="수동",
+                         created_by=_email_of(request.user))
+                messages.success(request, "연관 문서로 연결했습니다.")
         session.commit()
         return redirect(request.POST.get("next") or f"/console/docs/?doc={doc_id}")
     finally:
@@ -647,7 +688,8 @@ def docs_request(request, doc_id: str):
         from app.db.repositories import RequestRepository
         mgr = bridge.get_document_manager(session)
         doc = mgr.get(doc_id)
-        if doc is None:
+        if doc is None or not can_read_doc(session, request.user, doc):
+            messages.error(request, "이 문서에 대한 권한이 없습니다.")
             return redirect("console_docs")
         rtype = request.POST.get("request_type")
         if rtype not in ("edit", "delete"):

@@ -112,8 +112,37 @@ def build_enrichment_schema() -> dict[str, Any]:
     }
 
 
+def doc_type_glossary() -> str:
+    """문서 종류 enum 값 + 한글 라벨 + 판별 기준 목록(프롬프트 주입용).
+
+    영문 토큰만 주면 모델이 한국어 문서를 엉뚱한 종류로 넘긴다(예: '설립(안)' 보고서를
+    contract 로). 각 값의 뜻을 명시해 판단 근거를 준다. 기준은 config/system.yaml 에서
+    수정한다.
+    """
+    from app import system_config
+    hints = system_config.doc_type_hints()
+    lines = []
+    for value in system_config.doc_types():
+        label = system_config.label(value)
+        hint = " ".join(str(hints.get(value, "")).split())
+        lines.append(f'- "{value}" ({label}){": " + hint if hint else ""}')
+    return "\n".join(lines)
+
+
 _PROMPT_TEMPLATE = """당신은 인사 문서의 메타데이터를 분류하는 어시스턴트입니다.
 아래 문서 내용을 읽고 주어진 JSON 스키마에 맞춰 메타데이터를 채우세요.
+
+문서 종류(doc_type) 후보와 판별 기준:
+{doc_types}
+
+문서 종류를 고르는 순서:
+1. 문서 **제목·표지·머리말에 적힌 문서 유형 표기**를 가장 먼저 보세요
+   (예: "○○ 설립(안)" → 내부 검토·보고 문서이므로 report, "○○ 계약서" → contract).
+2. 제목에 유형 표기가 없으면 본문의 형식을 보세요
+   (조문 형식 → regulation, 당사자·서명란 → contract, 빈 서식 → form).
+3. 그래도 애매하면 other 로 두고 confidence 를 낮게 주세요. 억지로 고르지 마세요.
+- 흔한 오분류 주의: 회사·조직 **설립/신설/개편 검토 문서는 계약서가 아니라 report** 입니다.
+  계약서는 당사자와 서명·계약 조항이 실제로 있는 문서만 해당합니다.
 
 규칙:
 - doc_type/language/status 는 반드시 제공된 enum 값 중에서만 고르세요.
@@ -164,7 +193,8 @@ def enrich(
     schema = build_enrichment_schema()
     filename = doc.identification.source_filename
     prompt = _PROMPT_TEMPLATE.format(
-        filename=filename, content=content[:_MAX_CONTENT_CHARS]
+        filename=filename, content=content[:_MAX_CONTENT_CHARS],
+        doc_types=doc_type_glossary(),
     )
     result = client.complete_json(prompt, schema)
 

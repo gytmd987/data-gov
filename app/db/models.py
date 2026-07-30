@@ -83,6 +83,22 @@ class Document(Base):
     )
 
 
+class DocumentAccessToken(Base):
+    """문서 열람 토큰(access_groups)을 행으로 펼친 검색용 테이블.
+
+    access_groups 는 JSON 배열이라 SQL 에서 '이 사용자가 읽을 수 있는 문서' 를
+    포터블하게 필터할 수 없다. 그래서 upsert_document 시점에 같은 값을 여기에
+    펼쳐 두고, 목록·검색 쿼리는 이 테이블을 조인해 **DB 단에서** 권한을 건다.
+    (화면에서 거르는 방식은 페이징·건수와 어긋나고 유출 위험이 있다.)
+    """
+
+    __tablename__ = "document_access_tokens"
+
+    doc_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("documents.doc_id", ondelete="CASCADE"), primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+
+
 class Chunk(Base):
     __tablename__ = "chunks"
 

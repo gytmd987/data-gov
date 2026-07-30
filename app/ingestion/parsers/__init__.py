@@ -1,6 +1,6 @@
 """포맷별 파서 레지스트리.
 
-OCR/VLM이 필요한 파서(pdf 스캔, pptx 이미지, jpg/png)는 image_ocr/page_ocr 콜백을 주입한다.
+OCR/VLM이 필요한 파서(pdf 스캔, docx·pptx 삽입 이미지, jpg/png)는 image_ocr/page_ocr 콜백을 주입한다.
 콜백은 PaddleOCR-VL 서비스 호출을 감싼 함수다(app.ingestion.ocr 참고). 미주입 시 텍스트 경로만 동작.
 """
 
@@ -30,7 +30,7 @@ def build_registry(ocr: Optional[OCRFn] = None) -> dict[FileFormat, Parser]:
     """포맷 → 파서 인스턴스 매핑을 만든다. ocr 콜백이 있으면 스캔/이미지 경로도 활성화."""
     registry: dict[FileFormat, Parser] = {
         FileFormat.TXT: TextParser(),
-        FileFormat.DOCX: DocxParser(),
+        FileFormat.DOCX: DocxParser(image_ocr=ocr),
         FileFormat.XLSX: XlsxParser(),
         FileFormat.PPTX: PptxParser(image_ocr=ocr),
         FileFormat.PDF: PdfParser(page_ocr=ocr),

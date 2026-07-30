@@ -206,21 +206,16 @@ def submit_document(request):
 
 @login_required
 def original_file(request, doc_id: str):
-    """원본 파일 다운로드 — 접근권한(그룹·민감도) 재검증 후 제공."""
+    """원본 파일 다운로드 — 열람 권한 재검증 후 제공."""
     session = bridge.open_session()
     try:
+        from web.authz import can_read_doc
         from app.db.repositories import DocumentRepository
-        from app.schemas.metadata import doc_level_payload
-        from app.search.access import AccessPolicy
         repo = DocumentRepository(session)
         doc = repo.get(doc_id)
         if doc is None:
             raise Http404
-        user_ctx = domain_user_context(session, request.user)
-        if user_ctx is None:
-            raise Http404
-        payload = doc_level_payload(doc)
-        if not AccessPolicy.for_user(user_ctx).allows(payload):
+        if not can_read_doc(session, request.user, doc):
             raise Http404   # 권한 없음도 404로(존재 노출 방지)
         path = repo.get_original_path(doc_id)
         if not path or not os.path.exists(path):

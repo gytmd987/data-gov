@@ -241,7 +241,11 @@
         {% csrf_token %}<input type="hidden" name="action" value="save">
         <h4><svg class="ic sm"><use href="#i-edit"/></svg> 내용 수정</h4>
         <div class="field"><label>문서 종류</label>
-          <select name="doc_type">{% for o in opts.doc_type %}
+          <select name="doc_type" required>
+            {% if doc.classification.doc_type.value not in opts.doc_type %}
+            <option value="" selected>― 문서 종류를 고르세요 ―</option>
+            {% endif %}
+            {% for o in opts.doc_type %}
             <option value="{{ o }}" {% if doc.classification.doc_type.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
         <div class="field"><label>제목</label>
           <input name="title" value="{{ doc.classification.title_normalized|default_if_none:'' }}"></div>

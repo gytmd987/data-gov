@@ -8,6 +8,8 @@ create_all은 '새 테이블'만 만들고 '기존 테이블의 새 컬럼'은 �
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import text
 
 from app.db.session import create_all, make_engine
@@ -31,13 +33,40 @@ _DROP_COLUMNS = [
 ]
 
 
-def main() -> int:
-    engine = make_engine()
-    create_all(engine)            # 새 테이블(feedback 등) 생성
+def _backfill_access_tokens(engine) -> int:
+    """documents.access_groups → document_access_tokens 백필(멱등).
+
+    이 테이블이 비어 있으면 목록·문서검색이 권한 필터로 아무것도 못 찾으므로,
+    새 테이블 생성 후 반드시 한 번 채워야 한다.
+    """
+    from sqlalchemy.orm import Session
+
+    from app.db.models import Document
+    from app.db.repositories import DocumentRepository
+
+    n = 0
+    with Session(engine) as s:
+        repo = DocumentRepository(s)
+        for doc_id, groups in s.execute(
+                text("SELECT doc_id, access_groups FROM documents")).all():
+            tokens = groups if isinstance(groups, list) else json.loads(groups or "[]")
+            repo.sync_access_tokens(doc_id, tokens)
+            n += 1
+        s.commit()
+    _ = Document   # (모델 임포트로 테이블 메타데이터 등록 보장)
+    return n
+
+
+def main(engine=None) -> int:
+    engine = engine or make_engine()   # engine 주입은 테스트용
+    create_all(engine)            # 새 테이블(feedback, document_access_tokens 등) 생성
     with engine.begin() as conn:
         for table, col, coltype in _COLUMNS:
-            conn.execute(text(
-                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+            except Exception:      # 구버전 SQLite 는 IF NOT EXISTS 미지원
+                continue
             print(f"  OK: {table}.{col}")
         for table, col in _DROP_COLUMNS:
             # Postgres 는 IF EXISTS 지원, SQLite(3.35+) 는 미지원 → 순차 시도.
@@ -51,6 +80,8 @@ def main() -> int:
                 except Exception:
                     continue
             print(f"  {'OK(drop)' if dropped else 'skip(drop)'}: {table}.{col}")
+    n = _backfill_access_tokens(engine)
+    print(f"  OK: document_access_tokens 백필 {n}건")
     print("마이그레이션 완료.")
     return 0
 

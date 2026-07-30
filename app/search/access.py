@@ -30,6 +30,35 @@ class UserContext:
 
 
 @dataclass(frozen=True)
+class Visibility:
+    """관리 화면(목록·상세·문서 검색)에서 이 사용자에게 보여도 되는 문서의 범위.
+
+    - read_tokens: 사용자의 조직 토큰. 문서 열람 토큰과 겹치면 볼 수 있다.
+    - manage_node_ids: 부서장이 관리하는 작성부서(subtree). 열람 토큰과 무관하게
+      자기 부서 문서는 관리해야 하므로 함께 허용한다.
+    - unrestricted: 관리자 — 제한 없음.
+
+    채팅 검색은 AccessPolicy(토큰+생애주기)를 쓰고, 이쪽은 '관리 화면에서 보이는 범위'다.
+    둘 다 DB/Qdrant 단에서 거르며, 화면 렌더 단계에서 거르지 않는다.
+    """
+
+    read_tokens: frozenset[str] = frozenset()
+    manage_node_ids: frozenset[int] = frozenset()
+    unrestricted: bool = False
+
+    @classmethod
+    def admin(cls) -> "Visibility":
+        return cls(unrestricted=True)
+
+    def allows_tokens(self, doc_tokens) -> bool:
+        """이 문서의 열람 토큰으로 볼 수 있는지(생애주기 무관, 순수 권한 판정)."""
+        if self.unrestricted:
+            return True
+        tokens = set(doc_tokens or []) or {"*"}
+        return "*" in tokens or bool(tokens & set(self.read_tokens))
+
+
+@dataclass(frozen=True)
 class AccessPolicy:
     user: UserContext
     today: date

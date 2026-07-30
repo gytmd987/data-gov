@@ -40,6 +40,11 @@ def doc_types() -> list[str]:
     return list(_load()["metadata"]["doc_types"])
 
 
+def doc_type_hints() -> dict[str, str]:
+    """문서 종류별 판별 기준(AI 분류 프롬프트에 주입). 없으면 빈 dict."""
+    return dict(_load()["metadata"].get("doc_type_hints") or {})
+
+
 def departments() -> list[str]:
     return list(_load()["metadata"].get("departments") or [])
 

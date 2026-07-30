@@ -607,6 +607,81 @@ def main() -> int:
     assert rpage.count('data-name="related_pick"') == 1, "관련 문서는 검색 전용이어야 함"
     print("[유사관계] 유사 문서 감지 · 등록 단계 버전 정리(AI 후보+검색) · 관련문서 검색 전용 ✅")
 
+    # 14) 권한: 형제 파트 가시성 + 자동완성/상세 URL 우회 차단
+    s7 = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository as _Org, UserRepository as _Users
+        org7 = _Org(s7)
+        m_grp = org7.create_node("ㅁ그룹", "group", parent_id=team.id)
+        n_part = org7.create_node("ㄴ파트", "part", parent_id=m_grp.id)
+        o_part = org7.create_node("ㅇ파트", "part", parent_id=m_grp.id)
+        x_grp = org7.create_node("ㅅ그룹", "group", parent_id=team.id)
+        u7 = _Users(s7)
+        u7.set_memberships("nlee@company.com", [n_part.id], display_name="ㄴ파트원")
+        u7.set_memberships("okim@company.com", [o_part.id], display_name="ㅇ파트원")
+        u7.set_memberships("xpark@company.com", [x_grp.id], display_name="ㅅ그룹원")
+        s7.commit()
+
+        svc7 = bridge.get_review_service(s7)
+        d = _pl.Path(_tf.gettempdir())
+        (d / "그룹공개문서.txt").write_text("ㅁ그룹 전체에 공개하는 운영 안내.", encoding="utf-8")
+        (d / "파트전용문서.txt").write_text("ㄴ파트 내부에서만 보는 대외비 메모.", encoding="utf-8")
+        pub = svc7.start_ingestion(str(d / "그룹공개문서.txt"), ingested_by="nlee@company.com",
+                                   folder_node_id=n_part.id)
+        svc7.submit_review(pub, governance=GovernanceBlock(
+            author_node_id=n_part.id, access_selections=[f"node:{m_grp.id}"]),
+            lifecycle_overrides={"status": "active"})
+        sec = svc7.start_ingestion(str(d / "파트전용문서.txt"), ingested_by="nlee@company.com",
+                                   folder_node_id=n_part.id)
+        svc7.submit_review(sec, governance=GovernanceBlock(
+            author_node_id=n_part.id, access_selections=[f"node:{n_part.id}"]),
+            lifecycle_overrides={"status": "active"})
+        s7.commit()
+    finally:
+        s7.close()
+
+    for uid in ("nlee@company.com", "okim@company.com", "xpark@company.com"):
+        DjUser.objects.get_or_create(username=uid, defaults={"email": uid})
+
+    # ㅇ파트 사람: 상위(ㅁ그룹) 공개 문서는 보이고, 형제 파트 전용 문서는 안 보인다
+    c_o = Client()
+    c_o.force_login(DjUser.objects.get(username="okim@company.com"))
+    page = c_o.get("/console/docs/").content.decode()
+    assert "그룹공개문서" in page, "상위 부서 공개 문서가 형제 파트에 안 보임"
+    assert "파트전용문서" not in page, "형제 파트 전용 문서가 노출됨"
+
+    # 자동완성(연관/버전 지정)이 권한을 우회하지 못한다
+    hits = c_o.get("/console/docs/search?q=파트전용").json()["results"]
+    assert hits == [], f"권한 없는 문서가 문서 검색에 노출됨: {hits}"
+    assert c_o.get("/console/docs/search?q=그룹공개").json()["results"], "볼 수 있는 문서는 검색돼야 함"
+
+    # 상세는 URL 로 직접 열어도 막힌다 + 원본 다운로드도 404
+    detail = c_o.get(f"/console/docs/?doc={sec}", follow=True).content.decode()
+    assert "파트전용문서" not in detail, "URL 직접 접근으로 상세가 열림"
+    assert c_o.get(f"/docs/original/{sec}").status_code == 404, "권한 없는 원본이 내려받아짐"
+
+    # 다른 그룹 사람에겐 둘 다 안 보인다
+    c_x = Client()
+    c_x.force_login(DjUser.objects.get(username="xpark@company.com"))
+    page_x = c_x.get("/console/docs/").content.decode()
+    assert "그룹공개문서" not in page_x and "파트전용문서" not in page_x, "타 그룹에 문서가 노출됨"
+    print("[권한   ] 상위 부서 공개=형제 파트 노출 · 미권한 문서는 목록/검색/상세/다운로드 전부 차단 ✅")
+
+    # 15) 비밀번호 변경(로그인 사용자 본인)
+    pw_user, _ = DjUser.objects.get_or_create(username="pw@company.com",
+                                              defaults={"email": "pw@company.com"})
+    pw_user.set_password("OldPass!2026")
+    pw_user.save()
+    c_pw = Client()
+    assert c_pw.login(username="pw@company.com", password="OldPass!2026")
+    assert c_pw.get("/accounts/password/").status_code == 200
+    r_pw = c_pw.post("/accounts/password/", {"old_password": "OldPass!2026",
+                                             "new_password1": "BrandNew!2026",
+                                             "new_password2": "BrandNew!2026"})
+    assert r_pw.status_code == 302, "비밀번호 변경 실패"
+    assert Client().login(username="pw@company.com", password="BrandNew!2026"), "새 비밀번호로 로그인 불가"
+    print("[비밀번호] 본인 비밀번호 변경 · 새 비밀번호 로그인 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 
