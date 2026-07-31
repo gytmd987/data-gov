@@ -230,6 +230,34 @@ def confirm(svc, doc_id: str) -> None:
     svc.session.commit()
 
 
+TITLE_SAMPLE = 30      # dry-run 에서 보여줄 '파일명 → 제목' 예시 수
+
+
+def _print_title_preview(items: list[PlanItem], limit: int = TITLE_SAMPLE) -> None:
+    """'원본 파일명 → 저장될 제목' 예시. 만 건을 돌리기 전에 눈으로 확인하라고 있는 것.
+
+    파일명이 바뀌는 것(잡음 제거·날짜 정규화)만 보여준다. AI가 채우는 날짜·제목은
+    아직 모르므로, 여기 안 나온 날짜가 실제로는 앞에 붙을 수 있다.
+    """
+    from app.ingestion.titletools import compose_title
+
+    changed = []
+    for it in items:
+        stem = it.path.stem
+        title = compose_title(it.path.name)
+        if title != stem:
+            changed.append((stem, title))
+    if not changed:
+        return
+    print(f"\n제목 정리 예시 — 전체 {len(changed)}건이 바뀝니다"
+          f"{f' (앞 {limit}건만 표시)' if len(changed) > limit else ''}\n")
+    width = min(52, max(len(a) for a, _ in changed[:limit]))
+    for before, after in changed[:limit]:
+        print(f"  {before[:width]:<{width}} → {after}")
+    print("\n  ※ 파일명에 날짜가 없는 문서는 AI가 찾은 작성일이 앞에 (YY-MMDD) 로 붙습니다.")
+    print("     정리 규칙을 바꾸려면 config/system.yaml 의 metadata.title_cleanup 을 수정하세요.")
+
+
 # ── dry-run 리포트 ───────────────────────────────────────────────────────────
 def print_plan(items: list[PlanItem], auto_confirm: bool) -> None:
     by_node: dict[str, list[PlanItem]] = {}
@@ -245,6 +273,8 @@ def print_plan(items: list[PlanItem], auto_confirm: bool) -> None:
             print(f"        · {it.path.name}")
         if len(group) > 3:
             print(f"        · … 외 {len(group) - 3}건")
+
+    _print_title_preview(items)
 
     unfiled = by_node.get(UNFILED_LABEL, [])
     if unfiled:

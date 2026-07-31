@@ -1,4 +1,4 @@
-"""문서 제목 구성 — 파일명 기반 + 날짜 정규화.
+"""문서 제목 구성 — 파일명 기반 + 날짜 정규화 + 잡음 제거.
 
 규칙(사용자 확정):
 - 제목은 원본 파일명(확장자 제외)을 최대한 그대로 쓴다(내용을 크게 바꾸지 않음).
@@ -6,23 +6,59 @@
 - 날짜는 무조건 제일 앞에 `(YY-MMDD)` 형식으로 통일한다.
   파일명에 이미 날짜가 있어도 이 형식으로 바꿔 앞으로 옮긴다.
 - 파일명에 날짜가 없으면 AI가 추출한 문서 날짜를 쓴다(그것도 없으면 날짜 없이).
-- 제목이 너무 길어지지 않게 길이를 제한한다.
+- **명백한 잡음만 걷어낸다**: 끝에 붙은 버전·상태 꼬리표(`최종`,`v3`,`수정`),
+  앞에 붙은 복사 흔적(`사본 - 복사본 -`), 장식 문자(`★■`).
+  꼬리표를 지워야 같은 문서의 신·구 버전이 같은 제목으로 묶여 버전 정리가 동작한다.
+- **부서 말머리(`[인사팀]`)와 괄호 표기(`(안)`)는 보존한다** — 의미가 있는 정보다.
+- 제목이 너무 길어지면 단어 경계에서 자른다.
+
+지우는 목록은 `config/system.yaml` 의 `metadata.title_cleanup` 에서 조정한다.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 _MAX_TITLE_LEN = 60
 
-# 파일명이 내용을 알 수 없는 값 → 이 경우엔 AI 제안 제목을 base 로 쓴다.
-_UNINFORMATIVE = {
-    "새문서", "새 문서", "무제", "제목없음", "제목 없음", "문서", "document",
-    "document1", "새파일", "새 파일", "untitled", "noname", "scan", "이미지",
+# 설정 파일이 없을 때를 대비한 코드 기본값(설정이 우선).
+_DEFAULTS: dict[str, object] = {
+    "noise_suffixes": ["최종본", "최종", "수정본", "수정", "초안", "final", "draft"],
+    "copy_prefixes": ["사본", "복사본", "copy of", "copy"],
+    "decorations": "★☆■□◆◇▶▷●○※◈",
+    "uninformative": ["새문서", "새 문서", "무제", "제목없음", "문서", "document",
+                      "untitled", "noname", "scan", "이미지", "붙임", "별첨", "첨부"],
+    "not_a_date_after": ["사번", "번호", "코드", "no", "#"],
 }
+
+
+def _rule(key: str):
+    from app import system_config
+    try:
+        value = system_config.title_cleanup().get(key)
+    except Exception:      # 설정 파일 문제로 적재가 멈추면 안 된다
+        value = None
+    return value if value else _DEFAULTS[key]
+
+
+@lru_cache(maxsize=1)
+def _uninformative() -> frozenset[str]:
+    return frozenset(str(x).strip().lower() for x in _rule("uninformative"))
+
+
+def _is_uninformative(base: str) -> bool:
+    """'무제', '붙임1' 처럼 내용을 알 수 없는 이름인가(뒤 숫자는 무시)."""
+    text = base.strip().lower()
+    if not text:
+        return True
+    if text in _uninformative():
+        return True
+    stripped = re.sub(r"[\s_\-]*\d+$", "", text).strip()   # 붙임1 → 붙임
+    return bool(stripped) and stripped in _uninformative()
 
 # 날짜 후보 패턴(먼저 매칭되는 것 우선). 모두 (year, month, day) 그룹을 준다.
 _DATE_PATTERNS = [
@@ -50,22 +86,89 @@ def _mk_date(y: int, m: int, d: int) -> Optional[date]:
         return None
 
 
+def _looks_like_id(text: str, start: int) -> bool:
+    """이 숫자 앞에 '사번/번호/No' 같은 말이 있으면 날짜가 아니라 식별번호로 본다.
+
+    (예: '사번 250728 인사기록' 의 250728 을 2025-07-28 로 잡아 지워버리던 문제)
+    """
+    before = text[max(0, start - 12):start].lower()
+    return any(str(k).strip().lower() in before for k in _rule("not_a_date_after"))
+
+
 def extract_date(text: str) -> tuple[Optional[date], str]:
     """텍스트에서 첫 날짜를 찾아 (date, 날짜를 제거한 텍스트) 반환. 없으면 (None, text)."""
     for pat in _DATE_PATTERNS:
         for mo in pat.finditer(text):
             d = _mk_date(int(mo.group("y")), int(mo.group("m")), int(mo.group("d")))
-            if d is not None:
-                cleaned = (text[:mo.start()] + " " + text[mo.end():])
-                return d, cleaned
+            if d is None or _looks_like_id(text, mo.start()):
+                continue
+            cleaned = (text[:mo.start()] + " " + text[mo.end():])
+            return d, cleaned
     return None, text
 
 
 def _tidy(text: str) -> str:
-    """날짜 제거 후 남은 구분자/공백 정리."""
-    text = re.sub(r"[\s_\-.]*[\[\](){}][\s_\-.]*", " ", text)  # 빈 괄호류 정리
-    text = re.sub(r"[\s_]+", " ", text)                        # 공백/언더스코어 정규화
+    """날짜 제거 후 남은 빈 괄호·구분자·장식 문자 정리.
+
+    **내용이 있는 괄호는 보존한다** — `(안)`, `[인사팀]` 은 의미 있는 표기다.
+    """
+    for ch in str(_rule("decorations")):
+        text = text.replace(ch, " ")
+    text = re.sub(r"[\s_\-.]*[\[({]\s*[\])}][\s_\-.]*", " ", text)  # 빈 괄호만 제거
+    text = re.sub(r"[\s_]+", " ", text)                            # 공백/언더스코어 정규화
+    text = re.sub(r"\(\s+", "(", text)                             # 괄호 안쪽 공백 정리
+    text = re.sub(r"\s+\)", ")", text)
     return text.strip(" -_.\t")
+
+
+def _strip_copy_prefix(text: str) -> str:
+    """앞에 붙은 복사 흔적 제거 — '사본 - 복사본 - 급여규정' → '급여규정'.
+
+    부서 말머리(`[인사팀]`)는 여기서 지우지 않는다(보존 대상).
+    """
+    words = "|".join(re.escape(str(p).strip()) for p in _rule("copy_prefixes"))
+    pat = re.compile(rf"^\s*(?:{words})\s*(?:[-–—~()]|\s)\s*", re.IGNORECASE)
+    for _ in range(5):                       # '사본 - 복사본 - ' 처럼 겹친 경우
+        new = pat.sub("", text)
+        if new == text:
+            break
+        text = new
+    return text.strip()
+
+
+def _strip_noise_suffix(text: str) -> str:
+    """끝에 붙은 버전·상태 꼬리표 제거 — '연차규정 최종 v3 (수정)' → '연차규정'.
+
+    **끝에서만** 지우므로 '최종 평가 지침' 같은 진짜 제목은 건드리지 않는다.
+    """
+    words = "|".join(re.escape(str(s).strip()) for s in _rule("noise_suffixes"))
+    pat = re.compile(
+        r"[\s_\-.]*[(\[]?\s*(?:"
+        rf"{words}"                              # 최종 / 수정 / final …
+        r"|v\s*\d+(?:\.\d+)*"                    # v2, v0.9
+        r"|ver\.?\s*\d+(?:\.\d+)*"               # ver 3
+        r"|rev\.?\s*\d+(?:\.\d+)*"               # rev2
+        r"|r\d+"                                 # r3
+        r")\s*[)\]]?\s*$",
+        re.IGNORECASE)
+    paren_num = re.compile(r"[\s_\-.]*\(\s*\d+\s*\)\s*$")   # 윈도우 중복 표시 '(1)'
+    for _ in range(6):                        # 여러 개가 겹쳐 붙은 경우 반복 제거
+        new = paren_num.sub("", pat.sub("", text)).rstrip(" -_.")
+        if new == text:
+            break
+        text = new
+    return text.strip()
+
+
+def _shorten(title: str, max_len: int) -> str:
+    """길이 제한 — 가능하면 단어 경계에서 자른다(단어 중간 절단 방지)."""
+    if len(title) <= max_len:
+        return title
+    cut = title[:max_len]
+    space = cut.rfind(" ")
+    if space >= max_len * 0.6:               # 너무 많이 날아가지 않을 때만 단어 경계 사용
+        cut = cut[:space]
+    return cut.rstrip(" -_.,([")
 
 
 def strip_date_prefix(title: str) -> str:
@@ -121,15 +224,13 @@ def compose_title(filename: str, ai_title: Optional[str] = None,
     """
     stem = Path(filename).stem.strip()
     d_in_name, cleaned = extract_date(stem)
-    base = _tidy(cleaned)
+    base = _strip_noise_suffix(_strip_copy_prefix(_tidy(cleaned)))
 
-    # 파일명이 비었거나 의미 없으면 AI 제안 제목으로 대체
-    if (not base or base.lower() in _UNINFORMATIVE) and ai_title:
-        base = ai_title.strip()
+    # 파일명이 비었거나('최종본.docx' 처럼 잡음뿐) 의미 없으면 AI 제안 제목으로 대체
+    if _is_uninformative(base) and ai_title:
+        base = _strip_noise_suffix(ai_title.strip())
 
     doc_date = d_in_name or parse_iso(ai_date)
     prefix = f"({doc_date:%y-%m%d}) " if doc_date else ""
-    title = (prefix + base).strip()
-    if len(title) > max_len:
-        title = title[:max_len].rstrip(" -_.")
+    title = _shorten((prefix + base).strip(), max_len)
     return title or stem or (ai_title or "").strip()

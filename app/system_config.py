@@ -40,6 +40,11 @@ def doc_types() -> list[str]:
     return list(_load()["metadata"]["doc_types"])
 
 
+def title_cleanup() -> dict[str, Any]:
+    """제목 정리 규칙(꼬리표·복사흔적·장식문자·무의미 파일명·날짜 오탐 방지)."""
+    return dict(_load()["metadata"].get("title_cleanup") or {})
+
+
 def doc_type_hints() -> dict[str, str]:
     """문서 종류별 판별 기준(AI 분류 프롬프트에 주입). 없으면 빈 dict."""
     return dict(_load()["metadata"].get("doc_type_hints") or {})
