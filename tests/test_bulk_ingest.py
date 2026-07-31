@@ -222,3 +222,42 @@ def test_unexpected_error_is_reported_not_raised(session, org, service, tmp_path
     monkeypatch.setattr(service, "start_ingestion", boom)
     kind, note = bi.ingest_one(_item(src, org["ㄴ"]), "bulk", auto_confirm=True)
     assert kind == "failed" and "vLLM 503" in note
+
+
+# ── 폴더 뼈대 생성 ───────────────────────────────────────────────────────────
+def test_make_dirs_mirrors_org_chart(session, org, tmp_path):
+    """조직도 이름 그대로 폴더가 생기고, 그 폴더가 다시 같은 노드로 매칭돼야 한다."""
+    base = tmp_path / "반입"
+    base.mkdir()
+    tree = _tree(session)
+    created, skipped = bi.make_dirs(base, tree)
+
+    assert skipped == []
+    assert (base / "People팀" / "ㅁ그룹" / "ㄴ파트").is_dir()
+    assert (base / "People팀" / "ㅁ그룹" / "ㅇ파트").is_dir()
+    assert set(created) == {"People팀", "People팀/ㅁ그룹",
+                            "People팀/ㅁ그룹/ㄴ파트", "People팀/ㅁ그룹/ㅇ파트"}
+
+    # 만든 폴더에 파일을 넣으면 그대로 그 부서로 매칭된다(왕복 검증)
+    (base / "People팀" / "ㅁ그룹" / "ㄴ파트" / "규정.txt").write_text("x", encoding="utf-8")
+    items = bi.make_plan(base, bi.build_node_index(tree), (), tree)
+    assert items[0].node_id == org["ㄴ"]
+
+
+def test_make_dirs_is_idempotent(session, org, tmp_path):
+    base = tmp_path / "반입"
+    base.mkdir()
+    tree = _tree(session)
+    bi.make_dirs(base, tree)
+    created, _ = bi.make_dirs(base, tree)
+    assert created == []            # 두 번째는 만들 게 없다
+
+
+def test_make_dirs_with_root_node_starts_below_it(session, org, tmp_path):
+    """--root-node 를 주면 그 노드 아래만 만든다(상위 경로는 안 만듦)."""
+    base = tmp_path / "반입"
+    base.mkdir()
+    tree = _tree(session)
+    created, _ = bi.make_dirs(base, tree, root_node_id=org["ㅁ"])
+    assert set(created) == {"ㄴ파트", "ㅇ파트"}
+    assert not (base / "People팀").exists()

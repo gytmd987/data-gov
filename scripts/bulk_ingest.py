@@ -86,6 +86,31 @@ def resolve_node(index: dict[tuple[str, ...], int], rel_dir: tuple[str, ...],
     return index.get(root_path) if root_path else None
 
 
+def make_dirs(base_dir: Path, tree, root_node_id: Optional[int] = None
+              ) -> tuple[list[str], list[str]]:
+    """조직도 모양대로 빈 폴더 뼈대를 만든다. (만든 경로 목록, 건너뛴 사유 목록).
+
+    폴더 이름이 조직도 이름과 한 글자라도 다르면 매칭이 안 되므로, 손으로 만들지 말고
+    이걸로 만든 뒤 파일만 넣는 것을 권장한다. 이미 있는 폴더는 그대로 둔다(멱등).
+    """
+    root_path = tuple(tree.name_path(root_node_id)) if root_node_id else ()
+    targets = tree.subtree(root_node_id) if root_node_id else tree.node_ids()
+    created: list[str] = []
+    skipped: list[str] = []
+    for node_id in targets:
+        names = tree.name_path(node_id)[len(root_path):]
+        if not names:
+            continue
+        if any("/" in n or "\\" in n for n in names):
+            skipped.append(f"{' / '.join(names)} (이름에 / 가 있어 폴더로 만들 수 없음)")
+            continue
+        path = base_dir.joinpath(*names)
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            created.append(str(path.relative_to(base_dir)))
+    return sorted(created), skipped
+
+
 def make_plan(base_dir: Path, index: dict[tuple[str, ...], int],
               root_path: tuple[str, ...], tree) -> list[PlanItem]:
     items: list[PlanItem] = []
@@ -237,6 +262,8 @@ def main(argv=None) -> int:
     ap.add_argument("--root-node", default=None,
                     help="반입 폴더가 대응되는 조직 노드(이름 또는 id). "
                          "생략하면 폴더 이름이 조직도 최상위부터 일치해야 함")
+    ap.add_argument("--make-dirs", action="store_true",
+                    help="조직도 모양대로 빈 폴더만 만들고 종료(파일 넣기 전 준비 단계)")
     ap.add_argument("--dry-run", action="store_true", help="적재 없이 매핑만 확인")
     ap.add_argument("--limit", type=int, default=0, help="앞에서 N건만 처리(속도 측정용)")
     ap.add_argument("--auto-confirm", action="store_true",
@@ -250,6 +277,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     base_dir = Path(args.dir).expanduser().resolve()
+    if args.make_dirs:
+        base_dir.mkdir(parents=True, exist_ok=True)   # 준비 단계라 없으면 만들어 준다
     if not base_dir.is_dir():
         print(f"⛔ 폴더가 없습니다: {base_dir}")
         return 2
@@ -261,14 +290,28 @@ def main(argv=None) -> int:
         org = OrgRepository(session)
         tree = org.load_tree()
         index = build_node_index(tree)
+        root_node_id: Optional[int] = None
         root_path: tuple[str, ...] = ()
         if args.root_node:
-            node_id = _find_node(org, tree, args.root_node)
-            if node_id is None:
+            root_node_id = _find_node(org, tree, args.root_node)
+            if root_node_id is None:
                 print(f"⛔ 조직도에서 '{args.root_node}' 를 찾지 못했습니다.")
                 return 2
-            root_path = tuple(tree.name_path(node_id))
+            root_path = tuple(tree.name_path(root_node_id))
             print(f"시작 노드: {' / '.join(root_path)}")
+
+        if args.make_dirs:
+            created, skipped = make_dirs(base_dir, tree, root_node_id)
+            print(f"\n조직도 모양으로 폴더를 만들었습니다: {base_dir}\n")
+            for rel in created:
+                print(f"  + {rel}")
+            if not created:
+                print("  (이미 모두 있습니다)")
+            for why in skipped:
+                print(f"  ⚠️ 건너뜀: {why}")
+            print("\n이제 각 폴더에 문서를 넣은 뒤 --dry-run 으로 확인하세요.")
+            return 0
+
         items = make_plan(base_dir, index, root_path, tree)
     finally:
         session.close()
