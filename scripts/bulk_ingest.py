@@ -278,9 +278,16 @@ def main(argv=None) -> int:
 
     base_dir = Path(args.dir).expanduser().resolve()
     if args.make_dirs:
-        base_dir.mkdir(parents=True, exist_ok=True)   # 준비 단계라 없으면 만들어 준다
+        try:                       # 준비 단계라 반입 폴더가 없으면 만들어 준다
+            base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"⛔ 폴더를 만들 수 없습니다: {base_dir}\n   ({e})")
+            print("   쓰기 권한이 있는 경로를 쓰거나, 먼저 만들어 주세요:")
+            print(f"     sudo mkdir -p {base_dir} && sudo chown $USER {base_dir}")
+            return 2
     if not base_dir.is_dir():
         print(f"⛔ 폴더가 없습니다: {base_dir}")
+        print("   경로를 확인하세요. 반입 폴더를 새로 만들려면 --make-dirs 를 붙이세요.")
         return 2
 
     from app.db.repositories import OrgRepository

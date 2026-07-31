@@ -261,3 +261,21 @@ def test_make_dirs_with_root_node_starts_below_it(session, org, tmp_path):
     created, _ = bi.make_dirs(base, tree, root_node_id=org["ㅁ"])
     assert set(created) == {"ㄴ파트", "ㅇ파트"}
     assert not (base / "People팀").exists()
+
+
+def test_make_dirs_reports_permission_error_kindly(tmp_path, monkeypatch, capsys):
+    """쓰기 권한 없는 경로면 트레이스백 대신 무엇을 하라는지 알려준다."""
+    def denied(self, *a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("pathlib.Path.mkdir", denied)
+    rc = bi.main(["--dir", str(tmp_path / "srv" / "반입"), "--make-dirs"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "폴더를 만들 수 없습니다" in out and "sudo mkdir -p" in out
+
+
+def test_missing_dir_without_make_dirs_hints_the_flag(tmp_path, capsys):
+    rc = bi.main(["--dir", str(tmp_path / "없는폴더"), "--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 2 and "--make-dirs" in out
