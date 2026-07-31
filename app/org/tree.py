@@ -55,6 +55,10 @@ class OrgTree:
     def get(self, node_id: int) -> Optional[OrgNodeView]:
         return self._by_id.get(node_id)
 
+    def node_ids(self) -> list[int]:
+        """모든 노드 id."""
+        return list(self._by_id)
+
     def ancestors(self, node_id: int) -> list[int]:
         """자기 제외, 부모부터 위로."""
         out: list[int] = []
