@@ -177,9 +177,25 @@ def index(ctx: IngestionContext, embedder: Embedder, indexer: Indexer) -> int:
 
 
 def build_qa_chunk_text(doc) -> str:
-    """합성 Q&A 청크 텍스트 = 요약 + 핵심 키워드 + 예상 Q&A. 없으면 빈 문자열."""
+    """합성 Q&A 청크 텍스트 = 제목·파일명·부서 + 요약 + 핵심 키워드 + 예상 Q&A.
+
+    본문 청크에는 제목·파일명이 안 들어가므로, 이름으로 문서를 찾는 질문
+    ("연차규정 파일 어디 있어?")이 검색에 안 걸린다. 이 합성 청크는 원래
+    문서 단위 메타데이터를 모아 두는 자리이므로 여기에 함께 싣는다.
+    (본문 청크 벡터는 건드리지 않아 리랭킹·유사문서 판정에 영향이 없다.)
+    """
     cls = doc.classification
+    ident = doc.identification
     parts: list[str] = []
+    head = []
+    if cls.title_normalized:
+        head.append(f"제목: {cls.title_normalized}")
+    if ident.source_filename:
+        head.append(f"파일명: {ident.source_filename}")
+    if cls.department:
+        head.append(f"작성부서: {cls.department}")
+    if head:
+        parts.append(" · ".join(head))
     if cls.summary:
         parts.append(cls.summary)
     if cls.keywords:
