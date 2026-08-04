@@ -98,6 +98,11 @@ select:hover{background-color:var(--accent-weak);border-color:var(--accent-line)
 .dd .menu label{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;
                 cursor:pointer;font-size:var(--fs-sm);white-space:nowrap}
 .dd .menu label:hover{background:var(--accent-weak)}
+/* 상위 부서를 골라 자동 포함된 하위 — 흐리게 두고 이유를 붙인다 */
+.dd .menu label.covered{color:var(--sub);cursor:default}
+.dd .menu label.covered:hover{background:transparent}
+.dd .menu label .incl{margin-left:auto;font-size:var(--fs-xs);color:var(--accent);
+                      background:var(--accent-weak);border-radius:5px;padding:1px 6px}
 
 /* ── 표 ─────────────────────────────────────────────────────────────────── */
 table{border-collapse:separate;border-spacing:0;width:100%;background:var(--panel);
@@ -179,14 +184,49 @@ document.querySelectorAll('details.dd').forEach(dd => {
     dd.querySelector('summary').textContent =
       names.length ? names.join(', ') : (dd.dataset.placeholder || '(선택 안 함)');
   };
+  // 조직 트리 드롭다운: 상위 부서를 고르면 하위는 자동 포함이므로 따로 못 고르게 한다
+  // (둘 다 체크할 수 있으면 "하위도 눌러야 하나?" 하고 헷갈린다)
+  const isTree = dd.classList.contains('tree');
+  const boxes = () => [...dd.querySelectorAll('input[data-node]')];
+  const parentOf = new Map();
+  if (isTree) boxes().forEach(b => parentOf.set(b.dataset.node, b.dataset.parent || ''));
+  const coveredByAncestor = (node) => {
+    let p = parentOf.get(node);
+    while (p) {
+      const box = dd.querySelector(`input[data-node="${p}"]`);
+      if (box && box.checked) return true;
+      p = parentOf.get(p);
+    }
+    return false;
+  };
+  const syncTree = () => {
+    if (!isTree) return;
+    boxes().forEach(b => {
+      const covered = coveredByAncestor(b.dataset.node);
+      b.disabled = covered;
+      if (covered) b.checked = false;         // 상위만 보내면 서버가 하위까지 펼친다
+      const label = b.closest('label');
+      label.classList.toggle('covered', covered);
+      let tag = label.querySelector('.incl');
+      if (covered && !tag) {
+        tag = document.createElement('span');
+        tag.className = 'incl';
+        tag.textContent = '상위에 포함됨';
+        label.appendChild(tag);
+      } else if (!covered && tag) tag.remove();
+    });
+  };
+
   dd.addEventListener('change', e => {
     const t = e.target;
     if (t.checked && 'exclusive' in t.dataset)
       dd.querySelectorAll('input:checked').forEach(i => { if (i !== t) i.checked = false; });
     else if (t.checked)
       dd.querySelectorAll('input[data-exclusive]:checked').forEach(i => i.checked = false);
+    syncTree();
     refresh();
   });
+  syncTree();
   refresh();
 });
 document.addEventListener('click', e => {

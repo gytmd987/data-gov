@@ -98,3 +98,41 @@ def test_group_sources_flags_past_documents():
     assert groups["expired.txt"]["is_past"] is True      # 만료 상태
     assert groups["old.txt"]["is_past"] is True          # 대체됨
     assert groups["current.txt"]["is_past"] is False     # 현행
+
+
+# ── 인용 번호를 화면의 출처 번호와 맞춘다 ───────────────────────────────────
+def test_renumber_citations_matches_source_order():
+    """본문 [청크번호] → 화면 [출처번호]. 어긋나면 읽는 사람이 헷갈린다."""
+    from app.search.present import renumber_citations
+    sources = [{"index": 1, "markers": [2, 3]}, {"index": 2, "markers": [5]}]
+    # 인용 앞 공백은 붙여 준다(화면에서 번호 칩이 문장에 딱 붙어야 읽기 좋다)
+    assert renumber_citations("연차는 15일 [2]. 신청은 인사팀 [5].", sources) == \
+        "연차는 15일[1]. 신청은 인사팀[2]."
+
+
+def test_renumber_merges_same_document_markers():
+    """한 문서의 여러 청크를 인용하면 하나의 출처 번호로 합친다."""
+    from app.search.present import renumber_citations
+    sources = [{"index": 1, "markers": [1, 2]}]
+    assert renumber_citations("가 [1] 나 [2]", sources) == "가[1] 나[1]"
+    assert renumber_citations("가 [1][2]", sources) == "가[1]"
+
+
+def test_renumber_drops_unmatched_markers():
+    """출처에 없는 번호(모델이 지어낸 것)는 지운다."""
+    from app.search.present import renumber_citations
+    sources = [{"index": 1, "markers": [1]}]
+    assert renumber_citations("연차는 15일입니다 [7].", sources) == "연차는 15일입니다."
+
+
+def test_group_sources_assigns_display_index():
+    from app.search.present import group_sources
+    from app.search.types import Answer, Citation, RetrievedChunk
+    chunks = [RetrievedChunk(chunk_id="c1", doc_id="d1", text="본문", score=1.0,
+                             payload={"status": "active"}, title="규정"),
+              RetrievedChunk(chunk_id="c2", doc_id="d2", text="본문2", score=0.9,
+                             payload={"status": "active"}, title="지침")]
+    ans = Answer(text="x [1] y [2]", used_chunks=chunks, citations=[
+        Citation(marker=1, doc_id="d1", title="규정", chunk_id="c1"),
+        Citation(marker=2, doc_id="d2", title="지침", chunk_id="c2")])
+    assert [g["index"] for g in group_sources(ans)] == [1, 2]

@@ -113,7 +113,7 @@ def send(request):
             if user_ctx is None:
                 return JsonResponse({"error": f"'{email}' 사용자의 권한 정보가 없습니다. "
                                      "관리자에게 사용자 등록을 요청하세요."}, status=403)
-            from app.search.present import group_sources
+            from app.search.present import group_sources, renumber_citations
             pipe = bridge.get_search_pipeline(session)
             today = date.today()
             # 폴더 스코프: 상위 폴더를 고르면 하위 폴더 문서까지 포함(subtree)
@@ -127,8 +127,9 @@ def send(request):
                     folder_ids = None
             ans = pipe.answer(text, user_ctx, today=today, include_past=include_past,
                               folder_node_ids=folder_ids)
-            answer_text = ans.text
             sources = group_sources(ans, today=today)
+            # 본문의 인용 번호를 화면의 출처 번호와 일치시킨다(어긋나면 헷갈린다)
+            answer_text = renumber_citations(ans.text, sources)
             _attach_related(session, sources, user_ctx, today)
             # 표 데이터가 검색에 잡히면 구조화(SQL) 답변 시도 → 정확 조회·집계
             try:

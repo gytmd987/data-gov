@@ -120,3 +120,17 @@ def test_to_iso_accepts_localized_and_common_formats():
     assert to_iso(date(2026, 6, 30)) == "2026-06-30"
     assert to_iso("") is None and to_iso(None) is None
     assert to_iso("아무 날짜 아님") is None
+
+
+def test_office_default_filenames_use_ai_title():
+    """'새 Microsoft Word 문서' 처럼 프로그램이 붙인 기본 이름은 제목으로 쓰지 않는다."""
+    for name in ["새 Microsoft Word 문서", "새 Microsoft Excel 워크시트",
+                 "New Microsoft Word Document", "문서1", "Document (2)",
+                 "무제", "IMG_1234", "제목 없음", "20250101"]:
+        got = compose_title(f"{name}.docx", ai_title="연차 휴가 운영 지침")
+        assert "연차 휴가 운영 지침" in got, f"{name} → {got}"
+        assert "Microsoft" not in got and "Document" not in got
+
+
+def test_informative_filename_still_wins_over_ai_title():
+    assert compose_title("연차 휴가 규정.docx", ai_title="AI가 지은 제목") == "연차 휴가 규정"

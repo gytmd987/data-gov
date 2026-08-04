@@ -50,15 +50,35 @@ def _uninformative() -> frozenset[str]:
     return frozenset(str(x).strip().lower() for x in _rule("uninformative"))
 
 
+# 오피스·탐색기가 자동으로 붙이는 기본 이름들. 프로그램 이름이 끼어 있어도 잡는다.
+#   '새 Microsoft Word 문서', 'New Microsoft Excel Worksheet', '문서1', 'Document (2)'
+_EMPTY_NAME_PATTERNS = [
+    re.compile(r"^새[\s_]*.{0,30}?(문서|파일|폴더|시트|프레젠테이션)\s*\(?\d*\)?$"),
+    re.compile(r"^new[\s_]*.{0,30}?(document|file|worksheet|workbook|presentation)"
+               r"\s*\(?\d*\)?$", re.IGNORECASE),
+    re.compile(r"^(문서|파일|무제|제목\s*없음|제목없음|이미지|사진|스캔)\s*\(?\d*\)?$"),
+    re.compile(r"^(document|doc|file|untitled|noname|image|photo|scan|img|screenshot)"
+               r"[\s_\-]*\(?\d*\)?$", re.IGNORECASE),
+    re.compile(r"^[\d\s._\-()]+$"),        # 숫자·구분자뿐인 이름
+]
+
+
 def _is_uninformative(base: str) -> bool:
-    """'무제', '붙임1' 처럼 내용을 알 수 없는 이름인가(뒤 숫자는 무시)."""
+    """내용을 알 수 없는 이름인가.
+
+    '무제'·'붙임1' 같은 고정 목록(설정)과, '새 Microsoft Word 문서'처럼 프로그램이
+    자동으로 붙이는 기본 이름 패턴을 함께 본다. 이런 이름은 제목으로 쓸 값이 없으므로
+    AI 가 내용을 보고 지은 제목으로 대체한다.
+    """
     text = base.strip().lower()
     if not text:
         return True
     if text in _uninformative():
         return True
-    stripped = re.sub(r"[\s_\-]*\d+$", "", text).strip()   # 붙임1 → 붙임
-    return bool(stripped) and stripped in _uninformative()
+    stripped = re.sub(r"[\s_\-]*\(?\d+\)?$", "", text).strip()   # 붙임1 → 붙임
+    if stripped and stripped in _uninformative():
+        return True
+    return any(p.match(base.strip()) for p in _EMPTY_NAME_PATTERNS)
 
 # 날짜 후보 패턴(먼저 매칭되는 것 우선). 모두 (year, month, day) 그룹을 준다.
 _DATE_PATTERNS = [

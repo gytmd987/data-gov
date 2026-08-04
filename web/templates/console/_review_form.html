@@ -35,23 +35,23 @@
 
   <div style="display:flex;gap:24px;margin-top:14px;flex-wrap:wrap">
     <div style="flex:1;min-width:300px">
-      <h4>① 내용 분류 <span class="msg-note">(AI가 채움 — 확인/수정)</span></h4>
+      <h4>① 내용 분류</h4>
       <div class="field"><label>문서 종류</label>
         {# AI가 판단 못 한(unknown) 경우 목록에 맞는 항목이 없다. 그냥 두면 브라우저가
            맨 첫 항목을 고른 것처럼 보여 엉뚱한 종류로 저장된다 → 빈 선택지를 먼저 둔다. #}
         <select name="doc_type" required>
           {% if view.classification.doc_type not in opts.doc_type %}
-          <option value="" selected>― 문서 종류를 고르세요 (AI가 판단하지 못함) ―</option>
+          <option value="" selected>― 문서 종류 선택 ―</option>
           {% endif %}
           {% for o in opts.doc_type %}
           <option value="{{ o }}" {% if o == view.classification.doc_type %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
       <div class="field"><label>제목</label>
         <input name="title" value="{{ view.classification.title_normalized|default_if_none:'' }}"></div>
-      <div class="field"><label>요약 <span class="msg-note">(AI 필수)</span></label>
+      <div class="field"><label>요약</label>
         <textarea name="summary" rows="3">{{ view.classification.summary|default_if_none:'' }}</textarea></div>
-      <div class="field"><label>핵심 키워드 <span class="msg-note">(AI 필수 · 쉼표 구분)</span></label>
+      <div class="field"><label>핵심 키워드 <span class="msg-note">(쉼표 구분)</span></label>
         <input name="keywords" value="{{ view.classification.keywords|join:', ' }}"></div>
-      <div class="field"><label>예상 Q&amp;A <span class="msg-note">(AI 필수 — 자동 생성)</span></label>
+      <div class="field"><label>예상 Q&amp;A</label>
         <div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:#fbfcfe;font-size:var(--fs-sm);max-height:160px;overflow-y:auto;line-height:1.6">
           {% for qa in view.classification.expected_qa %}
           <p style="margin-bottom:6px"><b>Q.</b> {{ qa.question }}<br><b>A.</b> {{ qa.answer }}</p>
@@ -65,14 +65,15 @@
         </select></div>
     </div>
     <div style="flex:1;min-width:300px">
-      <h4>② 접근 권한 <span class="msg-note">(기본: 팀 전체)</span></h4>
+      <h4>② 접근 권한</h4>
       <div class="field"><label>열람 가능 대상</label>
-        <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+        <details class="dd tree" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
           {% for n in node_opts %}
-          <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
+          <label><input type="checkbox" name="access" value="node:{{ n.id }}"
+                 data-node="{{ n.id }}" data-parent="{{ n.parent_id|default_if_none:'' }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
           {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다. 먼저 <a href="/console/org/">조직도</a>를 만드세요.</span>{% endfor %}
         </div></details>
-        <span class="msg-note">아무것도 안 고르면 팀 전체가 열람합니다. 부서를 고르면 그 부서와 <b>하위 조직 전원</b> + <b>상위 부서장</b>이 열람합니다.</span></div>
+        <span class="msg-note">아무것도 안 고르면 팀 전체가 열람합니다. 부서를 고르면 그 부서와 <b>하위 조직 전원</b> + <b>상위 부서장</b>이 열람합니다(하위 부서는 자동 포함).</span></div>
       <div class="field"><label>작성자</label>
         <input name="author_name" placeholder="이름" value="{{ view.governance.author_name|default_if_none:'' }}">
         <input name="author_id" placeholder="ID(이메일)" value="{{ view.governance.author_id|default_if_none:'' }}" style="margin-top:6px"></div>

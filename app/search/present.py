@@ -51,7 +51,33 @@ def group_sources(answer: Answer, today: Optional[date] = None) -> list[dict[str
                 g["passages"].append({"marker": cit.marker, "page": cit.page_no,
                                       "text": uc.text})
     out = list(groups.values())
-    for g in out:
+    for i, g in enumerate(out, start=1):
         g["markers"].sort()
         g["passages"].sort(key=lambda p: p["marker"])
+        g["index"] = i          # 화면에 보이는 출처 번호
     return out
+
+
+def renumber_citations(text: str, sources: list[dict[str, Any]]) -> str:
+    """답변 본문의 `[청크번호]` 를 **화면의 출처 번호**로 바꾼다.
+
+    본문은 청크 단위(`[2]`)로 인용하는데 출처는 문서 단위로 묶여서, 그대로 두면
+    답변의 [2] 와 '출처 1' 이 어긋나 읽는 사람이 헷갈린다. 같은 문서를 가리키는
+    마커는 하나의 출처 번호로 합치고, 어떤 출처에도 안 걸린 마커는 지운다.
+    """
+    import re
+
+    mapping: dict[int, int] = {}
+    for g in sources:
+        for m in g.get("markers", []):
+            mapping[m] = g["index"]
+
+    def sub(match: "re.Match") -> str:
+        n = int(match.group(1))
+        return f"[{mapping[n]}]" if n in mapping else ""
+
+    out = re.sub(r"\[(\d+)\]", sub, text or "")
+    out = re.sub(r"(\[\d+\])(?:\s*\1)+", r"\1", out)      # 같은 번호 연속 중복 제거
+    out = re.sub(r"[ \t]+(\[\d+\])", r"\1", out)          # '…입니다 [1].' → '…입니다[1].'
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return re.sub(r"\s+([,.!?;:])", r"\1", out).strip()

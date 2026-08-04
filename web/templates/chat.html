@@ -40,6 +40,30 @@
            border-radius:0 0 10px 10px;line-height:1.7}
 .src .body p{margin-bottom:9px}
 .src .rel{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);font-size:var(--fs-xs)}
+.src[open]{border-color:var(--accent-line)}
+
+/* 인용 번호 칩 — 답변 본문의 [n] 과 출처 머리의 번호가 같은 것임을 드러낸다 */
+.cite{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;
+      padding:0 5px;margin:0 2px;border-radius:5px;background:var(--accent-weak);
+      color:var(--accent);font-size:11px;font-weight:700;vertical-align:1px;
+      cursor:pointer;user-select:none}
+.cite:hover{background:var(--accent);color:#fff}
+.src summary .cite{cursor:inherit}
+
+/* 근거 본문 — 마크다운 표를 표답게 */
+.psg{margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--line)}
+.psg:last-of-type{border-bottom:0;margin-bottom:0}
+.psg .pg{font-size:var(--fs-xs);color:var(--sub);margin-bottom:4px}
+.psg p{margin-bottom:6px}
+.psg .mdh{font-weight:700;margin:8px 0 4px}
+.psg .mdli{padding-left:14px;position:relative}
+.psg .mdli::before{content:"·";position:absolute;left:4px;color:var(--sub)}
+.mdwrap{overflow-x:auto;margin:6px 0}
+.mdtbl{border-collapse:collapse;font-size:var(--fs-xs);min-width:100%}
+.mdtbl th,.mdtbl td{border:1px solid var(--line);padding:5px 9px;text-align:left;
+                    white-space:nowrap}
+.mdtbl th{background:var(--bg);font-weight:600}
+.mdtbl tr:nth-child(even) td{background:#fbfcfe}
 
 /* 피드백 — 답변 말풍선 '밖'에 별도 줄로 */
 .fb{display:flex;align-items:center;gap:6px;margin-top:8px;padding-left:2px;
@@ -152,7 +176,55 @@ document.getElementById('useRag').addEventListener('change', e => {
 });
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// 답변 본문의 [n] 을 출처로 이어지는 작은 칩으로 바꾼다(맨숫자로 두면 뭔지 모른다)
+function withCites(text){
+  return esc(text).replace(/\[(\d+)\]/g,
+    (m,n)=>`<span class="cite" data-n="${n}" title="출처 ${n} 보기">${n}</span>`);
+}
+
+// 근거 본문은 마크다운(주로 표)으로 들어온다 → 표는 표로, 나머지는 줄바꿈만 살려 렌더
+function md(src){
+  const lines = String(src||'').split('\n');
+  let out = '', tbl = null;
+  const isRow = l => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = l => /^\s*\|[\s:\-|]+\|\s*$/.test(l);
+  const cells = l => l.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+  const flush = () => {
+    if (!tbl) return;
+    const [head, ...body] = tbl;
+    out += `<div class="mdwrap"><table class="mdtbl"><thead><tr>`
+        + head.map(c=>`<th>${inline(c)}</th>`).join('') + `</tr></thead><tbody>`
+        + body.map(r=>`<tr>${r.map(c=>`<td>${inline(c)}</td>`).join('')}</tr>`).join('')
+        + `</tbody></table></div>`;
+    tbl = null;
+  };
+  const inline = t => esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
+                            .replace(/`([^`]+)`/g,'<code>$1</code>');
+  for (const line of lines){
+    if (isRow(line)){
+      if (isSep(line)) continue;              // 구분선(---)은 버린다
+      (tbl = tbl || []).push(cells(line));
+      continue;
+    }
+    flush();
+    if (/^\s*#{1,6}\s/.test(line)) out += `<div class="mdh">${inline(line.replace(/^\s*#+\s*/,''))}</div>`;
+    else if (/^\s*[-*]\s+/.test(line)) out += `<div class="mdli">${inline(line.replace(/^\s*[-*]\s+/,''))}</div>`;
+    else if (line.trim()) out += `<p>${inline(line)}</p>`;
+  }
+  flush();
+  return out || `<p>${inline(src||'')}</p>`;
+}
 function innerEl(){ return stream.querySelector('.inner'); }
+
+// 본문의 인용 칩을 누르면 같은 번호의 출처가 펼쳐진다
+document.addEventListener('click', function(e){
+  const chip = e.target.closest('.bubble .cite');
+  if (!chip) return;
+  const turn = chip.closest('.turn');
+  const src = turn && turn.querySelector(`.src[data-n="${chip.dataset.n}"]`);
+  if (src){ src.open = true; src.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+});
 
 function bubble(role, text, sources, meta, dataset){
   document.getElementById('empty')?.remove();
@@ -161,7 +233,7 @@ function bubble(role, text, sources, meta, dataset){
 
   let inner = '';
   if (role !== 'user') inner += `<div class="who">${icon('sparkle')}어시스턴트</div>`;
-  inner += `<div class="bubble">${esc(text)}`;
+  inner += `<div class="bubble">${role==='user' ? esc(text) : withCites(text)}`;
 
   if (role !== 'user' && dataset){
     const cols = dataset.columns||[], rows = dataset.rows||[];
@@ -178,9 +250,9 @@ function bubble(role, text, sources, meta, dataset){
   if (role !== 'user' && sources && sources.length){
     inner += `<div class="srcs">`;
     sources.forEach((s,i)=>{
-      const marks = s.markers.map(m=>`[${m}]`).join(' ');
+      const num = s.index || (i+1);
       let passages = s.passages.map(p=>
-        `<p><b>[${p.marker}]</b>${p.page?` · p.${p.page}`:''}<br>${esc(p.text)}</p>`).join('');
+        `<div class="psg">${p.page?`<div class="pg">p.${p.page}</div>`:''}${md(p.text)}</div>`).join('');
       const dl = s.doc_id
         ? `<a href="/docs/original/${s.doc_id}">${icon('download')} 원본 파일 다운로드</a>` : '';
       const pastBadge = s.is_past
@@ -190,8 +262,10 @@ function bubble(role, text, sources, meta, dataset){
         rel = `<div class="rel">${icon('link')} 관련 문서: ` + s.related.map(r=>
           `<a href="/docs/original/${r.doc_id}">${esc(r.filename)}</a>`).join(', ') + `</div>`;
       }
-      inner += `<details class="src"><summary>${icon('doc')}<span>출처 ${i+1}. ${esc(s.label||'')} ${marks}</span>${pastBadge}</summary>
-               <div class="body">${passages}${dl}${rel}</div></details>`;
+      inner += `<details class="src" data-n="${num}">`
+             + `<summary>${icon('doc')}<span class="cite">${num}</span>`
+             + `<span>${esc(s.label||'')}</span>${pastBadge}</summary>`
+             + `<div class="body">${passages}${dl}${rel}</div></details>`;
     });
     inner += `</div>`;
   }

@@ -153,9 +153,10 @@
     <input type="hidden" name="node_id" value="{{ folder_sel }}">
     <input type="hidden" name="next" value="{{ request.get_full_path }}">
     <div class="field"><label>이 폴더에 올릴 때 <b>기본 열람 권한</b></label>
-      <details class="dd" data-placeholder="설정 안 함 (이 폴더가 속한 부서 전체)"><summary></summary><div class="menu">
+      <details class="dd tree" data-placeholder="설정 안 함 (이 폴더가 속한 부서 전체)"><summary></summary><div class="menu">
         {% for n in default_opts %}
-        <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_default %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
+        <label><input type="checkbox" name="access" value="node:{{ n.id }}"
+                 data-node="{{ n.id }}" data-parent="{{ n.parent_id|default_if_none:'' }}" {% if n.sel_default %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
         {% endfor %}
       </div></details>
       <span class="msg-note">업로드할 때 이 값이 <b>미리 채워집니다</b>. 검토 화면에서 문서마다 바꿀 수 있고,
@@ -269,9 +270,10 @@
       </select></div>
 
     <div class="field bulk-pane" data-for="access"><label>열람 가능 대상 <span class="msg-note">(비우면 팀 전체 공개)</span></label>
-      <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+      <details class="dd tree" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
         {% for n in node_opts %}
-        <label><input type="checkbox" name="access" value="node:{{ n.id }}"> {{ n.indent }}{{ n.name }}</label>
+        <label><input type="checkbox" name="access" value="node:{{ n.id }}"
+                 data-node="{{ n.id }}" data-parent="{{ n.parent_id|default_if_none:'' }}"> {{ n.indent }}{{ n.name }}</label>
         {% endfor %}
       </div></details>
       <span class="msg-note">선택한 문서들의 열람 권한을 <b>이 값으로 덮어씁니다</b>(기존 설정은 사라집니다).</span></div>
@@ -369,7 +371,7 @@
         <div class="field"><label>문서 종류</label>
           <select name="doc_type" required>
             {% if doc.classification.doc_type.value not in opts.doc_type %}
-            <option value="" selected>― 문서 종류를 고르세요 ―</option>
+            <option value="" selected>― 문서 종류 선택 ―</option>
             {% endif %}
             {% for o in opts.doc_type %}
             <option value="{{ o }}" {% if doc.classification.doc_type.value == o %}selected{% endif %}>{{ o|klabel }}</option>{% endfor %}</select></div>
@@ -387,9 +389,10 @@
           </select></div>
         <!-- 접근·생애주기도 같은 저장에 포함 -->
         <div class="field"><label>열람 가능 대상 <span class="msg-note">(비우면 팀 전체)</span></label>
-          <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+          <details class="dd tree" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
             {% for n in node_opts %}
-            <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
+            <label><input type="checkbox" name="access" value="node:{{ n.id }}"
+                 data-node="{{ n.id }}" data-parent="{{ n.parent_id|default_if_none:'' }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
             {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
           </div></details></div>
         {% if reporting_lines %}

@@ -184,3 +184,48 @@ def test_pipeline_filters_restricted_and_audits():
     assert ans.citations and ans.citations[0].title == "연차규정"
     assert audit.events and audit.events[0]["action"] == "query"
     assert "secret::0" not in audit.events[0]["cited_chunk_ids"]
+
+
+# ── 중국어권 모델이 흘리는 한자 차단 ────────────────────────────────────────
+def test_hanja_leakage_is_detected_and_stripped():
+    from app.search.answer import has_foreign_script, strip_foreign_leakage
+    assert has_foreign_script("연차는 15일(年次)입니다")
+    assert not has_foreign_script("연차는 15일입니다")
+    # 근거에 없는 한자는 제거
+    assert strip_foreign_leakage("연차는 15일(年次)입니다", "연차는 15일입니다") == \
+        "연차는 15일입니다"
+    assert strip_foreign_leakage("员工 규정입니다", "규정입니다") == "규정입니다"
+
+
+def test_hanja_in_source_document_is_kept():
+    """사규 원문에 한자가 있으면 정당한 인용이므로 남긴다."""
+    from app.search.answer import strip_foreign_leakage
+    src = "제1조(目的) 이 규정은 …"
+    assert "目的" in strip_foreign_leakage("제1조(目的)에 따르면", src)
+
+
+def test_generate_answer_retries_when_model_emits_chinese():
+    from app.search.answer import generate_answer
+    from app.search.types import RetrievedChunk
+
+    chunks = [RetrievedChunk(chunk_id="c1", doc_id="d1", text="연차는 15일입니다.",
+                             score=1.0, payload={}, title="규정")]
+    calls = []
+
+    class _Leaky:
+        def complete_text(self, prompt):
+            calls.append(prompt)
+            # 첫 응답엔 한자를 섞고, 재요청에는 한국어로만 답한다
+            return "年次는 15일입니다 [1]." if len(calls) == 1 else "연차는 15일입니다 [1]."
+
+    ans = generate_answer(_Leaky(), "연차?", chunks)
+    assert len(calls) == 2, "한자가 섞였는데 재요청하지 않음"
+    assert ans.text == "연차는 15일입니다 [1]."
+
+
+def test_answer_prompt_forbids_chinese():
+    from app.search.answer import build_answer_prompt
+    from app.search.types import RetrievedChunk
+    prompt = build_answer_prompt("질문", [RetrievedChunk(
+        chunk_id="c", doc_id="d", text="본문", score=1.0, payload={})])
+    assert "한국어로만" in prompt and "한자" in prompt
