@@ -17,7 +17,13 @@ from typing import Iterable, Optional
 # 부서장(head) 역할 — 파트원만 비-head
 HEAD_ROLES = frozenset({"팀장", "그룹장", "파트장"})
 ROLES = ("팀장", "그룹장", "파트장", "파트원")
-NODE_TYPES = ("team", "group", "part")
+ORG_TYPES = ("team", "group", "part")     # 조직도에 나오는 진짜 부서
+FOLDER = "folder"                          # 부서 아래의 정리용 하위 폴더
+NODE_TYPES = (*ORG_TYPES, FOLDER)
+
+
+def is_folder(node_type: Optional[str]) -> bool:
+    return node_type == FOLDER
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,26 @@ class OrgTree:
             cur = self._by_id.get(cur.parent_id)
         return out
 
+    def org_node(self, node_id: Optional[int]) -> Optional[int]:
+        """이 노드에 해당하는 **부서** 노드 id. 하위 폴더면 가장 가까운 상위 부서.
+
+        폴더는 저장·분류용이라 권한 주체가 될 수 없다(아무도 `n:{폴더}` 토큰을
+        갖지 않는다). 권한 판정은 항상 이 함수로 부서까지 올라와서 한다.
+        """
+        node = self._by_id.get(node_id) if node_id is not None else None
+        seen: set[int] = set()
+        while node is not None and is_folder(node.node_type):
+            seen.add(node.id)
+            if node.parent_id is None or node.parent_id in seen:
+                return None
+            node = self._by_id.get(node.parent_id)
+        return node.id if node is not None else None
+
+    def folder_children(self, node_id: int) -> list[int]:
+        """이 노드 바로 아래의 하위 폴더 id 목록."""
+        return [c for c in self._children.get(node_id, [])
+                if is_folder(self._by_id[c].node_type)]
+
     def name_path(self, node_id: int) -> list[str]:
         """루트부터 이 노드까지의 이름 경로(저장 폴더 경로 구성용). 없으면 빈 목록."""
         node = self._by_id.get(node_id)
@@ -101,6 +127,9 @@ class OrgTree:
         지금 화면에서 고를 수 있는 건 `node:<id>`(부서) 하나뿐이다.
         `head:<id>`(그 부서장만)는 UI에서 제거됐지만, 예전에 그렇게 저장된 문서가
         그대로 동작하도록 해석은 유지한다.
+
+        하위 폴더가 선택돼 있으면 **그 폴더가 속한 부서**로 올려서 해석한다
+        (폴더는 권한 주체가 아니다 — 아무도 폴더 토큰을 갖지 않는다).
         """
         selections = [s for s in (selections or []) if s]
         if not selections:
@@ -114,9 +143,14 @@ class OrgTree:
                 continue
             if nid not in self._by_id:
                 continue
+            if is_folder(self._by_id[nid].node_type):
+                nid = self.org_node(nid)
+                if nid is None:
+                    continue
             if kind == "node":
                 for m in self.subtree(nid):
-                    tokens.add(f"n:{m}")
+                    if not is_folder(self._by_id[m].node_type):   # 폴더는 권한 주체 아님
+                        tokens.add(f"n:{m}")
             elif kind == "head":
                 tokens.add(f"h:{nid}")
             else:

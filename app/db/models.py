@@ -122,21 +122,26 @@ class Group(Base):
 
 
 class OrgNode(Base):
-    """조직도 노드 — People팀(team) > 그룹(group) > 파트(part) 계층.
+    """조직도 노드 — People팀(team) > 그룹(group) > 파트(part) 계층 + 하위 폴더(folder).
 
-    관리자만 생성한다(임의 생성 금지). parent_id 로 트리를 구성.
+    부서(team/group/part)는 관리자만 만든다. 그 아래 **정리용 하위 폴더(folder)** 는
+    해당 부서 구성원도 만들 수 있고, 저장 경로와 문서 분류에만 쓰인다.
+    **폴더는 권한 주체가 아니다** — 열람 권한은 항상 부서 단위로 표현된다.
     """
 
     __tablename__ = "org_nodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128))
-    node_type: Mapped[str] = mapped_column(String(16))   # team | group | part
+    node_type: Mapped[str] = mapped_column(String(16))   # team | group | part | folder
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("org_nodes.id", ondelete="CASCADE"), nullable=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     # 이 조직의 리더(부서장) — 조직도 관리에서 지정. 접근 토큰 h:{node} 의 근거.
     leader_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # 이 폴더에 문서를 올릴 때 열람 권한 기본값(access_selections 형식, 예: ["node:3"]).
+    # **기본값일 뿐 강제가 아니다** — 검토 화면에서 사람이 바꿀 수 있다.
+    default_access: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class User(Base):

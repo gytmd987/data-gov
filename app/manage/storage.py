@@ -90,6 +90,66 @@ def place(session: Session, doc_id: str, node_id: Optional[int],
     return str(dest)
 
 
+def sync_with_disk(session: Session, node_id: Optional[int] = None
+                   ) -> tuple[list[str], list[str]]:
+    """디스크의 저장 폴더와 화면의 폴더 목록을 맞춘다. → (새로 등록된, 새로 만든)
+
+    - 서버에서 직접 만든 디렉터리 → 화면에 보이도록 **폴더 노드로 등록**
+    - 화면에만 있고 디스크에 없는 폴더 → 디스크에 **디렉터리 생성**
+
+    관리자가 누르는 '동기화' 버튼용이다. 폴더를 계속 감시하는 상주 프로세스를 두지
+    않으려고 수동 실행 방식으로 만들었다. 부서(team/group/part)는 만들지 않는다 —
+    조직도는 관리자만 바꿔야 하므로 디스크에 있는 미등록 디렉터리는 항상 폴더로 본다.
+    """
+    from app.db.repositories import OrgRepository
+    from app.org.tree import FOLDER
+
+    org = OrgRepository(session)
+    registered: list[str] = []
+    created: list[str] = []
+
+    tree = org.load_tree()
+    targets = tree.subtree(node_id) if node_id is not None else tree.node_ids()
+
+    # 1) 화면 → 디스크: 아직 없는 폴더를 만든다
+    for nid in targets:
+        d = fs_dir(tree, nid)
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            created.append(" / ".join(tree.name_path(nid)))
+
+    # 2) 디스크 → 화면: 등록 안 된 디렉터리를 폴더 노드로 등록(하위까지 재귀)
+    def walk(parent_id: int) -> None:
+        cur = org.load_tree()
+        base = fs_dir(cur, parent_id)
+        if not base.is_dir():
+            return
+        known = {}
+        for child_id in cur.subtree(parent_id):
+            child = org.get(child_id)
+            if child is not None and child.parent_id == parent_id:
+                known[slug(child.name)] = child_id
+        for entry in sorted(base.iterdir()):
+            if not entry.is_dir() or entry.name.startswith(".") or entry.name == UNFILED:
+                continue
+            child_id = known.get(entry.name)
+            if child_id is None:
+                node = org.create_node(entry.name, FOLDER, parent_id=parent_id)
+                session.flush()
+                child_id = node.id
+                registered.append(" / ".join(org.load_tree().name_path(child_id)))
+            walk(child_id)
+
+    if node_id is not None:
+        walk(node_id)                      # 지정 노드 아래만
+    else:
+        for nid in targets:                # 루트부터(하위는 walk 가 재귀로 처리)
+            node = org.get(nid)
+            if node is not None and node.parent_id is None:
+                walk(nid)
+    return registered, created
+
+
 def relocate_subtree(session: Session, node_id: int) -> int:
     """노드 이름 변경 등으로 경로가 어긋난 subtree 문서를 제자리로 재배치.
 

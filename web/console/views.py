@@ -19,6 +19,7 @@ from web.authz import (
     can_edit_doc,
     can_manage_doc,
     can_read_doc,
+    can_manage_folder,
     can_review_doc,
     is_admin,
     manage_scope,
@@ -366,7 +367,7 @@ def docs(request):
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
         # 폴더 트리(각 노드의 subtree 문서 수 = 내가 볼 수 있는 것만)
-        folder_tree = _org_options(org)
+        folder_tree = _org_options(org, include_folders=True)
         for n in folder_tree:
             n["doc_count"] = mgr.count_documents(
                 author_node_ids=set(tree.subtree(n["id"])) or {-1},
@@ -434,14 +435,25 @@ def docs(request):
                 if base and base == this_base:
                     supersede_suggestions.append(d)
 
-        # 작성부서·권한 기본값 = 업로드할 때 고른 폴더(= doc.governance 에 이미 반영됨)
+        # 권한 선택은 부서만(node_opts), 저장 위치 선택은 하위 폴더까지(folder_opts).
         node_opts = _org_options(org)
+        folder_opts = folder_tree
         if doc is not None:
             sels = set(doc.governance.access_selections)
             author_node = doc.governance.author_node_id
             for n in node_opts:
                 n["sel_node"] = f"node:{n['id']}" in sels
-                n["sel_author"] = (n["id"] == author_node)   # 폴더(작성부서) 기본 선택
+            for n in folder_opts:
+                n["sel_author"] = (n["id"] == author_node)   # 지금 저장된 폴더
+
+        # 선택한 폴더 정보(하위 폴더 만들기·기본 권한 설정용)
+        sel_folder = org.get(folder_sel) if folder_sel else None
+        folder_default = org.default_access_for(folder_sel) if folder_sel else []
+        can_folder = (can_manage_folder(session, request.user, folder_sel)
+                      if folder_sel else False)
+        default_opts = _org_options(org)
+        for n in default_opts:
+            n["sel_default"] = f"node:{n['id']}" in set(folder_default)
 
         today = date.today()
         expiring_soon = mgr.repo.count_expiring_soon(
@@ -482,6 +494,8 @@ def docs(request):
             "folder_total": folder_total,
             "folder_path": " / ".join(tree.name_path(folder_sel)) if folder_sel else "",
             "opts": ENUM_OPTIONS, "node_opts": node_opts,
+            "folder_opts": folder_opts, "default_opts": default_opts,
+            "sel_folder": sel_folder, "can_folder": can_folder,
             "statuses": USER_DOC_STATUSES, "doc_types": ENUM_OPTIONS["doc_type"],
             "total": total, "page": page, "num_pages": num_pages,
             "page_start": offset + 1 if total else 0,
@@ -586,6 +600,102 @@ def docs_bulk_delete(request):
         else:
             messages.warning(request, "선택된 문서가 없습니다.")
         return redirect(request.POST.get("next") or "console_docs")
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def folders(request):
+    """하위 폴더 만들기·이름변경·삭제·기본권한 설정 + (관리자) 디스크 동기화.
+
+    폴더는 저장·분류용이라 부서 구성원도 만들 수 있다. **권한 주체는 아니다** —
+    폴더에 설정하는 건 '이 폴더에 올릴 때 채워질 열람 권한 기본값'일 뿐이다.
+    """
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository
+        from app.manage.storage import sync_with_disk
+        from app.org.tree import FOLDER
+        from web.authz import can_manage_folder
+        org = OrgRepository(session)
+        p = request.POST
+        action = p.get("action")
+        back = p.get("next") or "console_docs"
+
+        if action == "sync":                      # 디스크 ↔ 화면 동기화(관리자 전용)
+            if not is_admin(request.user):
+                messages.error(request, "폴더 동기화는 관리자만 할 수 있습니다.")
+                return redirect(back)
+            registered, created = sync_with_disk(session)
+            session.commit()
+            if registered:
+                messages.success(request, f"서버에 있던 폴더 {len(registered)}개를 등록했습니다: "
+                                 + ", ".join(registered[:5])
+                                 + (" 외" if len(registered) > 5 else ""))
+            if created:
+                messages.info(request, f"화면에만 있던 폴더 {len(created)}개를 서버에 만들었습니다.")
+            if not registered and not created:
+                messages.info(request, "이미 서버와 화면이 같습니다.")
+            return redirect(back)
+
+        node_id = _int(p.get("node_id"), 0) or None
+        if action == "create":
+            name = (p.get("name") or "").strip()
+            if not name:
+                messages.error(request, "폴더 이름을 입력하세요.")
+                return redirect(back)
+            if not can_manage_folder(session, request.user, node_id):
+                messages.error(request, "이 부서에 폴더를 만들 권한이 없습니다.")
+                return redirect(back)
+            new = org.create_node(name, FOLDER, parent_id=node_id)
+            session.flush()
+            sync_with_disk(session, new.id)       # 디스크에도 바로 만든다
+            session.commit()
+            messages.success(request, f"'{name}' 폴더를 만들었습니다.")
+            return redirect(f"/console/docs/?folder={new.id}")
+
+        node = org.get(node_id) if node_id else None
+        if node is None:
+            return redirect(back)
+        if not can_manage_folder(session, request.user, node_id):
+            messages.error(request, "이 폴더를 관리할 권한이 없습니다.")
+            return redirect(back)
+
+        if action == "rename":
+            if node.node_type != FOLDER:
+                messages.error(request, "부서 이름은 조직도에서 바꿔주세요.")
+                return redirect(back)
+            name = (p.get("name") or "").strip()
+            if name:
+                from app.manage.storage import relocate_subtree
+                org.rename_node(node_id, name)
+                session.commit()
+                moved = relocate_subtree(session, node_id)
+                sync_with_disk(session, node_id)
+                session.commit()
+                messages.success(request, f"폴더 이름을 바꿨습니다." +
+                                 (f" (파일 {moved}건 이동)" if moved else ""))
+        elif action == "delete":
+            if node.node_type != FOLDER:
+                messages.error(request, "부서는 조직도에서 삭제해주세요.")
+                return redirect(back)
+            ids = set(org.load_tree().subtree(node_id))
+            n_docs = bridge.get_document_manager(session).count_documents(
+                author_node_ids=ids) if ids else 0
+            if n_docs:
+                messages.error(request, f"이 폴더(하위 포함)에 문서 {n_docs}건이 있어 삭제할 수 "
+                               "없습니다. 문서를 다른 폴더로 옮긴 뒤 다시 시도하세요.")
+                return redirect(back)
+            org.delete_node(node_id)
+            session.commit()
+            messages.warning(request, "폴더를 삭제했습니다(서버 디렉터리는 그대로 두었습니다).")
+            return redirect("console_docs")
+        elif action == "default_access":
+            org.set_default_access(node_id, p.getlist("access"))
+            session.commit()
+            messages.success(request, "이 폴더에 올릴 때의 기본 열람 권한을 저장했습니다.")
+        return redirect(back)
     finally:
         session.close()
 
@@ -912,8 +1022,14 @@ def users(request):
 
 
 # ── 조직도 관리 ──────────────────────────────────────────────────────────────
-def _org_options(org) -> list[dict]:
-    """조직도를 트리 순서(깊이 포함)로 평탄화 — 드롭다운·표 들여쓰기용."""
+def _org_options(org, include_folders: bool = False) -> list[dict]:
+    """조직도를 트리 순서(깊이 포함)로 평탄화 — 드롭다운·표 들여쓰기용.
+
+    include_folders=False 가 기본이다. **열람 권한은 부서 단위로만** 고르게 해야 하므로
+    권한 드롭다운에 하위 폴더가 나오면 안 된다. 폴더 트리·저장 위치 선택처럼 폴더가
+    필요한 곳에서만 True 로 부른다.
+    """
+    from app.org.tree import is_folder
     tree = org.load_tree()
     nodes = {n.id: n for n in org.list_nodes()}
     children: dict = {}
@@ -926,7 +1042,10 @@ def _org_options(org) -> list[dict]:
     out: list[dict] = []
 
     def walk(node, depth):
+        if is_folder(node.node_type) and not include_folders:
+            return
         out.append({"id": node.id, "name": node.name, "node_type": node.node_type,
+                    "is_folder": is_folder(node.node_type),
                     "parent_id": node.parent_id, "depth": depth,
                     "indent": "  " * depth})
         for c in children.get(node.id, []):

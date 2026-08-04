@@ -746,6 +746,81 @@ def main() -> int:
         s11.close()
     print("[보고선 ] 관리자 설정 항목 체크박스로 선택·저장 ✅")
 
+    # 17) 하위 폴더: 파트원이 만들고 · 기본 권한이 업로드에 채워지고 · 서버 폴더 동기화
+    c_n = Client()
+    c_n.force_login(DjUser.objects.get(username="nlee@company.com"))
+    r_mk = c_n.post("/console/folders/", {"action": "create", "name": "대외공개",
+                                          "node_id": n_part.id,
+                                          "next": "/console/docs/"})
+    assert r_mk.status_code == 302, "파트원이 하위 폴더를 못 만듦"
+
+    s12 = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository as _OR3
+        org12 = _OR3(s12)
+        new_folder = next(n for n in org12.list_nodes() if n.name == "대외공개")
+        assert new_folder.node_type == "folder" and new_folder.parent_id == n_part.id
+        folder_id = new_folder.id
+        # 디스크에도 만들어졌는지
+        from app.manage.storage import fs_dir
+        assert fs_dir(org12.load_tree(), folder_id).is_dir(), "폴더가 디스크에 안 생김"
+    finally:
+        s12.close()
+
+    # 폴더 기본 권한 = 팀 전체(상위) → 이 폴더로 올리면 자동으로 그 권한이 채워진다
+    c_n.post("/console/folders/", {"action": "default_access", "node_id": folder_id,
+                                   "access": [f"node:{team.id}"],
+                                   "next": "/console/docs/"})
+    s13 = bridge.open_session()
+    try:
+        svc13 = bridge.get_review_service(s13)
+        d = _pl.Path(_tf.gettempdir())
+        (d / "대외안내문.txt").write_text("대외 공개용 채용 안내문입니다.", encoding="utf-8")
+        did = svc13.start_ingestion(str(d / "대외안내문.txt"),
+                                    ingested_by="nlee@company.com",
+                                    folder_node_id=folder_id)
+        s13.commit()
+        gov = svc13.docs.get(did).governance
+        assert gov.author_node_id == folder_id, "저장 위치가 폴더가 아님"
+        assert gov.access_selections == [f"node:{team.id}"], \
+            f"폴더 기본 권한이 안 채워짐: {gov.access_selections}"
+    finally:
+        s13.close()
+
+    # 권한 드롭다운에는 폴더가 나오면 안 된다(권한은 부서 단위로만)
+    page_f = c_n.get(f"/console/docs/?folder={folder_id}").content.decode()
+    assert f'name="access" value="node:{folder_id}"' not in page_f, \
+        "열람 권한 선택지에 폴더가 노출됨"
+    assert "대외공개" in page_f, "폴더 트리에 새 폴더가 안 보임"
+
+    # 서버에서 직접 만든 폴더 → 관리자 동기화로 화면에 등록
+    s14 = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository as _OR4
+        from app.manage.storage import fs_dir as _fd
+        (_fd(_OR4(s14).load_tree(), n_part.id) / "서버생성폴더").mkdir(parents=True,
+                                                                exist_ok=True)
+    finally:
+        s14.close()
+    assert c_n.post("/console/folders/", {"action": "sync"}).status_code == 302
+    s15 = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository as _OR5
+        assert not any(n.name == "서버생성폴더" for n in _OR5(s15).list_nodes()), \
+            "관리자가 아닌데 동기화가 실행됨"
+    finally:
+        s15.close()
+    c.force_login(admin)
+    assert c.post("/console/folders/", {"action": "sync"}).status_code == 302
+    s16 = bridge.open_session()
+    try:
+        from app.db.repositories import OrgRepository as _OR6
+        node = next((n for n in _OR6(s16).list_nodes() if n.name == "서버생성폴더"), None)
+        assert node is not None and node.parent_id == n_part.id, "서버 폴더가 등록 안 됨"
+    finally:
+        s16.close()
+    print("[하위폴더] 파트원 폴더 생성 · 폴더 기본권한 자동 채움 · 관리자 전용 서버 동기화 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

@@ -469,6 +469,29 @@ class OrgRepository:
                              parent_id=n.parent_id) for n in self.list_nodes()]
         return OrgTree(views)
 
+    def set_default_access(self, node_id: int, selections: list[str]) -> None:
+        """이 폴더에 올릴 때 채워질 열람 권한 기본값(부서 선택 목록)."""
+        node = self.session.get(OrgNode, node_id)
+        if node is not None:
+            node.default_access = [s for s in (selections or []) if s]
+            self.session.flush()
+
+    def default_access_for(self, node_id: Optional[int]) -> list[str]:
+        """이 폴더(또는 상위)에 설정된 기본 권한. 없으면 그 폴더의 부서 전체.
+
+        하위 폴더에 기본값이 없으면 상위 폴더 → 부서 순으로 거슬러 올라가 찾는다.
+        끝까지 없으면 소속 부서 전체 공개(`node:<부서>`)가 기본이다.
+        """
+        if node_id is None:
+            return []
+        tree = self.load_tree()
+        for nid in [node_id, *tree.ancestors(node_id)]:
+            node = self.session.get(OrgNode, nid)
+            if node is not None and node.default_access:
+                return list(node.default_access)
+        org_id = tree.org_node(node_id)
+        return [f"node:{org_id}"] if org_id is not None else []
+
     def set_leader(self, node_id: int, user_id: Optional[str]) -> None:
         """이 조직의 리더(부서장) 지정/해제."""
         node = self.session.get(OrgNode, node_id)

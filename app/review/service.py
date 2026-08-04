@@ -141,11 +141,13 @@ class ReviewService:
         ctx.doc.governance.author_node_id = node_id
         if node_id is not None:
             from app.db.repositories import OrgRepository
-            node = OrgRepository(self.session).get(node_id)
+            org = OrgRepository(self.session)
+            node = org.get(node_id)
             if node is not None:
                 ctx.doc.classification.department = node.name   # 작성부서(표시용)
-            # 열람 권한 기본값 = 그 폴더 부서 전체
-            ctx.doc.governance.access_selections = [f"node:{node_id}"]
+            # 열람 권한 기본값 = 폴더에 설정된 값(없으면 그 폴더가 속한 부서 전체).
+            # **기본값일 뿐** — 검토 화면에서 사람이 바꿀 수 있다.
+            ctx.doc.governance.access_selections = org.default_access_for(node_id)
         save_ingestion(repo, ctx)
         # 원본 파일 보관(폴더=조직노드 경로에 저장)
         self._store_original(path, ctx.doc.identification.doc_id,

@@ -111,6 +111,26 @@ def can_edit_doc(session, user, doc) -> bool:
     return node in mine and _token_readable(session, user, doc)
 
 
+def can_manage_folder(session, user, parent_node_id) -> bool:
+    """이 부서/폴더 아래에 하위 폴더를 만들거나 고칠 수 있는가.
+
+    자기 소속 부서(및 그 아래 폴더)면 파트원도 가능하다 — 문서 정리는 실무자가 한다.
+    부서장은 자기 관리 범위 전체, 관리자는 전부.
+    """
+    if parent_node_id is None:
+        return False
+    if is_admin(user):
+        return True
+    from app.db.repositories import OrgRepository, UserRepository
+    is_adm, scope = manage_scope(session, user)
+    if is_adm or parent_node_id in scope:
+        return True
+    tree = OrgRepository(session).load_tree()
+    mine = set(UserRepository(session).member_nodes(_email_of(user)))
+    # 내 소속 부서 자신이거나, 내 소속 부서 아래에 있는 폴더면 허용
+    return parent_node_id in mine or bool(mine & set(tree.ancestors(parent_node_id)))
+
+
 def can_delete_doc(session, user, doc) -> bool:
     """삭제 권한: 관리자 또는 문서 작성부서를 관리하는 부서장만(파트원 불가)."""
     return can_manage_doc(session, user, doc)

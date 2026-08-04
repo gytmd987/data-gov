@@ -24,6 +24,7 @@ _COLUMNS = [
     ("users", "org_role", "VARCHAR(16)"),
     ("documents", "author_node_id", "INTEGER"),
     ("org_nodes", "leader_id", "VARCHAR(128)"),
+    ("org_nodes", "default_access", "JSON DEFAULT '[]'"),
 ]
 
 # 더 이상 쓰지 않는 컬럼 — NOT NULL 제약이 신규 인원 등록을 막으므로 제거한다.
