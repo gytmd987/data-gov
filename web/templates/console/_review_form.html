@@ -76,8 +76,15 @@
       <div class="field"><label>작성자</label>
         <input name="author_name" placeholder="이름" value="{{ view.governance.author_name|default_if_none:'' }}">
         <input name="author_id" placeholder="ID(이메일)" value="{{ view.governance.author_id|default_if_none:'' }}" style="margin-top:6px"></div>
-      <div class="field"><label>보고선 <span class="msg-note">(쉼표 구분)</span></label>
-        <input name="reporting_line" value="{{ view.governance.reporting_line|join:', ' }}"></div>
+      {% if reporting_lines %}
+      <div class="field"><label>보고선 <span class="msg-note">(해당 항목 모두 선택)</span></label>
+        <details class="dd" data-placeholder="선택 안 함"><summary></summary><div class="menu">
+          {% for r in reporting_lines %}
+          <label><input type="checkbox" name="reporting_line" value="{{ r }}"
+                 {% if r in view.governance.reporting_line %}checked{% endif %}> {{ r }}</label>
+          {% endfor %}
+        </div></details></div>
+      {% endif %}
       <h4 style="margin-top:10px">③ 생애주기</h4>
       <div class="field"><label>상태</label>
         <select name="lifecycle_status">{% for o in opts.lifecycle_status %}

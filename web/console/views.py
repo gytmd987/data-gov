@@ -114,6 +114,7 @@ def review(request):
             "departments": system_config.departments(),
             "node_opts": _org_options(OrgRepository(session)),
             "dup": dup, "admins": system_config.admin_emails(),
+            "reporting_lines": system_config.reporting_lines(),
             "related": _related_docs(session, view.doc_id) if view else [],
         })
     finally:
@@ -335,6 +336,11 @@ def docs(request):
         doc_type = request.GET.get("doc_type") or None
         page = max(1, _int(request.GET.get("page"), 1))
         offset = (page - 1) * _PAGE_SIZE
+        from app.db.repositories import DocumentRepository as _DR
+        sort_key = request.GET.get("sort") or "updated"
+        if sort_key not in _DR.SORT_FIELDS:
+            sort_key = "updated"
+        sort_desc = request.GET.get("dir", "desc") != "asc"
 
         # 보이는 범위 = '열람 권한이 있는 문서' ∪ '부서장으로서 관리하는 문서'.
         # (예전엔 작성부서만 봐서, 상위 부서 공개 문서가 형제 파트에 안 보였다.)
@@ -356,7 +362,7 @@ def docs(request):
         doc_list = mgr.list_documents(text=q, lifecycle_status=status, doc_type=doc_type,
                                       limit=_PAGE_SIZE, offset=offset,
                                       author_node_ids=author_ids, indexed_only=True,
-                                      visible_to=vis)
+                                      visible_to=vis, sort=sort_key, desc=sort_desc)
         num_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
         # 폴더 트리(각 노드의 subtree 문서 수 = 내가 볼 수 있는 것만)
@@ -444,7 +450,9 @@ def docs(request):
         # 필터 유지용 쿼리스트링(페이징 링크에 재사용)
         qs = {k: v for k, v in (("q", q), ("status", status),
                                 ("doc_type", doc_type),
-                                ("folder", folder_sel)) if v}
+                                ("folder", folder_sel),
+                                ("sort", sort_key if sort_key != "updated" else None),
+                                ("dir", "asc" if not sort_desc else None)) if v}
 
         # 선택 문서 권한: 수정(본인 파트 포함) / 삭제(부서장·관리자만)
         can_edit_sel = doc is not None and can_edit_doc(session, request.user, doc)
@@ -466,6 +474,10 @@ def docs(request):
             "my_pending": my_pending, "review_view": review_view, "dup": dup,
             "supersede_suggestions": supersede_suggestions,
             "q": q or "", "status_sel": status or "", "doc_type_sel": doc_type or "",
+            "sort_key": sort_key, "sort_desc": sort_desc,
+            "sort_options": [("updated", "최근 변경순"), ("created", "등록일순"),
+                             ("effective", "작성일순"), ("title", "제목순"),
+                             ("doc_type", "문서 종류순"), ("status", "상태순")],
             "folder_tree": folder_tree, "folder_sel": folder_sel,
             "folder_total": folder_total,
             "folder_path": " / ".join(tree.name_path(folder_sel)) if folder_sel else "",
@@ -480,6 +492,7 @@ def docs(request):
             "can_edit_sel": can_edit_sel, "can_delete_sel": can_delete_sel,
             "pending_requests": pending_requests,
             "admins": system_config.admin_emails(),
+            "reporting_lines": system_config.reporting_lines(),
             "related": _related_docs(session, sel, vis) if doc else [],
         })
     finally:
@@ -579,6 +592,88 @@ def docs_bulk_delete(request):
 
 @login_required
 @require_POST
+def docs_bulk_update(request):
+    """선택한 여러 문서의 열람 권한·작성부서·상태·종류를 한 번에 바꾼다.
+
+    같은 부서에서 올린 문서라도 파일마다 권한이 달라야 하는 경우가 많아서, 목록에서
+    골라 한 번에 적용할 수 있어야 한다. 문서마다 **수정 권한을 개별 확인**한다.
+    """
+    session = bridge.open_session()
+    try:
+        mgr = bridge.get_document_manager(session)
+        p = request.POST
+        ids = p.getlist("doc_ids")
+        field = p.get("field")            # access | folder | status | doc_type
+        if not ids:
+            messages.warning(request, "선택된 문서가 없습니다.")
+            return redirect(p.get("next") or "console_docs")
+
+        node_id, dept_name = _dept_from_form(session, p)
+        access = p.getlist("access")
+        status = p.get("lifecycle_status")
+        doc_type = p.get("doc_type")
+        if field == "folder" and node_id is None:
+            messages.error(request, "옮길 폴더를 고르세요.")
+            return redirect(p.get("next") or "console_docs")
+        if field == "doc_type" and doc_type not in ENUM_OPTIONS["doc_type"]:
+            messages.error(request, "문서 종류를 고르세요.")
+            return redirect(p.get("next") or "console_docs")
+        if field == "status" and status not in USER_DOC_STATUSES:
+            messages.error(request, "상태를 고르세요.")
+            return redirect(p.get("next") or "console_docs")
+
+        done, skipped = 0, 0
+        for doc_id in ids:
+            doc = mgr.get(doc_id)
+            if doc is None or not can_edit_doc(session, request.user, doc):
+                skipped += 1
+                continue
+            gov, cls_over, life_over = doc.governance, None, None
+            if field == "access":
+                # 빈 선택 = 팀 전체 공개. 의도적으로 지울 수 있어야 하므로 그대로 반영.
+                gov = gov.model_copy(update={"access_selections": access})
+            elif field == "folder":
+                gov = gov.model_copy(update={"author_node_id": node_id})
+                cls_over = {"department": dept_name}
+            elif field == "status":
+                life_over = {"status": status}
+            elif field == "doc_type":
+                cls_over = {"doc_type": doc_type}
+            else:
+                messages.error(request, "무엇을 바꿀지 고르세요.")
+                return redirect(p.get("next") or "console_docs")
+
+            mgr.update_metadata(doc_id, governance=gov,
+                                classification_overrides=cls_over,
+                                lifecycle_overrides=life_over)
+            if field == "folder":        # 폴더가 바뀌면 원본 파일도 옮긴다
+                try:
+                    from pathlib import Path as _P
+                    from app.manage.storage import place
+                    cur = mgr.repo.get_original_path(doc_id)
+                    if cur:
+                        place(session, doc_id, node_id,
+                              doc.classification.title_normalized or _P(cur).stem,
+                              _P(cur).suffix)
+                except Exception:
+                    pass
+            done += 1
+        session.commit()
+
+        label = {"access": "열람 권한", "folder": "폴더(작성부서)",
+                 "status": "상태", "doc_type": "문서 종류"}.get(field, "항목")
+        if done:
+            messages.success(request, f"{done}건의 {label}을(를) 변경했습니다." +
+                             (f" ({skipped}건은 수정 권한 없음으로 제외)" if skipped else ""))
+        else:
+            messages.error(request, "수정 권한이 있는 문서가 없습니다.")
+        return redirect(p.get("next") or "console_docs")
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
 def docs_action(request, doc_id: str):
     session = bridge.open_session()
     try:
@@ -614,7 +709,8 @@ def docs_action(request, doc_id: str):
             new_gov = GovernanceBlock(
                 access_selections=p.getlist("access"),
                 author_id=gov.author_id, author_name=gov.author_name,
-                author_node_id=node_id, reporting_line=gov.reporting_line)
+                author_node_id=node_id,
+                reporting_line=[x for x in p.getlist("reporting_line") if x])
             cls = {"doc_type": p.get("doc_type") or doc.classification.doc_type.value,
                    "title_normalized": p.get("title") or None,
                    "summary": p.get("summary") or None,

@@ -40,6 +40,11 @@ def doc_types() -> list[str]:
     return list(_load()["metadata"]["doc_types"])
 
 
+def reporting_lines() -> list[str]:
+    """보고선 후보(검토·수정 화면 체크박스). 비어 있으면 보고선 항목을 숨긴다."""
+    return [str(x) for x in (_load()["metadata"].get("reporting_lines") or [])]
+
+
 def title_cleanup() -> dict[str, Any]:
     """제목 정리 규칙(꼬리표·복사흔적·장식문자·무의미 파일명·날짜 오탐 방지)."""
     return dict(_load()["metadata"].get("title_cleanup") or {})

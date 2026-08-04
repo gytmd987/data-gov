@@ -130,6 +130,13 @@
       <option value="">전체 유형</option>
       {% for t in doc_types %}<option value="{{ t }}" {% if t == doc_type_sel %}selected{% endif %}>{{ t|klabel }}</option>{% endfor %}
     </select>
+    <select name="sort" style="width:auto" onchange="this.form.submit()">
+      {% for v, label in sort_options %}<option value="{{ v }}" {% if v == sort_key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <select name="dir" style="width:auto" onchange="this.form.submit()">
+      <option value="desc" {% if sort_desc %}selected{% endif %}>내림차순</option>
+      <option value="asc" {% if not sort_desc %}selected{% endif %}>오름차순</option>
+    </select>
     <button class="btn">필터</button>
     {% if q or status_sel or doc_type_sel %}<a class="btn ghost" href="?">초기화</a>{% endif %}
   </form>
@@ -147,8 +154,10 @@
   {% csrf_token %}
   <input type="hidden" name="next" value="{{ request.get_full_path }}">
   {% if can_manage %}
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
     <button class="btn ghost sm danger"><svg class="ic sm"><use href="#i-trash"/></svg>선택 삭제</button>
+    <button type="button" class="btn ghost sm" onclick="document.getElementById('bulkEdit').open=true">
+      <svg class="ic sm"><use href="#i-edit"/></svg>선택 일괄 변경</button>
     <span class="msg-note" id="delCount"></span>
   </div>
   {% endif %}
@@ -171,6 +180,53 @@
     {% endfor %}
   </table>
 </form>
+
+{% if can_manage %}
+{# 선택한 문서에 같은 값을 한 번에 적용. 체크박스는 위 목록 것을 그대로 복사해 보낸다. #}
+<details id="bulkEdit" class="card" style="margin-top:10px">
+  <summary style="cursor:pointer;font-weight:600">선택한 문서 일괄 변경</summary>
+  <form method="post" action="/console/docs/bulk-update" id="bulkEditForm" style="margin-top:10px"
+        onsubmit="return bulkEditSubmit(this)">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <div id="bulkIds"></div>
+    <div class="field"><label>무엇을 바꿀까요?</label>
+      <select name="field" id="bulkField">
+        <option value="access">열람 권한</option>
+        <option value="folder">폴더(작성 부서)</option>
+        <option value="status">상태</option>
+        <option value="doc_type">문서 종류</option>
+      </select></div>
+
+    <div class="field bulk-pane" data-for="access"><label>열람 가능 대상 <span class="msg-note">(비우면 팀 전체 공개)</span></label>
+      <details class="dd" data-placeholder="팀 전체 (제한 없음)"><summary></summary><div class="menu">
+        {% for n in node_opts %}
+        <label><input type="checkbox" name="access" value="node:{{ n.id }}"> {{ n.indent }}{{ n.name }}</label>
+        {% endfor %}
+      </div></details>
+      <span class="msg-note">선택한 문서들의 열람 권한을 <b>이 값으로 덮어씁니다</b>(기존 설정은 사라집니다).</span></div>
+
+    <div class="field bulk-pane" data-for="folder" hidden><label>옮길 폴더</label>
+      <select name="author_node_id"><option value="">(고르세요)</option>
+        {% for n in node_opts %}<option value="{{ n.id }}">{{ n.indent }}{{ n.name }}</option>{% endfor %}
+      </select>
+      <span class="msg-note">작성부서와 서버 저장 경로가 함께 바뀌고 원본 파일도 이동합니다.</span></div>
+
+    <div class="field bulk-pane" data-for="status" hidden><label>상태</label>
+      <select name="lifecycle_status">
+        {% for o in opts.lifecycle_status %}<option value="{{ o }}">{{ o|klabel }}</option>{% endfor %}
+      </select></div>
+
+    <div class="field bulk-pane" data-for="doc_type" hidden><label>문서 종류</label>
+      <select name="doc_type">
+        {% for o in opts.doc_type %}<option value="{{ o }}">{{ o|klabel }}</option>{% endfor %}
+      </select></div>
+
+    <button class="btn"><svg class="ic sm"><use href="#i-check"/></svg>선택 문서에 적용</button>
+    <span class="msg-note" id="bulkCount"></span>
+  </form>
+</details>
+{% endif %}
 
 <!-- 페이징 -->
 {% if num_pages > 1 %}
@@ -266,6 +322,15 @@
             <label><input type="checkbox" name="access" value="node:{{ n.id }}" {% if n.sel_node %}checked{% endif %}> {{ n.indent }}{{ n.name }}</label>
             {% empty %}<span class="msg-note" style="padding:6px">조직도가 비어 있습니다.</span>{% endfor %}
           </div></details></div>
+        {% if reporting_lines %}
+        <div class="field"><label>보고선 <span class="msg-note">(해당 항목 모두 선택)</span></label>
+          <details class="dd" data-placeholder="선택 안 함"><summary></summary><div class="menu">
+            {% for r in reporting_lines %}
+            <label><input type="checkbox" name="reporting_line" value="{{ r }}"
+                   {% if r in doc.governance.reporting_line %}checked{% endif %}> {{ r }}</label>
+            {% endfor %}
+          </div></details></div>
+        {% endif %}
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div class="field" style="flex:1"><label>상태</label>
             <select name="lifecycle_status">{% for o in opts.lifecycle_status %}
@@ -411,6 +476,26 @@
     var el=document.getElementById('delCount'); if(el) el.textContent=n?n+'건 선택됨':'';};
   if(all){all.addEventListener('change',function(){rows().forEach(function(c){c.checked=all.checked;});cnt();});}
   rows().forEach(function(c){c.addEventListener('change',cnt);});
+
+  // 일괄 변경: 고른 항목에 맞는 입력만 보여준다
+  var field=document.getElementById('bulkField');
+  var panes=function(){return [].slice.call(document.querySelectorAll('.bulk-pane'));};
+  var sync=function(){panes().forEach(function(p){p.hidden = p.dataset.for !== field.value;});};
+  if(field){field.addEventListener('change',sync); sync();}
 })();
+
+// 일괄 변경 폼은 위 목록의 체크박스를 그대로 복사해 보낸다(선택 상태를 두 번 만들지 않도록)
+function bulkEditSubmit(form){
+  var picked=[].slice.call(document.querySelectorAll('.rowchk')).filter(function(c){return c.checked;});
+  if(!picked.length){ alert('먼저 목록에서 문서를 선택하세요.'); return false; }
+  var box=document.getElementById('bulkIds');
+  box.innerHTML='';
+  picked.forEach(function(c){
+    var h=document.createElement('input'); h.type='hidden'; h.name='doc_ids'; h.value=c.value;
+    box.appendChild(h);
+  });
+  var label=document.getElementById('bulkField').selectedOptions[0].textContent;
+  return confirm(picked.length+'건의 ' + label + '을(를) 변경할까요? (권한 없는 문서는 제외됩니다)');
+}
 </script>
 {% endblock %}

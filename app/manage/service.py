@@ -41,11 +41,13 @@ class DocumentManager:
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
         author_node_ids=None, indexed_only: bool = False, visible_to=None,
+        sort: str = "updated", desc: bool = True,
     ) -> list[dict[str, Any]]:
         return self.repo.list_documents(
             text=text, lifecycle_status=lifecycle_status, doc_type=doc_type,
             limit=limit, offset=offset, author_node_ids=author_node_ids,
-            indexed_only=indexed_only, visible_to=visible_to)
+            indexed_only=indexed_only, visible_to=visible_to,
+            sort=sort, desc=desc)
 
     def count_documents(
         self, text: Optional[str] = None, lifecycle_status: Optional[str] = None,

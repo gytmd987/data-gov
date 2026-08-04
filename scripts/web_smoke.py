@@ -682,6 +682,70 @@ def main() -> int:
     assert Client().login(username="pw@company.com", password="BrandNew!2026"), "새 비밀번호로 로그인 불가"
     print("[비밀번호] 본인 비밀번호 변경 · 새 비밀번호 로그인 ✅")
 
+    # 16) 목록 정렬 + 일괄 변경(권한/폴더/상태/종류) + 보고선 체크박스
+    c.force_login(admin)
+    for key in ("title", "effective", "created", "doc_type", "status"):
+        assert c.get(f"/console/docs/?sort={key}&dir=asc").status_code == 200, f"정렬 {key} 실패"
+    page = c.get("/console/docs/?sort=title&dir=asc").content.decode()
+    assert "제목순" in page and "오름차순" in page, "정렬 UI가 없음"
+
+    s8 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR, OrgRepository as _OR2
+        org8 = _OR2(s8)
+        target = org8.create_node("보안그룹", "group", parent_id=team.id)
+        s8.commit()
+        target_id = target.id
+        ids = [d["doc_id"] for d in _DR(s8).list_documents(indexed_only=True)][:2]
+        assert ids, "일괄 변경 대상 문서가 없음"
+    finally:
+        s8.close()
+
+    # 열람 권한 일괄 적용 → 고른 부서 토큰으로 덮어써진다
+    r_bulk = c.post("/console/docs/bulk-update",
+                    {"doc_ids": ids, "field": "access", "access": [f"node:{target_id}"],
+                     "next": "/console/docs/"})
+    assert r_bulk.status_code == 302, "일괄 권한 변경 실패"
+    s9 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR3
+        for doc_id in ids:
+            gov = _DR3(s9).get(doc_id).governance
+            assert gov.access_selections == [f"node:{target_id}"], "권한이 안 바뀜"
+            assert f"n:{target_id}" in gov.access_tokens, "열람 토큰이 확장되지 않음"
+    finally:
+        s9.close()
+
+    # 상태 일괄 변경
+    c.post("/console/docs/bulk-update", {"doc_ids": ids[:1], "field": "status",
+                                         "lifecycle_status": "expired",
+                                         "next": "/console/docs/"})
+    s10 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR4
+        assert _DR4(s10).get(ids[0]).lifecycle.status.value == "expired", "상태가 안 바뀜"
+    finally:
+        s10.close()
+    print("[문서관리] 정렬(제목·작성일·종류…) · 열람권한/상태 일괄 변경 ✅")
+
+    # 보고선: 자율 기재가 아니라 설정된 항목 체크박스
+    from app import system_config as _sc
+    lines = _sc.reporting_lines()
+    assert lines, "보고선 후보가 설정에 없음"
+    detail = c.get(f"/console/docs/?doc={ids[0]}").content.decode()
+    assert f'name="reporting_line" value="{lines[0]}"' in detail, "보고선 체크박스가 없음"
+    c.post(f"/console/docs/{ids[0]}/action",
+           {"action": "save", "doc_type": "report", "title": "보고선 테스트",
+            "lifecycle_status": "active", "reporting_line": [lines[0], lines[-1]]})
+    s11 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR5
+        got = _DR5(s11).get(ids[0]).governance.reporting_line
+        assert got == [lines[0], lines[-1]], f"보고선 저장 실패: {got}"
+    finally:
+        s11.close()
+    print("[보고선 ] 관리자 설정 항목 체크박스로 선택·저장 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

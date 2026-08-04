@@ -165,6 +165,24 @@ class DocumentRepository:
             conds.append(vis)
         return conds
 
+    # 목록 정렬 기준 — 화면 드롭다운 값과 1:1로 맞춘다.
+    SORT_FIELDS = {
+        "updated": Document.updated_at,        # 최근 변경
+        "created": Document.created_at,        # 등록일
+        "effective": Document.effective_date,  # 작성일
+        "title": Document.title,
+        "doc_type": Document.doc_type,
+        "status": Document.lifecycle_status,
+        "department": Document.author_node_id,
+    }
+
+    @classmethod
+    def _order_by(cls, sort: str, desc: bool) -> list:
+        col = cls.SORT_FIELDS.get(sort, Document.updated_at)
+        primary = col.desc() if desc else col.asc()
+        # 값이 같거나 비었을 때 순서가 흔들리지 않도록 보조 정렬을 붙인다.
+        return [primary, Document.updated_at.desc()]
+
     def readable_doc_ids(self, doc_ids: Iterable[str],
                          visible_to: Optional["Visibility"]) -> set[str]:
         """주어진 문서들 중 이 사용자가 볼 수 있는 것만 추린다(연관 문서 표시 등)."""
@@ -221,6 +239,7 @@ class DocumentRepository:
         doc_type: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
         author_node_ids: Optional[Iterable[int]] = None, indexed_only: bool = False,
         visible_to: Optional[Visibility] = None,
+        sort: str = "updated", desc: bool = True,
     ) -> list[dict[str, Any]]:
         """문서 목록(관리용 요약). 필터(파일명·제목/상태/유형) + 페이징.
 
@@ -234,7 +253,7 @@ class DocumentRepository:
                                   indexed_only, visible_to)
         if conds:
             stmt = stmt.where(and_(*conds))
-        stmt = stmt.order_by(Document.updated_at.desc())
+        stmt = stmt.order_by(*self._order_by(sort, desc))
         if limit is not None:
             stmt = stmt.limit(limit).offset(offset)
         out = []
