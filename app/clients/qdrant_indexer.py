@@ -31,13 +31,32 @@ class QdrantIndexer:
         self.client = client or QdrantClient(
             host=host, port=port or settings.qdrant_http_port)
 
+    # 어휘(BM25) 축의 sparse 벡터 이름. Qdrant 가 IDF 를 곱해 준다(우리는 TF 만 보냄).
+    SPARSE_NAME = "bm25"
+
     def ensure_collection(self) -> None:
+        from qdrant_client import models as qm
         if not self.client.collection_exists(self.collection):
             self.client.create_collection(
                 collection_name=self.collection,
                 vectors_config=VectorParams(
                     size=self.vector_size, distance=Distance.COSINE),
+                sparse_vectors_config={
+                    self.SPARSE_NAME: qm.SparseVectorParams(modifier=qm.Modifier.IDF)},
             )
+            return
+        # 기존 컬렉션에 sparse 설정이 없으면 추가한다(재생성 없이 하이브리드 전환).
+        try:
+            info = self.client.get_collection(self.collection)
+            sparse = getattr(info.config.params, "sparse_vectors", None) or {}
+            if self.SPARSE_NAME not in sparse:
+                self.client.update_collection(
+                    collection_name=self.collection,
+                    sparse_vectors_config={
+                        self.SPARSE_NAME: qm.SparseVectorParams(
+                            modifier=qm.Modifier.IDF)})
+        except Exception:      # noqa: BLE001 — 구성 확인 실패해도 dense 색인은 계속
+            pass
 
     @staticmethod
     def _point_id(chunk_id: str) -> str:
@@ -51,10 +70,15 @@ class QdrantIndexer:
         ids: list[str],
     ) -> None:
         self.ensure_collection()
-        points = [
-            PointStruct(id=self._point_id(cid), vector=vec, payload=pl)
-            for vec, pl, cid in zip(vectors, payloads, ids)
-        ]
+        from app.search.lexical import to_qdrant_sparse
+
+        points = []
+        for vec, pl, cid in zip(vectors, payloads, ids):
+            # dense(의미) + sparse(어휘) 두 축을 같은 포인트에 싣는다.
+            vectors_payload = {"": vec,
+                               self.SPARSE_NAME: to_qdrant_sparse(pl.get("text", ""))}
+            points.append(PointStruct(id=self._point_id(cid),
+                                      vector=vectors_payload, payload=pl))
         self.client.upsert(collection_name=self.collection, points=points)
 
     def _doc_filter(self, parent_doc_id: str):

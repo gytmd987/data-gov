@@ -63,14 +63,18 @@ def build_document_manager(session: Session | None = None):
 
 
 def build_search_pipeline(session: Session | None = None):
-    from app.clients.qdrant_search import QdrantDenseSearch
+    from app.clients.qdrant_search import QdrantBM25Search, QdrantDenseSearch
     from app.clients.reranker import TEIReranker
     from app.db.repositories import AuditRepository
     from app.search.pipeline import SearchPipeline
     from app.search.retriever import HybridRetriever
     session = session or new_session()
+    # 의미(dense) + 어휘(BM25) 두 축을 RRF 로 융합한다. 어휘 축은 사내 조어·조항 번호·
+    # 숫자·파일명처럼 임베딩이 약한 질의를 건진다.
+    sparse = QdrantBM25Search() if settings.hybrid_bm25 else None
     return SearchPipeline(
-        retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder())),
+        retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder()),
+                                  sparse=sparse),
         reranker=TEIReranker(),
         llm=VLLMClient(),
         audit=AuditRepository(session),

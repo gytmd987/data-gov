@@ -117,6 +117,15 @@ class DocumentRepository:
             select(Document.doc_id).where(Document.status == status.value)
         ).scalars())
 
+    def chunks_of(self, doc_id: str) -> list[dict[str, Any]]:
+        """이 문서의 청크(검색 인덱스 재구축용). Qdrant 없이 DB만으로 복원 가능."""
+        rows = self.session.execute(
+            select(Chunk).where(Chunk.parent_doc_id == doc_id)
+            .order_by(Chunk.chunk_id)).scalars()
+        return [{"chunk_id": c.chunk_id, "text": c.text,
+                 "chunk_type": c.chunk_type, "section_title": c.section_title,
+                 "page_no": c.page_no} for c in rows]
+
     def get_status(self, doc_id: str) -> Optional[str]:
         return self.session.execute(
             select(Document.status).where(Document.doc_id == doc_id)

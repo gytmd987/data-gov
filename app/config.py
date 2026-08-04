@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     minio_port: int = 9000
 
     # 검색 파라미터
+    # 어휘 검색(BM25) 축 사용 여부. 끄면 의미 검색(dense)만 쓴다.
+    # 켠 뒤에는 기존 문서에 `python -m scripts.reindex_sparse` 를 한 번 돌려야
+    # 옛 문서도 어휘 검색에 잡힌다(새로 등록하는 문서는 자동).
+    hybrid_bm25: bool = True
     hybrid_top_n: int = 40
     rerank_top_k: int = 6
 

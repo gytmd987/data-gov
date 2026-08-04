@@ -51,18 +51,31 @@ class QdrantDenseSearch:
 
 
 class QdrantBM25Search:
-    """Qdrant 내장 BM25(sparse) 검색. 컬렉션에 'bm25' 스파스 벡터가 구성돼 있어야 한다."""
+    """어휘(BM25) 검색. 색인과 **같은 토크나이저**로 질의 sparse 벡터를 만든다.
+
+    IDF 가중치는 Qdrant 가 서버에서 곱한다(컬렉션 sparse 벡터의 Modifier.IDF).
+    별도 모델을 내려받지 않으므로 폐쇄망에서도 그대로 동작한다.
+    """
 
     def __init__(self, collection: str = "hr_chunks",
-                 host: str = "localhost", port: int | None = None) -> None:
+                 host: str = "localhost", port: int | None = None,
+                 client: QdrantClient | None = None,
+                 vector_name: str = "bm25") -> None:
         self.collection = collection
-        self.client = QdrantClient(host=host, port=port or settings.qdrant_http_port)
+        self.vector_name = vector_name
+        self.client = client or QdrantClient(
+            host=host, port=port or settings.qdrant_http_port)
 
     def search_sparse(self, query: str, top_n: int, qdrant_filter: Any) -> list[RetrievedChunk]:
+        from app.search.lexical import sparse_vector
+
+        indices, values = sparse_vector(query)
+        if not indices:                     # 검색어에 토큰이 없으면 dense 결과만 쓴다
+            return []
         res = self.client.query_points(
             collection_name=self.collection,
-            query=qm.Document(text=query, model="Qdrant/bm25"),
-            using="bm25",
+            query=qm.SparseVector(indices=indices, values=values),
+            using=self.vector_name,
             query_filter=qdrant_filter,
             limit=top_n,
             with_payload=True,
