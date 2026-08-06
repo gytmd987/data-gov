@@ -74,6 +74,13 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
+# ── 웹 업로드 개수 제한 ──────────────────────────────────────────────────────
+# 업로드는 요청 안에서 파일당 파싱+AI 자동 채움을 순차로 돌리므로(문서당 수십 초),
+# 한 번에 많이 올리면 요청이 몇십 분씩 걸려 브라우저·프록시에서 끊긴다.
+# 대량 반입은 웹이 아니라 `python -m scripts.bulk_ingest` 를 쓴다(docs/일괄반입.md).
+UPLOAD_WARN_FILES = 20        # 이보다 많으면 화면에서 경고(계속은 가능)
+DATA_UPLOAD_MAX_NUMBER_FILES = 50   # 하드 한도. 넘으면 Django 가 요청을 거부한다.
+
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"

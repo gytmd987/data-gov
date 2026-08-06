@@ -21,8 +21,14 @@ admin_required = user_passes_test(is_admin, login_url="/accounts/login/")
 
 
 def admin_context(request):
-    """템플릿 컨텍스트: is_admin (상단 메뉴 노출용)."""
-    return {"is_admin": is_admin(request.user)}
+    """템플릿 공통 컨텍스트: 관리자 여부 + 업로드 개수 한도(화면 안내용)."""
+    from django.conf import settings as dj
+
+    return {
+        "is_admin": is_admin(request.user),
+        "upload_warn_files": getattr(dj, "UPLOAD_WARN_FILES", 20),
+        "upload_max_files": getattr(dj, "DATA_UPLOAD_MAX_NUMBER_FILES", 50),
+    }
 
 
 def domain_user_context(session, user):

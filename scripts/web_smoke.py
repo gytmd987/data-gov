@@ -832,6 +832,26 @@ def main() -> int:
     assert not leaked, f"화면에 내부 정보 노출: {leaked}"
     print("[화면정리] 템플릿 주석·내부 필드명·원시 상태값 미노출 ✅")
 
+    # 19) 웹 업로드 개수 한도 — 넘으면 요청 자체가 거부되므로 화면에서 미리 막는지 확인
+    import io as _io
+    from django.conf import settings as _dj
+    page = c.get("/console/docs/").content.decode()
+    assert f"{_dj.UPLOAD_WARN_FILES}개 이하" in page, "업로드 권장 개수 안내가 없음"
+    assert "개는 한 번에 올릴 수 없습니다" in page, "한도 초과 차단 안내가 없음"
+
+    def _files(n):
+        out = []
+        for i in range(n):
+            b = _io.BytesIO(f"문서 {i}. 연차는 15일이다.".encode())
+            b.name = f"한도테스트_{i:03d}.txt"
+            out.append(b)
+        return out
+
+    over = c.post("/console/docs/", {"file": _files(_dj.DATA_UPLOAD_MAX_NUMBER_FILES + 5)})
+    assert over.status_code == 400, f"한도 초과인데 통과함: {over.status_code}"
+    print(f"[업로드한도] 권장 {_dj.UPLOAD_WARN_FILES}개 안내 · 한도 "
+          f"{_dj.DATA_UPLOAD_MAX_NUMBER_FILES}개 초과 시 차단 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 
