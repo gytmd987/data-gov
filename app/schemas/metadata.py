@@ -57,6 +57,9 @@ class IdentificationBlock(BaseModel):
     source_filename: str
     file_format: FileFormat
     file_hash: str                      # 중복 탐지 (sha256 등)
+    # 메일 고유값. 같은 메일을 사서함마다 저장하면 헤더가 달라 해시가 어긋나므로,
+    # 메일은 이 값으로 중복을 판정한다(메일이 아니면 None).
+    message_id: Optional[str] = None
     ingested_at: datetime
     ingested_by: str
     page_count: Optional[int] = None

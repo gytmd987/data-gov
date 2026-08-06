@@ -900,6 +900,75 @@ def main() -> int:
         s19.close()
     print(f"[예약업로드] {n_queue}건 예약 → 워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
 
+    # 21) 메일 — 사내 형식(.mysingle) 변환 · 사서함 사본 중복 · 첨부 분리
+    import base64 as _b64
+
+    from app.ingestion.mailfile import attachments_of as _atts
+    from app.ingestion.mailfile import read_message as _read_mail
+
+    def _mail_bytes(msgid, received, attach=None):
+        head = (f"Message-ID: <{msgid}>\r\nReceived: from corp by {received}\r\n"
+                "From: kim@corp.com\r\nTo: a@corp.com\r\n"
+                "Date: Mon, 3 Aug 2026 10:00:00 +0900\r\n"
+                "Subject: [공유] 채용 프로세스 개편\r\nMIME-Version: 1.0\r\n")
+        body = ("채용 프로세스를 개편합니다. 1차는 실무 면접, 2차는 임원 면접입니다.\r\n"
+                "평가표는 공통 양식을 쓰고 점수는 5점 척도입니다.\r\n")
+        if not attach:
+            return (head + "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+                    + body).encode()
+        name, data = attach
+        return (head + 'Content-Type: multipart/mixed; boundary="B"\r\n\r\n--B\r\n'
+                "Content-Type: text/plain; charset=utf-8\r\n\r\n" + body
+                + "\r\n--B\r\nContent-Type: application/octet-stream\r\n"
+                f'Content-Disposition: attachment; filename="{name}"\r\n'
+                "Content-Transfer-Encoding: base64\r\n\r\n"
+                + _b64.b64encode(data).decode() + "\r\n--B--\r\n").encode()
+
+    def _upload(name, raw):
+        f = _io.BytesIO(raw)
+        f.name = name
+        return c.post("/console/docs/", {"file": [f], "folder_node_id": str(n_part.id)})
+
+    attach_body = "연차 휴가는 15일이며 인사팀에 신청한다. 미사용분은 수당이다.".encode()
+    big = attach_body + b"\x00" * 400_000        # 용량이 줄었는지 눈에 보이게
+    raw_mysingle = _mail_bytes("MAIL1@corp", "mx1", ("연차규정_첨부.txt", big))
+    assert _upload("채용 프로세스 개편.mysingle", raw_mysingle).status_code == 302
+
+    s20 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR5
+        from app.db.repositories import RelationRepository as _RR
+        r20 = _DR5(s20)
+        svc20 = bridge.get_review_service(s20)
+        mail = next(d for d in r20.list_documents(limit=500)
+                    if d["filename"] == "채용 프로세스 개편.mysingle")
+        child = next(d for d in r20.list_documents(limit=500)
+                     if d["filename"] == "연차규정_첨부.txt")
+        assert any(l["doc_id"] == child["doc_id"] and l["reason"] == "메일 첨부"
+                   for l in _RR(s20).related_ids(mail["doc_id"])), "첨부가 메일과 연결 안 됨"
+        # 보관 원본: 확장자가 .eml 이고, 첨부는 빠져 용량이 줄어 있어야 한다
+        stored = Path(r20.get_original_path(mail["doc_id"]))
+        assert stored.suffix == ".eml", f"메일 보관 확장자가 {stored.suffix}"
+        assert not _atts(_read_mail(stored)), "보관 메일에 첨부가 남아 있음"
+        assert stored.stat().st_size < len(raw_mysingle) / 4, "첨부를 덜어내지 못함"
+        svc20.confirm_without_review(mail["doc_id"])   # 메일 확정 → 첨부도 같이 등록
+        assert r20.get_status(child["doc_id"]) == "indexed", "첨부가 등록되지 않음"
+    finally:
+        s20.close()
+
+    # 같은 메일의 다른 사서함 사본(헤더만 다름) → 파일 해시는 달라도 한 건이어야 한다
+    dup_resp = _upload("채용 프로세스 개편.eml", _mail_bytes("MAIL1@corp", "mx2.other"))
+    assert dup_resp.status_code == 302
+    s21 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR6
+        mails = [d for d in _DR6(s21).list_documents(limit=500)
+                 if d["filename"].startswith("채용 프로세스 개편")]
+        assert len(mails) == 1, f"같은 메일이 {len(mails)}건 등록됨"
+    finally:
+        s21.close()
+    print("[메일] .mysingle→.eml 변환 · 사서함 사본 중복 차단 · 첨부 분리 등록 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

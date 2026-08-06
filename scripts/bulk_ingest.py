@@ -33,10 +33,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from app.ingestion.intake import DuplicateError, _EXT_TO_FORMAT
+from app.ingestion.intake import SUPPORTED_SUFFIXES, DuplicateError
 from app.ingestion.enrichment import ReadError
 
-SUPPORTED_EXTS = frozenset(_EXT_TO_FORMAT)
+SUPPORTED_EXTS = SUPPORTED_SUFFIXES
 UNFILED_LABEL = "(미분류 폴더)"
 
 # 사람이 만든 파일이 아닌 것들 — 조용히 제외한다.

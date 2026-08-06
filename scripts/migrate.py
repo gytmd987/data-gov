@@ -25,6 +25,7 @@ _COLUMNS = [
     ("documents", "author_node_id", "INTEGER"),
     ("org_nodes", "leader_id", "VARCHAR(128)"),
     ("org_nodes", "default_access", "JSON DEFAULT '[]'"),
+    ("documents", "message_id", "VARCHAR(512)"),
 ]
 
 # 더 이상 쓰지 않는 컬럼 — NOT NULL 제약이 신규 인원 등록을 막으므로 제거한다.
@@ -58,17 +59,52 @@ def _backfill_access_tokens(engine) -> int:
     return n
 
 
+def _fix_email_extension(engine) -> int:
+    """예전에 보관한 메일 원본의 확장자 `.email` → `.eml` 로 고친다(멱등).
+
+    보관 파일명을 내부 형식 값(email)으로 만들던 시절의 잔재다. `.email` 은 윈도우가
+    모르는 확장자라 다운로드해도 더블클릭으로 안 열린다.
+    """
+    import os
+
+    from sqlalchemy.orm import Session
+
+    n = 0
+    with Session(engine) as s:
+        rows = s.execute(text(
+            "SELECT doc_id, original_path FROM documents "
+            "WHERE original_path LIKE '%.email'")).all()
+        for doc_id, path in rows:
+            new_path = path[: -len(".email")] + ".eml"
+            try:
+                if os.path.exists(path) and not os.path.exists(new_path):
+                    os.rename(path, new_path)
+            except OSError:
+                continue
+            s.execute(text("UPDATE documents SET original_path = :p WHERE doc_id = :d"),
+                      {"p": new_path, "d": doc_id})
+            n += 1
+        s.commit()
+    return n
+
+
 def main(engine=None) -> int:
     engine = engine or make_engine()   # engine 주입은 테스트용
     create_all(engine)            # 새 테이블(feedback, document_access_tokens, upload_jobs 등) 생성
     with engine.begin() as conn:
         for table, col, coltype in _COLUMNS:
-            try:
-                conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coltype}"))
-            except Exception:      # 구버전 SQLite 는 IF NOT EXISTS 미지원
-                continue
-            print(f"  OK: {table}.{col}")
+            # Postgres 는 IF NOT EXISTS 지원, SQLite 는 미지원 → 순차 시도.
+            # (그냥 ADD COLUMN 은 이미 있으면 에러 = 이미 마이그레이션된 상태)
+            added = False
+            for sql in (f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coltype}",
+                        f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"):
+                try:
+                    conn.execute(text(sql))
+                    added = True
+                    break
+                except Exception:
+                    continue
+            print(f"  {'OK' if added else 'skip(있음)'}: {table}.{col}")
         for table, col in _DROP_COLUMNS:
             # Postgres 는 IF EXISTS 지원, SQLite(3.35+) 는 미지원 → 순차 시도.
             dropped = False
@@ -83,6 +119,9 @@ def main(engine=None) -> int:
             print(f"  {'OK(drop)' if dropped else 'skip(drop)'}: {table}.{col}")
     n = _backfill_access_tokens(engine)
     print(f"  OK: document_access_tokens 백필 {n}건")
+    fixed = _fix_email_extension(engine)
+    if fixed:
+        print(f"  OK: 메일 원본 확장자 .email → .eml {fixed}건")
     print("마이그레이션 완료.")
     return 0
 

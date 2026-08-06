@@ -86,8 +86,8 @@ def review(request):
             try:
                 svc.start_ingestion(str(dest), ingested_by=request.user.username)
                 messages.success(request, f"'{f.name}' 업로드 완료 — AI 자동 채움 후 검토 대기에 추가됨")
-            except DuplicateError:
-                messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다(내용 동일).")
+            except DuplicateError as e:
+                messages.warning(request, f"'{f.name}' 은 이미 등록된 문서입니다({e.reason}).")
             except ReadError as e:
                 messages.error(request, f"⚠️ '{f.name}' {e}")
             return redirect("console_review")
@@ -396,8 +396,8 @@ def docs(request):
                                                  folder_node_id=folder_id)
                     ok_n += 1
                     first_id = first_id or new_id
-                except DuplicateError:
-                    dups.append(f.name)
+                except DuplicateError as e:
+                    dups.append(f"{f.name}({e.reason})")
                 except ReadError as e:
                     errs.append(f"{f.name}: {e}")
                 except Exception:   # LLM 일시 오류 등 — 500 대신 안내 후 재시도 유도
@@ -405,7 +405,7 @@ def docs(request):
             if ok_n:
                 messages.success(request, f"{ok_n}건 업로드 완료 — 내용을 확인·수정한 뒤 등록을 확정하세요.")
             if dups:
-                messages.warning(request, "이미 등록된 문서(내용 동일): " + ", ".join(dups))
+                messages.warning(request, "이미 등록된 문서: " + ", ".join(dups))
             for e in errs:
                 messages.error(request, f"⚠️ {e}")
             return redirect(f"/console/docs/?doc={first_id}" if first_id else "console_docs")

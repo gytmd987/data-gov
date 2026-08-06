@@ -20,6 +20,7 @@ def document_row_values(doc: DocumentMetadata, status: IngestionStatus) -> dict[
         "source_filename": ident.source_filename,
         "file_format": ident.file_format.value,
         "file_hash": ident.file_hash,
+        "message_id": ident.message_id,
         "page_count": ident.page_count,
         "status": status.value,
         "doc_type": cls.doc_type.value if cls.doc_type else None,

@@ -64,7 +64,7 @@ with st.sidebar:
             doc_id = _service().start_ingestion(str(named), ingested_by=uploader_id)
             st.success(f"자동 채움 완료 → 검토 대기 목록에 추가됨")
         except DuplicateError as e:
-            st.warning(f"이미 등록된 문서입니다(내용 동일). 기존 문서: {e.existing_doc_id[:8]}")
+            st.warning(f"이미 등록된 문서입니다({e.reason}). 기존 문서: {e.existing_doc_id[:8]}")
 
 
 # ── 메인: 검토 대기 목록 ──────────────────────────────────────────────────────

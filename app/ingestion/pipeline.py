@@ -29,7 +29,7 @@ from app.schemas.metadata import (
 
 from .chunking import Chunk, chunk_elements
 from .enrichment import LLMClient, assert_ai_mandatory, enrich
-from .intake import HashLookup, intake
+from .intake import HashLookup, MessageIdLookup, intake
 from .parsers import build_parser_content, get_parser
 from .parsers.base import ParseResult
 
@@ -54,6 +54,9 @@ class IngestionContext:
     parse_result: Optional[ParseResult] = None
     validation: Optional[ValidationResult] = None
     warnings: list[str] = field(default_factory=list)
+    # 실제로 파싱한 파일 경로. 사내 메일(.mysingle)은 .eml 로 변환하므로 업로드 경로와
+    # 다를 수 있다. 원본 보관은 (원래 파일이 아니라) 이 파일을 기준으로 한다.
+    source_path: Optional[str] = None
 
     def _to(self, target: IngestionStatus) -> None:
         assert_transition(self.status, target)
@@ -67,12 +70,27 @@ def run_auto_stages(
     llm_model: str,
     ocr: Optional[OCRFn] = None,
     hash_lookup: Optional[HashLookup] = None,
+    message_id_lookup: Optional[MessageIdLookup] = None,
 ) -> IngestionContext:
     """자동 단계(intake→parse→chunk→enrich). 완료 시 PENDING_REVIEW."""
+    # 사내 그룹웨어 메일(.mysingle)은 확장자만 다른 표준 메일이다. 여기서 한 번 .eml 로
+    # 바꿔 두면 이후 파싱·보관·다운로드가 전부 보통 메일과 똑같이 돌아간다.
+    from pathlib import Path as _Path
+
+    from .mailfile import MAIL_SUFFIXES, to_eml
+
+    source_filename = _Path(path).name
+    suffix = _Path(path).suffix.lower()
+    if suffix in MAIL_SUFFIXES and suffix != ".eml":
+        import tempfile
+        path = str(to_eml(path, tempfile.mkdtemp(prefix="mail_")))
+
     # UPLOADED: 식별 필드 + 중복 탐지
-    ident = intake(path, ingested_by=ingested_by, hash_lookup=hash_lookup)
+    ident = intake(path, ingested_by=ingested_by, hash_lookup=hash_lookup,
+                   message_id_lookup=message_id_lookup,
+                   source_filename=source_filename)
     doc = DocumentMetadata(identification=ident)
-    ctx = IngestionContext(doc=doc, status=IngestionStatus.UPLOADED)
+    ctx = IngestionContext(doc=doc, status=IngestionStatus.UPLOADED, source_path=path)
 
     # PARSED
     parser = get_parser(ident.file_format, ocr=ocr)

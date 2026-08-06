@@ -50,6 +50,26 @@ class DocumentRepository:
         self.delete(doc_id)   # 색인 전 stale 문서 폐기(청크 cascade) → 재업로드 진행
         return None
 
+    def message_id_lookup(self, message_id: str) -> Optional[str]:
+        """메일 중복 탐지: Message-ID 로 기존 doc_id 반환(intake 에 주입).
+
+        같은 메일을 A 사서함과 B 사서함에서 각자 저장하면 Received 헤더가 달라 파일
+        해시가 어긋난다. Message-ID 는 발신 시점에 정해지므로 사본이 몇 개든 같다.
+        hash_lookup 과 같은 규칙으로, 색인 전 stale 문서는 치우고 재업로드를 허용한다.
+        """
+        if not message_id:
+            return None
+        row = self.session.execute(
+            select(Document.doc_id, Document.status).where(
+                Document.message_id == message_id)).first()
+        if row is None:
+            return None
+        doc_id, status = row
+        if status == IngestionStatus.INDEXED.value:
+            return doc_id
+        self.delete(doc_id)
+        return None
+
     def upsert_document(self, doc: DocumentMetadata, status: IngestionStatus) -> None:
         values = document_row_values(doc, status)
         row = self.session.get(Document, doc.identification.doc_id)

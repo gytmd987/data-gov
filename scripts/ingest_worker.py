@@ -62,8 +62,8 @@ def process_one(job) -> tuple[str, str]:
     try:
         doc_id = svc.start_ingestion(job.path, ingested_by=job.uploaded_by,
                                      folder_node_id=job.folder_node_id)
-    except DuplicateError:
-        return "skipped", "이미 등록된 문서(내용 동일)"
+    except DuplicateError as e:
+        return "skipped", f"이미 등록된 문서({e.reason})"
     except ReadError as e:
         svc.session.rollback()
         return "failed", str(e)

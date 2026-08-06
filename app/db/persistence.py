@@ -25,6 +25,11 @@ def persistent_hash_lookup(repo: DocumentRepository):
     return repo.hash_lookup
 
 
+def persistent_message_id_lookup(repo: DocumentRepository):
+    """메일 중복 탐지 콜백 — 같은 메일의 사서함별 사본을 하나로 본다."""
+    return repo.message_id_lookup
+
+
 def save_ingestion(repo: DocumentRepository, ctx: IngestionContext) -> None:
     """현재 컨텍스트 상태를 영속화한다."""
     repo.upsert_document(ctx.doc, ctx.status)
