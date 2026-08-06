@@ -821,6 +821,17 @@ def main() -> int:
         s16.close()
     print("[하위폴더] 파트원 폴더 생성 · 폴더 기본권한 자동 채움 · 관리자 전용 서버 동기화 ✅")
 
+    # 18) 화면에 내부 정보가 새지 않는다(템플릿 주석·내부 필드명·원시 상태값)
+    leaked = []
+    for url in ("/console/docs/", "/console/org/", "/console/users/", "/"):
+        html = c.get(url).content.decode()
+        for token in ("{#", "#}", "{%", "title_normalized", "doc_type ", "auto_filled",
+                      "pending_review", "PENDING_REVIEW", "Traceback"):
+            if token in html:
+                leaked.append(f"{url}: {token}")
+    assert not leaked, f"화면에 내부 정보 노출: {leaked}"
+    print("[화면정리] 템플릿 주석·내부 필드명·원시 상태값 미노출 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

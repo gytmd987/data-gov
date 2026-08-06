@@ -5,12 +5,12 @@
 <input type="hidden" name="next" value="/console/docs/?doc={{ view.doc_id }}">
 <div class="card">
   <b><svg class="ic sm"><use href="#i-edit"/></svg> {{ view.source_filename }} — 등록 전 검토</b>
-  <span class="msg-note">· {{ view.file_format }} · 조각 {{ view.chunk_count }}개 · 상태 {{ view.status }}</span>
+  <span class="msg-note">· {{ view.file_format|klabel }}{% if view.page_count %} · {{ view.page_count }}쪽{% endif %}</span>
   <p class="msg-note" style="margin-top:4px">AI가 아래 항목을 자동으로 채웠습니다. 확인·수정한 뒤 <b>등록 확정</b>하면 검색에 노출됩니다.</p>
 
-  {% if view.auto_filled %}
-  <p class="msg-note" style="margin-top:8px"><svg class="ic sm"><use href="#i-sparkle"/></svg> AI 자동 채움 신뢰도:
-    {% for a in view.auto_filled %}{{ a.field }} {{ a.confidence }}{% if not forloop.last %} · {% endif %}{% endfor %}
+  {% if view.uncertain_fields %}
+  <p class="msg-note" style="margin-top:8px"><svg class="ic sm"><use href="#i-alert"/></svg>
+    AI가 확신하지 못한 항목: <b>{{ view.uncertain_fields|join:", " }}</b> — 특히 확인해 주세요.
   </p>{% endif %}
 
   {% if view.filename_stem and view.classification.title_normalized != view.filename_stem %}
@@ -37,8 +37,11 @@
     <div style="flex:1;min-width:300px">
       <h4>① 내용 분류</h4>
       <div class="field"><label>문서 종류</label>
-        {# AI가 판단 못 한(unknown) 경우 목록에 맞는 항목이 없다. 그냥 두면 브라우저가
-           맨 첫 항목을 고른 것처럼 보여 엉뚱한 종류로 저장된다 → 빈 선택지를 먼저 둔다. #}
+        {% comment %}
+          AI가 판단 못 한(unknown) 경우 목록에 맞는 항목이 없다. 그냥 두면 브라우저가
+          맨 첫 항목을 고른 것처럼 보여 엉뚱한 종류로 저장된다 → 빈 선택지를 먼저 둔다.
+          ({# #} 는 한 줄 주석이라 여러 줄이면 화면에 그대로 찍힌다)
+        {% endcomment %}
         <select name="doc_type" required>
           {% if view.classification.doc_type not in opts.doc_type %}
           <option value="" selected>― 문서 종류 선택 ―</option>

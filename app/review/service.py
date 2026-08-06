@@ -17,7 +17,7 @@ from app import system_config
 from app.db.persistence import load_context, persistent_hash_lookup, save_ingestion
 from app.db.repositories import DocumentRepository, UserRepository
 from app.governance.validator import ValidationResult
-from app.ingestion.enrichment import LLMClient
+from app.ingestion.enrichment import DEFAULT_CONFIDENCE_THRESHOLD, LLMClient
 from app.ingestion.pipeline import (
     Embedder,
     Indexer,
@@ -58,6 +58,36 @@ ENUM_OPTIONS: dict[str, list[str]] = {
 }
 
 
+# 내부 필드 이름 → 화면에 쓸 한글 이름. 사용자에게 'title_normalized' 같은 건 보이면 안 된다.
+FIELD_LABELS = {
+    "doc_type": "문서 종류",
+    "title_normalized": "제목",
+    "summary": "요약",
+    "department": "작성부서",
+    "language": "언어",
+    "status": "상태",
+    "effective_date": "작성일",
+    "expiry_date": "유효일",
+    "version": "버전",
+}
+
+
+def uncertain_field_labels(auto_filled, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+                           ) -> list[str]:
+    """AI가 확신하지 못한 항목의 **한글 이름** 목록(검토 화면에서 주의를 끌기 위함).
+
+    신뢰도 숫자나 내부 필드명을 그대로 보여주면 사용자에게 의미가 없다.
+    """
+    out: list[str] = []
+    for item in auto_filled or []:
+        data = item if isinstance(item, dict) else item.model_dump()
+        if float(data.get("confidence", 1.0)) < threshold:
+            label = FIELD_LABELS.get(data.get("field"))
+            if label and label not in out:
+                out.append(label)
+    return out
+
+
 def _expand_access_tokens(session, governance: GovernanceBlock) -> GovernanceBlock:
     """access_selections(node:/head:) → 조직 트리로 확장한 access_tokens 를 채운다."""
     from app.db.repositories import OrgRepository
@@ -85,6 +115,7 @@ class ReviewView:
     similar_candidates: list[dict[str, Any]] = field(default_factory=list)
     revision_candidates: list[dict[str, Any]] = field(default_factory=list)  # 개정판(교체) 후보
     related_recos: list[dict[str, Any]] = field(default_factory=list)        # AI 추천 연관 문서
+    uncertain_fields: list[str] = field(default_factory=list)   # AI가 확신 못 한 항목(한글)
     last_validation: Optional[dict[str, Any]] = None
     filename_stem: Optional[str] = None   # 제목 보정 고지용(제목≠파일명이면 배너)
 
@@ -294,6 +325,7 @@ class ReviewService:
             page_count=doc.identification.page_count,
             chunk_count=chunk_count,
             auto_filled=[a.model_dump() for a in doc.provenance.auto_filled],
+            uncertain_fields=uncertain_field_labels(doc.provenance.auto_filled),
             classification={
                 "doc_type": cls.doc_type.value,
                 "title_normalized": cls.title_normalized,

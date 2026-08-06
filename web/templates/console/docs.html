@@ -242,7 +242,7 @@
       {% if can_manage %}<td><input type="checkbox" name="doc_ids" value="{{ d.doc_id }}" class="rowchk" style="width:auto"></td>{% endif %}
       <td><a href="?doc={{ d.doc_id }}{% for k, v in filter_qs.items %}&{{ k }}={{ v }}{% endfor %}">{{ d.title|default:d.filename }}</a>{% if d.superseded_by %} <span class="msg-note">(대체됨)</span>{% endif %}</td>
       <td>{{ d.doc_type|klabel }}</td>
-      <td>{{ d.lifecycle_status|klabel }}</td>
+      <td><span class="st st-{{ d.lifecycle_status }}">{{ d.lifecycle_status|klabel }}</span></td>
       <td>{{ d.owner|default_if_none:"—" }}</td>
       <td>{{ d.effective_date|default_if_none:"—" }}</td>
     </tr>
@@ -317,7 +317,7 @@
 <div class="card">
   <div style="display:flex;align-items:flex-start;gap:10px">
     <b style="font-size:15px;flex:1">{{ doc.classification.title_normalized|default:doc.identification.source_filename }}</b>
-    <span class="tag">{{ doc.lifecycle.status.value|klabel }}</span>
+    <span class="st st-{{ doc.lifecycle.status.value }}">{{ doc.lifecycle.status.value|klabel }}</span>
     <a href="?{% for k, v in filter_qs.items %}{{ k }}={{ v }}&{% endfor %}" class="msg-note"
        title="닫기"><svg class="ic sm"><use href="#i-x"/></svg></a>
   </div>
