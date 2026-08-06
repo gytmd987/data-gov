@@ -969,6 +969,48 @@ def main() -> int:
         s21.close()
     print("[메일] .mysingle→.eml 변환 · 사서함 사본 중복 차단 · 첨부 분리 등록 ✅")
 
+    # 22) 메일 스레드 — 인용문은 색인에서 빠지고, 관계는 헤더로 이어진다
+    _NEW = "확인했습니다. 2차 면접 일정만 조율 부탁드립니다."
+    _OLD = ("채용 프로세스를 개편합니다. 1차는 실무 면접, 2차는 임원 면접입니다.\r\n"
+            "평가표는 공통 양식을 쓰고 점수는 5점 척도입니다.")
+
+    def _thread_mail(msgid, subject, body, irt=None, refs=None):
+        head = (f"Message-ID: <{msgid}>\r\nFrom: lee@corp.com\r\nTo: kim@corp.com\r\n"
+                f"Date: Mon, 3 Aug 2026 11:00:00 +0900\r\nSubject: {subject}\r\n")
+        if irt:
+            head += f"In-Reply-To: <{irt}>\r\n"
+        if refs:
+            head += "References: " + " ".join(f"<{r}>" for r in refs) + "\r\n"
+        return (head + "MIME-Version: 1.0\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n\r\n" + body).encode()
+
+    assert _upload("스레드 원본.eml",
+                   _thread_mail("T1@corp", "[공유] 면접 절차", _OLD)).status_code == 302
+    quoted = _NEW + "\r\n\r\n> " + _OLD.replace("\r\n", "\r\n> ")
+    assert _upload("스레드 답장.eml",
+                   _thread_mail("T2@corp", "RE: [공유] 면접 절차", quoted,
+                                irt="T1@corp", refs=["T1@corp"])).status_code == 302
+
+    s22 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR7
+        from app.db.repositories import RelationRepository as _RR2
+        r22 = _DR7(s22)
+        first = next(d for d in r22.list_documents(limit=500)
+                     if d["filename"] == "스레드 원본.eml")
+        reply = next(d for d in r22.list_documents(limit=500)
+                     if d["filename"] == "스레드 답장.eml")
+        # 인용된 원문은 답장 문서에 색인되지 않는다
+        body = "\n".join(c["text"] for c in r22.chunks_of(reply["doc_id"]))
+        assert _NEW in body, "답장에서 새로 쓴 말이 사라짐"
+        assert "1차는 실무 면접" not in body, "인용된 원문이 그대로 색인됨"
+        # 관계는 헤더로 이어진다
+        assert any(l["doc_id"] == first["doc_id"] and l["reason"] == "메일 답장"
+                   for l in _RR2(s22).related_ids(reply["doc_id"])), "답장 관계가 없음"
+    finally:
+        s22.close()
+    print("[메일스레드] 인용문 제외 색인 · 헤더 기반 답장 관계 연결 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

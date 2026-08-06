@@ -70,6 +70,22 @@ class DocumentRepository:
         self.delete(doc_id)
         return None
 
+    def thread_members(self, thread_root: str, exclude_doc_id: str = "",
+                       limit: int = 30) -> list[dict[str, Any]]:
+        """같은 메일 스레드의 다른 메일들 [{doc_id, message_id, in_reply_to}].
+
+        스레드 뿌리(References 의 맨 앞)가 같으면 한 스레드다. 어떤 순서로 올려도,
+        중간 메일이 빠져 있어도 묶인다.
+        """
+        if not thread_root:
+            return []
+        stmt = (select(Document.doc_id, Document.message_id, Document.in_reply_to)
+                .where(Document.thread_root == thread_root).limit(limit))
+        if exclude_doc_id:
+            stmt = stmt.where(Document.doc_id != exclude_doc_id)
+        return [{"doc_id": d, "message_id": m, "in_reply_to": r}
+                for d, m, r in self.session.execute(stmt).all()]
+
     def upsert_document(self, doc: DocumentMetadata, status: IngestionStatus) -> None:
         values = document_row_values(doc, status)
         row = self.session.get(Document, doc.identification.doc_id)

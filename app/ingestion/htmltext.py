@@ -15,26 +15,56 @@ from html.parser import HTMLParser
 
 # 내용이 아니라 코드/장식인 요소 — 여는~닫는 태그 사이를 통째로 버린다
 _DROP = {"script", "style", "head", "title", "noscript", "svg"}
-# 닫는 태그가 없는 요소(void). 깊이를 세면 안 된다 — 세면 그 뒤 문서 전체가 사라진다.
-_VOID_DROP = {"meta", "link", "base", "col", "source", "track", "wbr"}
+# 닫는 태그가 없는 요소(void). 열림/닫힘을 세면 안 된다 — 세면 짝이 안 맞는다.
+_VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+         "meta", "param", "source", "track", "wbr"}
 # 줄바꿈을 만드는 블록 요소
 _BLOCK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
           "table", "section", "article", "header", "footer", "blockquote", "pre"}
 
+# 메일에서 '인용된 이전 메일'을 감싸는 요소. 메일 클라이언트마다 이름이 다르다.
+_QUOTE_TAGS = {"blockquote"}
+_QUOTE_MARKERS = ("gmail_quote", "moz-cite-prefix", "yahoo_quoted",
+                  "divrplyfwdmsg", "olk_src_body_section", "appendonsend",
+                  "gmail_attr")
+
+
+def _is_quote_container(tag: str, attrs) -> bool:
+    if tag in _QUOTE_TAGS:
+        return True
+    joined = " ".join(v for k, v in attrs if k in ("class", "id") and v).lower()
+    return any(m in joined for m in _QUOTE_MARKERS)
+
 
 class _Extractor(HTMLParser):
-    def __init__(self) -> None:
+    """열린 태그를 스택으로 추적한다.
+
+    깊이만 세면 메일 HTML 처럼 닫는 태그가 빠진 마크업에서 짝이 어긋나, 한 번
+    버리기 시작하면 그 뒤 본문이 통째로 사라진다. 스택을 쓰면 바깥 태그가 닫힐 때
+    안쪽도 함께 닫힌 것으로 처리돼 그런 일이 없다.
+    """
+
+    def __init__(self, drop_quotes: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self._parts: list[str] = []
-        self._skip_depth = 0
+        self._open: list[str] = []       # 열려 있는 태그 이름
+        self._skip_at: int | None = None  # 이 위치에서 버리기 시작했다
+        self._drop_quotes = drop_quotes
+
+    @property
+    def _skipping(self) -> bool:
+        return self._skip_at is not None
 
     def handle_starttag(self, tag, attrs):
-        if tag in _VOID_DROP:
+        if tag in _VOID:
+            if not self._skipping and tag == "br":
+                self._parts.append("\n")
             return
-        if tag in _DROP:
-            self._skip_depth += 1
+        self._open.append(tag)
+        if self._skipping:
             return
-        if self._skip_depth:
+        if tag in _DROP or (self._drop_quotes and _is_quote_container(tag, attrs)):
+            self._skip_at = len(self._open) - 1
             return
         if tag == "li":
             self._parts.append("\n- ")
@@ -44,16 +74,22 @@ class _Extractor(HTMLParser):
             self._parts.append("\n")
 
     def handle_endtag(self, tag):
-        if tag in _DROP:
-            self._skip_depth = max(0, self._skip_depth - 1)
+        if tag in _VOID:
             return
-        if self._skip_depth:
+        if tag in self._open:
+            # 짝이 안 맞아도 안쪽 태그들은 함께 닫힌 것으로 본다
+            idx = len(self._open) - 1 - self._open[::-1].index(tag)
+            del self._open[idx:]
+            if self._skip_at is not None and self._skip_at >= len(self._open):
+                self._skip_at = None
+                return
+        if self._skipping:
             return
         if tag in _BLOCK:
             self._parts.append("\n")
 
     def handle_data(self, data):
-        if not self._skip_depth and data:
+        if not self._skipping and data:
             self._parts.append(data)
 
     def text(self) -> str:
@@ -70,13 +106,16 @@ def looks_like_html(text: str) -> bool:
     return len(re.findall(r"</?(p|div|br|table|tr|td|span|a|img|h[1-6])\b", sample)) >= 3
 
 
-def html_to_text(html: str) -> str:
-    """HTML 본문 → 사람이 보는 글자만. 실패해도 예외를 던지지 않는다."""
+def html_to_text(html: str, drop_quotes: bool = False) -> str:
+    """HTML 본문 → 사람이 보는 글자만. 실패해도 예외를 던지지 않는다.
+
+    drop_quotes=True 면 인용된 이전 메일(blockquote 등)을 통째로 버린다.
+    """
     if not html:
         return ""
     # Outlook 조건부 주석 등 주석은 통째로 제거(안에 마크업이 들어 있다)
     cleaned = re.sub(r"<!--.*?-->", " ", html, flags=re.DOTALL)
-    parser = _Extractor()
+    parser = _Extractor(drop_quotes=drop_quotes)
     try:
         parser.feed(cleaned)
         parser.close()

@@ -26,6 +26,8 @@ _COLUMNS = [
     ("org_nodes", "leader_id", "VARCHAR(128)"),
     ("org_nodes", "default_access", "JSON DEFAULT '[]'"),
     ("documents", "message_id", "VARCHAR(512)"),
+    ("documents", "in_reply_to", "VARCHAR(512)"),
+    ("documents", "thread_root", "VARCHAR(512)"),
 ]
 
 # 더 이상 쓰지 않는 컬럼 — NOT NULL 제약이 신규 인원 등록을 막으므로 제거한다.

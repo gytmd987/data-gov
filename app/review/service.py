@@ -201,6 +201,9 @@ class ReviewService:
                 store_path, doc_id, ingested_by=ingested_by,
                 folder_node_id=node_id, depth=_depth)
 
+        if ctx.doc.identification.file_format is FileFormat.EMAIL:
+            self._link_mail_thread(ctx.doc)
+
         # 원본 파일 보관(폴더=조직노드 경로에 저장). 확장자는 형식에 맞는 실제 확장자로.
         self._store_original(store_path, doc_id,
                              ext_for(ctx.doc.identification.file_format),
@@ -303,6 +306,31 @@ class ReviewService:
         # 메일에서 떼어낸 첨부도 같이 등록한다. 안 그러면 메일만 검색되고 첨부는
         # 검토 대기에 남아, 정작 찾으려던 내용이 안 잡힌다.
         self._confirm_mail_attachments(doc_id)
+
+    def _link_mail_thread(self, doc) -> None:
+        """같은 스레드의 메일끼리 연결한다 — **헤더 기준**이라 정확하다.
+
+        답장·전달 관계는 본문 인용문이 아니라 In-Reply-To / References 헤더에 있다.
+        그래서 본문에서 인용문을 걷어내도 관계는 그대로 남는다. 유사도로 추측하던
+        것과 달리 여기서 나오는 연결은 메일 프로그램이 기록한 사실이다.
+
+        스레드 뿌리가 같으면 올린 순서나 중간 메일 누락과 무관하게 묶인다.
+
+        References 를 안 채워 보내는 전달 메일은 여기서 안 잡히지만, 내용이 원본과
+        거의 같으므로 기존 유사도 감지(_auto_link_relations)가 대신 잡는다.
+        """
+        from app.db.repositories import RelationRepository
+
+        ident = doc.identification
+        rel = RelationRepository(self.session)
+        doc_id, mine = ident.doc_id, ident.message_id
+
+        for other in self.docs.thread_members(ident.thread_root, exclude_doc_id=doc_id):
+            # 직접 답장 관계면 그렇게 표시하고, 아니면 같은 스레드로만 묶는다
+            direct = (mine and other.get("in_reply_to") == mine) or (
+                ident.in_reply_to and ident.in_reply_to == other.get("message_id"))
+            rel.link(doc_id, other["doc_id"], source="auto", confidence=1.0,
+                     reason="메일 답장" if direct else "메일 스레드")
 
     def _confirm_mail_attachments(self, doc_id: str) -> None:
         """이 메일에서 떼어낸 첨부 중 아직 검토 대기인 것을 함께 등록한다."""

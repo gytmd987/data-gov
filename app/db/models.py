@@ -42,6 +42,9 @@ class Document(Base):
     file_hash: Mapped[str] = mapped_column(String(64), index=True)
     # 메일 중복 판정용(메일이 아니면 NULL). 사서함마다 헤더가 달라 파일 해시로는 못 잡는다.
     message_id: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
+    # 메일 스레드 — 같은 thread_root 면 한 스레드, in_reply_to 는 바로 위 메일.
+    in_reply_to: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    thread_root: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     original_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # 원본 파일 경로
 

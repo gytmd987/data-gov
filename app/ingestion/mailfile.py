@@ -168,6 +168,44 @@ def message_id_of(path: str | Path) -> Optional[str]:
         return None
 
 
+# ── 2-1. 스레드(답장·전달 관계) ──────────────────────────────────────────────
+@dataclass(frozen=True)
+class ThreadInfo:
+    """이 메일이 스레드 어디에 있는지.
+
+    - message_id : 이 메일
+    - in_reply_to: 바로 위 메일(무엇에 대한 답장인가)
+    - root       : 스레드의 첫 메일. References 의 맨 앞이며, 없으면 자기 자신이다.
+    """
+
+    message_id: Optional[str] = None
+    in_reply_to: Optional[str] = None
+    root: Optional[str] = None
+
+
+def thread_of(msg: EmailMessage) -> ThreadInfo:
+    """헤더에서 스레드 정보를 읽는다.
+
+    답장·전달 관계는 **인용문이 아니라 헤더에 있다**(In-Reply-To / References).
+    그래서 본문의 인용문을 걷어내도 관계는 그대로 남는다.
+    """
+    mid = normalize_message_id(str(msg["Message-ID"] or ""))
+    irt = normalize_message_id(str(msg["In-Reply-To"] or ""))
+    refs = [normalize_message_id(r) for r in
+            re.findall(r"<[^>]+>", str(msg["References"] or ""))]
+    refs = [r for r in refs if r]
+    # 스레드 뿌리 = References 의 맨 앞. 그게 없으면 답장 대상, 그것도 없으면 자기 자신.
+    return ThreadInfo(message_id=mid, in_reply_to=irt,
+                      root=(refs[0] if refs else irt) or mid)
+
+
+def thread_of_file(path: str | Path) -> ThreadInfo:
+    try:
+        return thread_of(read_message(path))
+    except Exception:                       # noqa: BLE001 — 메일이 아니면 빈 정보
+        return ThreadInfo()
+
+
 # ── 3. 첨부 분리 ─────────────────────────────────────────────────────────────
 def _attachment_name(part, index: int) -> str:
     name = (part.get_filename() or "").strip()

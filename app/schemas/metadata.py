@@ -60,6 +60,9 @@ class IdentificationBlock(BaseModel):
     # 메일 고유값. 같은 메일을 사서함마다 저장하면 헤더가 달라 해시가 어긋나므로,
     # 메일은 이 값으로 중복을 판정한다(메일이 아니면 None).
     message_id: Optional[str] = None
+    # 스레드 — 답장·전달 관계는 본문 인용문이 아니라 헤더에 들어 있다.
+    in_reply_to: Optional[str] = None     # 바로 위 메일(무엇에 대한 답장인가)
+    thread_root: Optional[str] = None     # 스레드의 첫 메일(같으면 한 스레드)
     ingested_at: datetime
     ingested_by: str
     page_count: Optional[int] = None

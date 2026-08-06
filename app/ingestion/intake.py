@@ -108,10 +108,13 @@ def intake(
 
     # 메일은 파일 해시로 부족하다. 같은 메일이라도 사서함마다 헤더(Received 등)가 달라
     # 해시가 어긋나기 때문이다. 발신 시점에 정해지는 Message-ID 로 한 번 더 본다.
-    message_id = None
+    # 스레드(답장·전달) 관계도 같이 읽어 둔다 — 본문 인용문이 아니라 헤더에 들어 있다.
+    message_id = in_reply_to = thread_root = None
     if file_format is FileFormat.EMAIL:
-        from app.ingestion.mailfile import message_id_of
-        message_id = message_id_of(path)
+        from app.ingestion.mailfile import thread_of_file
+        thread = thread_of_file(path)
+        message_id, in_reply_to = thread.message_id, thread.in_reply_to
+        thread_root = thread.root
         if message_id and message_id_lookup is not None:
             existing = message_id_lookup(message_id)
             if existing is not None:
@@ -130,6 +133,8 @@ def intake(
         file_format=file_format,
         file_hash=file_hash,
         message_id=message_id,
+        in_reply_to=in_reply_to,
+        thread_root=thread_root,
         ingested_at=datetime.now(timezone.utc),
         ingested_by=ingested_by,
         page_count=page_count,
