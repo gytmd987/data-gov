@@ -190,6 +190,34 @@ class ReviewService:
         self.session.commit()
         return ctx.doc.identification.doc_id
 
+    def confirm_without_review(self, doc_id: str) -> None:
+        """사람 검토 없이 등록 확정 — 대량 반입·예약 업로드가 함께 쓴다.
+
+        권한·작성부서는 AI 가 아니라 **폴더에서** 오므로 검토를 건너뛰어도 안전하다.
+        검색 품질에 영향을 주는 분류 항목만 AI 값이며 등록 후 수정할 수 있다.
+        AI 가 종류를 정하지 못했으면 '미분류'로 남기지 않고 '기타'로 둔다.
+        """
+        doc = self.docs.get(doc_id)
+        if doc is None:
+            raise ValueError(f"문서 없음: {doc_id}")
+        overrides = {}
+        dt = doc.classification.doc_type
+        if dt is None or dt.value == "unknown":
+            overrides["doc_type"] = "other"
+
+        result = self.submit_review(doc_id, governance=doc.governance,
+                                    classification_overrides=overrides or None)
+        if not result.ok:
+            raise RuntimeError(", ".join(result.missing_fields + result.errors))
+
+        self.finalize_original_name(doc_id)      # 서버 파일명을 제목으로 정리
+        try:                                     # 표 데이터면 DuckDB 구조화 적재
+            from app.datasets.loader import ingest_if_tabular
+            ingest_if_tabular(self.session, self.docs.get(doc_id))
+        except Exception:                        # noqa: BLE001 — 등록 자체는 유지
+            pass
+        self.session.commit()
+
     def finalize_original_name(self, doc_id: str) -> None:
         """등록 확정 후, 원본을 '폴더(작성부서) 경로 + 제목' 위치로 정리한다."""
         from pathlib import Path

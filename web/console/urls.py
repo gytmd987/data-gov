@@ -10,6 +10,7 @@ urlpatterns = [
     path("docs/search", views.docs_search, name="console_docs_search"),
     path("docs/bulk-delete", views.docs_bulk_delete, name="console_docs_bulk_delete"),
     path("docs/bulk-update", views.docs_bulk_update, name="console_docs_bulk_update"),
+    path("docs/queue", views.queue_action, name="console_queue_action"),
     path("folders/", views.folders, name="console_folders"),
     path("docs/sweep", views.docs_sweep, name="console_docs_sweep"),
     path("docs/<str:doc_id>/action", views.docs_action, name="console_docs_action"),

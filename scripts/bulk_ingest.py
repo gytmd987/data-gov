@@ -203,59 +203,8 @@ def ingest_one(item: PlanItem, ingested_by: str, auto_confirm: bool) -> tuple[st
 
 
 def confirm(svc, doc_id: str) -> None:
-    """검토 없이 등록 확정 — AI가 채운 값 + 폴더에서 온 권한 그대로 색인한다.
-
-    권한·작성부서는 AI가 아니라 폴더 구조에서 오므로 사람 검토 없이도 안전하다.
-    검색 품질에 영향을 주는 분류 항목만 AI 값이며, 등록 후 얼마든지 수정할 수 있다.
-    """
-    doc = svc.docs.get(doc_id)
-    if doc is None:
-        raise ValueError(f"문서 없음: {doc_id}")
-    cls_overrides = {}
-    # AI가 종류를 정하지 못했으면 '기타'로 둔다(미분류 상태로 남기지 않는다).
-    if doc.classification.doc_type is None or doc.classification.doc_type.value == "unknown":
-        cls_overrides["doc_type"] = "other"
-
-    result = svc.submit_review(doc_id, governance=doc.governance,
-                               classification_overrides=cls_overrides or None)
-    if not result.ok:
-        raise RuntimeError(", ".join(result.missing_fields + result.errors))
-
-    svc.finalize_original_name(doc_id)          # 서버 파일명을 제목으로 정리
-    try:                                        # 표 데이터면 DuckDB 구조화 적재
-        from app.datasets.loader import ingest_if_tabular
-        ingest_if_tabular(svc.session, svc.docs.get(doc_id))
-    except Exception:
-        pass
-    svc.session.commit()
-
-
-TITLE_SAMPLE = 30      # dry-run 에서 보여줄 '파일명 → 제목' 예시 수
-
-
-def _print_title_preview(items: list[PlanItem], limit: int = TITLE_SAMPLE) -> None:
-    """'원본 파일명 → 저장될 제목' 예시. 만 건을 돌리기 전에 눈으로 확인하라고 있는 것.
-
-    파일명이 바뀌는 것(잡음 제거·날짜 정규화)만 보여준다. AI가 채우는 날짜·제목은
-    아직 모르므로, 여기 안 나온 날짜가 실제로는 앞에 붙을 수 있다.
-    """
-    from app.ingestion.titletools import compose_title
-
-    changed = []
-    for it in items:
-        stem = it.path.stem
-        title = compose_title(it.path.name)
-        if title != stem:
-            changed.append((stem, title))
-    if not changed:
-        return
-    print(f"\n제목 정리 예시 — 전체 {len(changed)}건이 바뀝니다"
-          f"{f' (앞 {limit}건만 표시)' if len(changed) > limit else ''}\n")
-    width = min(52, max(len(a) for a, _ in changed[:limit]))
-    for before, after in changed[:limit]:
-        print(f"  {before[:width]:<{width}} → {after}")
-    print("\n  ※ 파일명에 날짜가 없는 문서는 AI가 찾은 작성일이 앞에 (YY-MMDD) 로 붙습니다.")
-    print("     정리 규칙을 바꾸려면 config/system.yaml 의 metadata.title_cleanup 을 수정하세요.")
+    """검토 없이 등록 확정. 예약 업로드 워커와 같은 로직을 쓴다."""
+    svc.confirm_without_review(doc_id)
 
 
 # ── dry-run 리포트 ───────────────────────────────────────────────────────────

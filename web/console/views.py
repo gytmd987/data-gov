@@ -6,6 +6,7 @@ import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
+from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
@@ -259,6 +260,65 @@ def review_cancel(request, doc_id: str):
         session.close()
 
 
+def _enqueue_uploads(session, files, *, uploaded_by: str,
+                     folder_node_id=None) -> int:
+    """올린 파일을 대기 폴더에 저장하고 처리 대기열에 넣는다. → 예약 건수.
+
+    요청 안에서는 파싱·AI 자동 채움을 하지 않는다(문서당 수십 초라 요청이 끊긴다).
+    실제 등록은 `scripts.ingest_worker` 가 처리 시간대에 맡는다.
+    """
+    import uuid
+
+    from app.config import settings as app_settings
+    from app.db.repositories import UploadJobRepository
+    from app.ingestion.titletools import safe_filename
+
+    batch = uuid.uuid4().hex[:12]
+    queue_dir = Path(app_settings.upload_queue_dir) / batch
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    repo = UploadJobRepository(session)
+
+    n = 0
+    for i, f in enumerate(files):
+        # 파일명은 **그대로** 둔다(제목·날짜를 파일명에서 뽑으므로 접두어를 붙이면 안 된다).
+        # 대신 파일마다 번호 폴더를 하나씩 줘서 같은 이름이 겹쳐도 덮어쓰지 않게 한다.
+        name = Path(f.name).name                     # 경로 조작 방지(디렉터리 성분 제거)
+        stem = safe_filename(Path(name).stem) or "document"
+        slot = queue_dir / f"{i:04d}"
+        slot.mkdir(parents=True, exist_ok=True)
+        dest = slot / f"{stem}{Path(name).suffix}"
+        with open(dest, "wb") as out:
+            for chunk in f.chunks():
+                out.write(chunk)
+        repo.enqueue(path=str(dest), source_filename=f.name, uploaded_by=uploaded_by,
+                     batch=batch, folder_node_id=folder_node_id)
+        n += 1
+    session.commit()
+    return n
+
+
+def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
+    """화면에 보여줄 예약 업로드 현황(관리자는 전체, 그 외는 본인 것)."""
+    from datetime import datetime as _dt
+
+    from app.config import settings as app_settings
+    from app.db.repositories import UploadJobRepository
+    from app.manage.schedule import describe, next_run_hint, window_from_settings
+
+    repo = UploadJobRepository(session)
+    who = None if is_adm else uploaded_by
+    counts = repo.counts(who)
+    start, end = window_from_settings(app_settings)
+    return {
+        "counts": counts,
+        "pending": counts[UploadJobRepository.QUEUED] + counts[UploadJobRepository.PROCESSING],
+        "failed_jobs": repo.list_jobs(uploaded_by=who,
+                                      status=UploadJobRepository.FAILED, limit=20),
+        "window": describe(start, end),
+        "hint": next_run_hint(_dt.now(), start, end),
+    }
+
+
 def _visible_dup(session, drepo, visible_to, title, fmt, exclude=None):
     """제목+형식이 같은 기존 문서 — 단, **내가 볼 수 있는 것만**.
 
@@ -305,8 +365,26 @@ def docs(request):
         # 문서 등록(업로드) — 여러 파일 동시 업로드 가능. 각각 '내 검토 대기'에 올려
         # 업로더가 확인·등록한다. 첫 문서로 이동해 순차 검토를 시작한다.
         if request.method == "POST" and request.FILES.getlist("file"):
-            svc = bridge.get_review_service(session)
             folder_id = _int(request.POST.get("folder_node_id"), 0) or None
+            # 예약 처리: 파일만 받아 대기열에 넣고 바로 응답한다(야간 워커가 등록).
+            if request.POST.get("mode") == "queue":
+                n = _enqueue_uploads(session, request.FILES.getlist("file"),
+                                     uploaded_by=me, folder_node_id=folder_id)
+                messages.success(
+                    request, f"{n}건을 예약했습니다. 처리 시간대에 자동으로 등록되며, "
+                    "진행 상황은 아래 '예약 업로드' 에서 확인할 수 있습니다.")
+                return redirect(request.POST.get("next") or "console_docs")
+
+            # 즉시 처리는 요청 안에서 AI가 문서를 읽는다 → 개수를 제한한다.
+            # (Django 하드 한도는 예약 기준으로 커서 여기서 따로 막아야 한다)
+            sync_max = getattr(django_settings, "UPLOAD_SYNC_MAX_FILES", 50)
+            if len(request.FILES.getlist("file")) > sync_max:
+                messages.error(
+                    request, f"즉시 처리는 한 번에 {sync_max}개까지입니다. "
+                    "그보다 많으면 '예약 처리'로 올려주세요(처리 시간대에 자동 등록됩니다).")
+                return redirect(request.POST.get("next") or "console_docs")
+
+            svc = bridge.get_review_service(session)
             first_id, ok_n, dups, errs = None, 0, [], []
             for f in request.FILES.getlist("file"):
                 dest = Path(tempfile.gettempdir()) / f.name
@@ -508,7 +586,38 @@ def docs(request):
             "admins": system_config.admin_emails(),
             "reporting_lines": system_config.reporting_lines(),
             "related": _related_docs(session, sel, vis) if doc else [],
+            "queue": _queue_status(session, me, is_adm),
         })
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def queue_action(request):
+    """예약 업로드 대기열 조작 — 실패분 재시도 / 완료 기록 지우기.
+
+    관리자는 전체, 그 외에는 **본인이 올린 것만** 대상으로 한다.
+    """
+    from app.db.repositories import UploadJobRepository
+
+    session = bridge.open_session()
+    try:
+        me = _email_of(request.user)
+        is_adm, _ = manage_scope(session, request.user)
+        who = None if is_adm else me
+        repo = UploadJobRepository(session)
+        action = request.POST.get("action")
+        if action == "retry":
+            n = repo.retry_failed(who)
+            messages.success(request, f"실패한 {n}건을 다시 대기열에 넣었습니다."
+                             if n else "다시 시도할 실패 건이 없습니다.")
+        elif action == "clear":
+            n = repo.clear_done(who)
+            messages.info(request, f"완료 기록 {n}건을 지웠습니다.")
+        else:
+            messages.error(request, "알 수 없는 요청입니다.")
+        return redirect(request.POST.get("next") or "console_docs")
     finally:
         session.close()
 

@@ -83,6 +83,35 @@ class Document(Base):
     )
 
 
+class UploadJob(Base):
+    """예약 업로드 대기열 — 웹에서 올린 파일을 **나중에** 처리하기 위한 작업 한 건.
+
+    업로드 요청 안에서 파싱·AI 자동 채움을 돌리면 문서당 수십 초라 대량 업로드가
+    불가능하다(요청이 끊긴다). 그래서 업로드는 '파일 저장 + 이 행 생성'까지만 하고,
+    실제 처리는 야간 워커(scripts/ingest_worker.py)가 맡는다.
+
+    상태: queued → processing → done / failed
+    """
+
+    __tablename__ = "upload_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    path: Mapped[str] = mapped_column(String(1024))            # 대기 폴더에 저장된 파일
+    source_filename: Mapped[str] = mapped_column(String(512))  # 사용자가 올린 원래 이름
+    folder_node_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uploaded_by: Mapped[str] = mapped_column(String(128), index=True)
+    batch: Mapped[str] = mapped_column(String(64), index=True)  # 한 번의 업로드 묶음
+
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class DocumentAccessToken(Base):
     """문서 열람 토큰(access_groups)을 행으로 펼친 검색용 테이블.
 

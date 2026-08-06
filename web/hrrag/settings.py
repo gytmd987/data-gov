@@ -75,11 +75,15 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
 # ── 웹 업로드 개수 제한 ──────────────────────────────────────────────────────
-# 업로드는 요청 안에서 파일당 파싱+AI 자동 채움을 순차로 돌리므로(문서당 수십 초),
-# 한 번에 많이 올리면 요청이 몇십 분씩 걸려 브라우저·프록시에서 끊긴다.
-# 대량 반입은 웹이 아니라 `python -m scripts.bulk_ingest` 를 쓴다(docs/일괄반입.md).
-UPLOAD_WARN_FILES = 20        # 이보다 많으면 화면에서 경고(계속은 가능)
-DATA_UPLOAD_MAX_NUMBER_FILES = 50   # 하드 한도. 넘으면 Django 가 요청을 거부한다.
+# 업로드 경로는 두 가지이고 한도가 다르다.
+#  · 즉시 처리 — 요청 안에서 파일당 파싱+AI 자동 채움을 순차로 돌린다(문서당 수십 초).
+#    많이 올리면 요청이 몇십 분씩 걸려 브라우저·프록시에서 끊기므로 낮게 잡는다.
+#  · 예약 처리 — 요청은 파일 저장만 하고(수 초) 야간 워커가 등록한다. 많이 받아도 된다.
+# DATA_UPLOAD_MAX_NUMBER_FILES 는 Django 가 요청을 파싱할 때 보는 값이라 뷰보다 앞선다.
+# 그래서 하드 한도는 예약 기준으로 두고, 즉시 처리 한도는 뷰에서 따로 막는다.
+UPLOAD_WARN_FILES = 20            # 즉시 처리에서 이보다 많으면 화면에서 경고
+UPLOAD_SYNC_MAX_FILES = 50        # 즉시 처리 한도(뷰에서 검사)
+DATA_UPLOAD_MAX_NUMBER_FILES = 500   # 예약 처리 포함 하드 한도(넘으면 Django 가 거부)
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"

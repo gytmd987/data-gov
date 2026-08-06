@@ -60,7 +60,7 @@ def _backfill_access_tokens(engine) -> int:
 
 def main(engine=None) -> int:
     engine = engine or make_engine()   # engine 주입은 테스트용
-    create_all(engine)            # 새 테이블(feedback, document_access_tokens 등) 생성
+    create_all(engine)            # 새 테이블(feedback, document_access_tokens, upload_jobs 등) 생성
     with engine.begin() as conn:
         for table, col, coltype in _COLUMNS:
             try:

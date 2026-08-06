@@ -1,0 +1,173 @@
+"""예약 업로드 처리 워커 — 웹에서 올려둔 파일을 **정해진 시간대에** 자동 등록한다.
+
+웹 업로드는 요청 안에서 파싱·AI 자동 채움을 돌릴 수 없다(문서당 수십 초라 요청이
+끊긴다). 그래서 화면에서는 파일만 받아 대기열에 넣고, 실제 처리는 이 워커가 맡는다.
+검토는 생략하고 바로 등록한다 — 권한·작성부서는 AI 가 아니라 **업로드할 때 고른
+폴더**에서 오므로 사람 확인 없이도 안전하다.
+
+    python -m scripts.ingest_worker              # 상주 실행(시간대 밖이면 대기)
+    python -m scripts.ingest_worker --now        # 시간대 무시하고 지금 처리
+    python -m scripts.ingest_worker --once       # 대기열을 한 번만 비우고 종료
+
+기본 처리 시간대는 18:00~08:00(설정 INGEST_WINDOW_START/END). 업무 시간에 GPU 를
+점유해 채팅이 느려지지 않게 하기 위함이다.
+
+상주 실행은 systemd 로 띄우는 것을 권장한다(docs/예약업로드.md).
+"""
+
+from __future__ import annotations
+
+import argparse
+import signal
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from app.config import settings
+from app.db.repositories import UploadJobRepository
+from app.ingestion.enrichment import ReadError
+from app.ingestion.intake import DuplicateError
+from app.manage.schedule import describe, in_window, seconds_until, window_from_settings
+
+IDLE_SLEEP = 5.0          # 대기열이 비었을 때 쉬는 시간(초)
+STALE_MINUTES = 30        # 이보다 오래 processing 이면 워커가 죽은 것으로 보고 회수
+
+_stop = threading.Event()
+_local = threading.local()
+
+
+def _service():
+    """스레드마다 자기 세션·서비스(SQLAlchemy 세션은 스레드 간 공유 불가)."""
+    svc = getattr(_local, "svc", None)
+    if svc is None:
+        from app.review.factory import build_service
+        svc = _local.svc = build_service()
+    return svc
+
+
+def _jobs(session=None) -> UploadJobRepository:
+    """작업 큐 저장소 — 서비스 세션을 그대로 쓴다(같은 트랜잭션 경계)."""
+    return UploadJobRepository(session or _service().session)
+
+
+def process_one(job) -> tuple[str, str]:
+    """대기열 작업 1건 처리. → (결과, 메모). 결과 ∈ {done, skipped, failed}"""
+    import os
+
+    svc = _service()
+    if not os.path.exists(job.path):
+        return "failed", f"대기 파일이 없습니다: {job.path}"
+    try:
+        doc_id = svc.start_ingestion(job.path, ingested_by=job.uploaded_by,
+                                     folder_node_id=job.folder_node_id)
+    except DuplicateError:
+        return "skipped", "이미 등록된 문서(내용 동일)"
+    except ReadError as e:
+        svc.session.rollback()
+        return "failed", str(e)
+    except Exception as e:                       # noqa: BLE001
+        svc.session.rollback()
+        return "failed", f"{type(e).__name__}: {e}"
+
+    try:
+        svc.confirm_without_review(doc_id)
+    except Exception as e:                       # noqa: BLE001
+        svc.session.rollback()
+        return "failed", f"등록 확정 실패: {type(e).__name__}: {e}"
+    return "done", doc_id
+
+
+def _handle(job) -> str:
+    """처리 + 결과 기록 + 대기 파일 정리."""
+    import os
+
+    result, note = process_one(job)
+    repo = _jobs()
+    if result == "done":
+        repo.finish(job.id, note)
+    elif result == "skipped":
+        repo.finish(job.id, None)                # 중복은 성공으로 마감(재시도 무의미)
+    else:
+        # 파일을 못 읽는 종류의 실패는 다시 해도 같으므로 재시도하지 않는다
+        retry = "읽지 못했습니다" not in note and "대기 파일이 없습니다" not in note
+        repo.fail(job.id, note, retry=retry)
+    if result in ("done", "skipped"):
+        try:
+            os.remove(job.path)                  # 등록됐으면 대기 파일은 지운다
+            # 파일마다 번호 폴더를 쓰므로 비면 같이 치운다(배치 폴더도 마지막 건에서 정리)
+            os.rmdir(os.path.dirname(job.path))
+            os.rmdir(os.path.dirname(os.path.dirname(job.path)))
+        except OSError:
+            pass
+    print(f"  [{result}] {job.source_filename}"
+          + (f" — {note}" if result != "done" else ""), flush=True)
+    return result
+
+
+def drain(workers: int) -> dict[str, int]:
+    """대기열이 빌 때까지(또는 중단될 때까지) 처리한다."""
+    stats = {"done": 0, "skipped": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def run():
+        while not _stop.is_set():
+            job = _jobs().claim()
+            if job is None:
+                return
+            kind = _handle(job)
+            with lock:
+                stats[kind] = stats.get(kind, 0) + 1
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for _ in range(max(1, workers)):
+            pool.submit(run)
+    return stats
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="예약 업로드 처리 워커")
+    ap.add_argument("--now", action="store_true", help="처리 시간대를 무시하고 지금 처리")
+    ap.add_argument("--once", action="store_true", help="대기열을 한 번 비우고 종료")
+    ap.add_argument("--workers", type=int, default=settings.ingest_workers)
+    args = ap.parse_args(argv)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: _stop.set())
+
+    start, end = window_from_settings(settings)
+    print(f"예약 업로드 워커 시작 — 처리 시간대 {describe(start, end)}"
+          f"{' (무시)' if args.now else ''} · 동시 {args.workers}", flush=True)
+
+    while not _stop.is_set():
+        now = datetime.now()
+        if not args.now and not in_window(now, start, end):
+            wait = min(seconds_until(now, start), 300)   # 최대 5분마다 다시 확인
+            if _jobs().counts()[UploadJobRepository.QUEUED]:
+                print(f"  대기 중 — {start:%H:%M} 부터 처리합니다.", flush=True)
+            _stop.wait(wait)
+            continue
+
+        reclaimed = _jobs().reclaim_stale(STALE_MINUTES)
+        if reclaimed:
+            print(f"  멈춰 있던 작업 {reclaimed}건을 대기열로 되돌렸습니다.", flush=True)
+
+        pending = _jobs().counts()[UploadJobRepository.QUEUED]
+        if pending:
+            print(f"대기 {pending}건 처리 시작", flush=True)
+            began = time.monotonic()
+            stats = drain(args.workers)
+            took = time.monotonic() - began
+            print(f"→ 등록 {stats['done']} · 건너뜀 {stats['skipped']} · "
+                  f"실패 {stats['failed']} · {took / 60:.1f}분", flush=True)
+        if args.once:
+            break
+        _stop.wait(IDLE_SLEEP)
+
+    print("워커를 종료합니다.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

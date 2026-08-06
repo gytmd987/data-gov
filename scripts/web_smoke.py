@@ -836,21 +836,69 @@ def main() -> int:
     import io as _io
     from django.conf import settings as _dj
     page = c.get("/console/docs/").content.decode()
-    assert f"{_dj.UPLOAD_WARN_FILES}개 이하" in page, "업로드 권장 개수 안내가 없음"
+    assert "개 이하를 권장합니다" in page, "업로드 권장 개수 안내가 없음"
     assert "개는 한 번에 올릴 수 없습니다" in page, "한도 초과 차단 안내가 없음"
 
-    def _files(n):
+    def _files(n, prefix="한도테스트"):
         out = []
         for i in range(n):
-            b = _io.BytesIO(f"문서 {i}. 연차는 15일이다.".encode())
-            b.name = f"한도테스트_{i:03d}.txt"
+            b = _io.BytesIO(f"{prefix} 문서 {i}. 연차는 15일이며 인사팀에 신청한다.".encode())
+            b.name = f"{prefix}_{i:03d}.txt"
             out.append(b)
         return out
 
     over = c.post("/console/docs/", {"file": _files(_dj.DATA_UPLOAD_MAX_NUMBER_FILES + 5)})
     assert over.status_code == 400, f"한도 초과인데 통과함: {over.status_code}"
-    print(f"[업로드한도] 권장 {_dj.UPLOAD_WARN_FILES}개 안내 · 한도 "
-          f"{_dj.DATA_UPLOAD_MAX_NUMBER_FILES}개 초과 시 차단 ✅")
+    # 즉시 처리는 요청 안에서 AI가 읽으므로 더 낮은 한도가 따로 걸린다(뷰에서 차단)
+    sync_over = c.post("/console/docs/", {"file": _files(_dj.UPLOAD_SYNC_MAX_FILES + 1)})
+    assert sync_over.status_code == 302, "즉시 처리 한도 초과가 안내 없이 처리됨"
+    s17 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR3
+        assert not any(d["filename"].startswith("한도테스트")
+                       for d in _DR3(s17).list_documents(limit=500)), \
+            "즉시 처리 한도를 넘겼는데 문서가 등록됨"
+    finally:
+        s17.close()
+    print(f"[업로드한도] 즉시 {_dj.UPLOAD_SYNC_MAX_FILES}개 · "
+          f"하드 {_dj.DATA_UPLOAD_MAX_NUMBER_FILES}개 초과 시 차단 ✅")
+
+    # 20) 예약 업로드 — 올릴 땐 파일만 받고(빠름), 워커가 검토 없이 등록한다
+    import tempfile as _tf
+
+    from app.config import settings as _st
+    from app.db.repositories import UploadJobRepository as _UJR
+    _st.upload_queue_dir = _tf.mkdtemp(prefix="queue_smoke_")
+    n_queue = _dj.UPLOAD_SYNC_MAX_FILES + 3        # 즉시 처리로는 못 올리는 양
+    resp = c.post("/console/docs/", {"file": _files(n_queue, "예약테스트"),
+                                     "mode": "queue", "folder_node_id": str(n_part.id)})
+    assert resp.status_code == 302, f"예약 업로드 실패: {resp.status_code}"
+    s18 = bridge.open_session()
+    try:
+        assert _UJR(s18).counts()[_UJR.QUEUED] == n_queue, "대기열에 안 들어감"
+    finally:
+        s18.close()
+    assert "예약 업로드" in c.get("/console/docs/").content.decode(), "예약 현황이 안 보임"
+
+    from scripts import ingest_worker as _worker
+    s19 = bridge.open_session()
+    try:
+        _svc19 = bridge.get_review_service(s19)
+        _worker._service = lambda: _svc19
+        stats = _worker.drain(workers=1)
+        assert stats["done"] == n_queue, f"예약 등록 결과: {stats}"
+        from app.db.repositories import DocumentRepository as _DR4
+        made = [d for d in _DR4(s19).list_documents(limit=500)
+                if d["filename"].startswith("예약테스트")]
+        assert len(made) == n_queue, "예약분이 등록되지 않음"
+        doc = _DR4(s19).get(made[0]["doc_id"])
+        # 검토를 생략해도 권한·작성부서는 **고른 폴더**에서 온다
+        assert doc.governance.author_node_id == n_part.id, "예약 등록 작성부서가 폴더와 다름"
+        assert doc.governance.access_selections == [f"node:{n_part.id}"], \
+            f"예약 등록 권한이 폴더 기준이 아님: {doc.governance.access_selections}"
+    finally:
+        s19.close()
+    print(f"[예약업로드] {n_queue}건 예약 → 워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
 
     print("\n✅ Django 웹 스모크 통과")
     return 0

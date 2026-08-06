@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -18,6 +18,7 @@ from app.db.models import (
     DocumentRequest,
     Feedback,
     OrgNode,
+    UploadJob,
     User,
     UserOrgNode,
 )
@@ -427,6 +428,118 @@ class UserRepository:
             tokens.add(f"n:{led}")
             tokens.add(f"h:{led}")
         return UserContext(user_id=user_id, groups=frozenset(tokens))
+
+
+class UploadJobRepository:
+    """예약 업로드 대기열.
+
+    워커를 여러 개 띄워도 같은 작업을 둘이 잡지 않도록 **한 건씩 원자적으로 선점**한다.
+    (Postgres 는 SKIP LOCKED, SQLite 는 단일 커넥션이라 그대로도 안전)
+    """
+
+    QUEUED, PROCESSING, DONE, FAILED = "queued", "processing", "done", "failed"
+    MAX_ATTEMPTS = 3
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def enqueue(self, *, path: str, source_filename: str, uploaded_by: str,
+                batch: str, folder_node_id: Optional[int] = None) -> UploadJob:
+        job = UploadJob(path=path, source_filename=source_filename,
+                        uploaded_by=uploaded_by, batch=batch,
+                        folder_node_id=folder_node_id, status=self.QUEUED)
+        self.session.add(job)
+        self.session.flush()
+        return job
+
+    def claim(self) -> Optional[UploadJob]:
+        """대기 중인 작업 하나를 processing 으로 선점. 없으면 None."""
+        stmt = (select(UploadJob).where(UploadJob.status == self.QUEUED)
+                .order_by(UploadJob.id).limit(1))
+        if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True)
+        job = self.session.execute(stmt).scalars().first()
+        if job is None:
+            return None
+        job.status = self.PROCESSING
+        job.attempts += 1
+        job.started_at = datetime.now(timezone.utc)
+        self.session.commit()
+        return job
+
+    def finish(self, job_id: int, doc_id: Optional[str]) -> None:
+        job = self.session.get(UploadJob, job_id)
+        if job is not None:
+            job.status = self.DONE
+            job.doc_id = doc_id
+            job.error = None
+            job.finished_at = datetime.now(timezone.utc)
+            self.session.commit()
+
+    def fail(self, job_id: int, error: str, retry: bool = True) -> None:
+        """실패 기록. 재시도 여지가 남았으면 다시 대기열로 돌린다."""
+        job = self.session.get(UploadJob, job_id)
+        if job is None:
+            return
+        job.error = (error or "")[:2000]
+        can_retry = retry and job.attempts < self.MAX_ATTEMPTS
+        job.status = self.QUEUED if can_retry else self.FAILED
+        job.finished_at = None if can_retry else datetime.now(timezone.utc)
+        self.session.commit()
+
+    def reclaim_stale(self, older_than_minutes: int = 30) -> int:
+        """워커가 죽어 processing 인 채로 멈춘 작업을 다시 대기열로."""
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+        rows = list(self.session.execute(
+            select(UploadJob).where(UploadJob.status == self.PROCESSING,
+                                    UploadJob.started_at < cutoff)).scalars())
+        for job in rows:
+            job.status = self.QUEUED
+        if rows:
+            self.session.commit()
+        return len(rows)
+
+    def counts(self, uploaded_by: Optional[str] = None) -> dict[str, int]:
+        stmt = select(UploadJob.status, func.count()).group_by(UploadJob.status)
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        out = {self.QUEUED: 0, self.PROCESSING: 0, self.DONE: 0, self.FAILED: 0}
+        for status, n in self.session.execute(stmt).all():
+            out[status] = n
+        return out
+
+    def list_jobs(self, *, uploaded_by: Optional[str] = None,
+                  status: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+        stmt = select(UploadJob).order_by(UploadJob.id.desc()).limit(limit)
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        if status:
+            stmt = stmt.where(UploadJob.status == status)
+        return [{"id": j.id, "filename": j.source_filename, "status": j.status,
+                 "error": j.error, "doc_id": j.doc_id, "attempts": j.attempts,
+                 "folder_node_id": j.folder_node_id, "batch": j.batch,
+                 "created_at": j.created_at}
+                for j in self.session.execute(stmt).scalars()]
+
+    def retry_failed(self, uploaded_by: Optional[str] = None) -> int:
+        """실패한 작업을 다시 대기열로(시도 횟수 초기화)."""
+        stmt = select(UploadJob).where(UploadJob.status == self.FAILED)
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        rows = list(self.session.execute(stmt).scalars())
+        for job in rows:
+            job.status, job.attempts, job.error = self.QUEUED, 0, None
+        if rows:
+            self.session.commit()
+        return len(rows)
+
+    def clear_done(self, uploaded_by: Optional[str] = None) -> int:
+        stmt = delete(UploadJob).where(UploadJob.status == self.DONE)
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        n = self.session.execute(stmt).rowcount or 0
+        self.session.commit()
+        return n
 
 
 class OrgRepository:

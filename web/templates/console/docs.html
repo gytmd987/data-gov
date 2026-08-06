@@ -10,10 +10,11 @@
 {% for m in messages %}<div class="banner info" style="margin-bottom:10px">{{ m }}</div>{% endfor %}
 
 <!-- 문서 등록(업로드) — 한 줄로 접어 두고 필요할 때만 펼친다 -->
-<details class="upload-bar" {% if my_pending %}open{% endif %}>
+<details class="upload-bar" {% if my_pending or queue.pending %}open{% endif %}>
   <summary>
     <svg class="ic sm"><use href="#i-upload"/></svg><b>문서 등록</b>
     <span class="msg-note">여러 파일을 한 번에 올릴 수 있어요</span>
+    {% if queue.pending %}<span class="chip">예약 {{ queue.pending }}건 대기</span>{% endif %}
   </summary>
   <form id="uploadForm" method="post" enctype="multipart/form-data"
         style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
@@ -24,13 +25,22 @@
     </select>
     <input type="file" name="file" multiple required style="flex:1;min-width:220px">
     <button id="uploadBtn" class="btn"><svg class="ic sm"><use href="#i-upload"/></svg>올리기</button>
+
+    <!-- 처리 방식 — 적은 양은 즉시, 많은 양은 예약(야간 자동 등록) -->
+    <div class="modes" style="flex-basis:100%">
+      <label><input type="radio" name="mode" value="" checked>
+        <b>즉시 처리</b> <span class="msg-note">지금 AI가 읽고, 내가 확인한 뒤 등록 · 최대 {{ upload_max_files }}개</span></label>
+      <label><input type="radio" name="mode" value="queue">
+        <b>예약 처리</b> <span class="msg-note">지금은 올려두기만 하고 <b>{{ queue.window }}</b>에 자동 등록(검토 생략) · 최대 {{ upload_queue_max_files }}개</span></label>
+    </div>
+
     <span class="msg-note" style="flex-basis:100%">고른 폴더가 <b>작성 부서</b>가 되고 열람 권한도 <b>그 부서(하위 포함)</b>로 설정되며, 파일도 그 폴더에 저장됩니다.
-      한 번에 <b>{{ upload_warn_files }}개 이하</b>를 권장합니다(문서마다 AI가 읽는 시간이 필요합니다).</span>
+      <span id="modeHelp"></span></span>
     <span id="fileCount" class="msg-note" style="flex-basis:100%"></span>
   </form>
   <div id="uploadProgress" style="display:none;align-items:center;gap:8px;margin-top:8px;color:var(--sub);font-size:var(--fs-sm)">
     <span class="spin" aria-hidden="true"></span>
-    <span>업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요.</span>
+    <span id="uploadProgressText">업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요.</span>
   </div>
 </details>
 <style>
@@ -39,6 +49,11 @@
 .upload-bar>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;
                     font-size:var(--fs-sm)}
 .upload-bar>summary::-webkit-details-marker{display:none}
+.modes{display:flex;gap:8px;flex-wrap:wrap}
+.modes label{display:flex;align-items:center;gap:6px;padding:6px 11px;cursor:pointer;
+             border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);
+             font-size:var(--fs-sm);font-weight:400}
+.modes label:has(input:checked){border-color:var(--accent);background:var(--accent-weak)}
 .spin{width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);
       border-radius:50%;display:inline-block;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -47,22 +62,35 @@
 (function(){
   var f=document.getElementById('uploadForm');
   if(!f) return;
-  var WARN={{ upload_warn_files }}, MAX={{ upload_max_files }};
-  var input=f.querySelector('input[type=file]'), note=document.getElementById('fileCount');
+  var WARN={{ upload_warn_files }}, SYNC_MAX={{ upload_max_files }},
+      QUEUE_MAX={{ upload_queue_max_files }};
+  var input=f.querySelector('input[type=file]'), note=document.getElementById('fileCount'),
+      help=document.getElementById('modeHelp'), btn=document.getElementById('uploadBtn');
+
+  function queued(){ return f.querySelector('input[name=mode]:checked').value==='queue'; }
+  function max(){ return queued() ? QUEUE_MAX : SYNC_MAX; }
 
   // 개수를 미리 알려준다. 한도를 넘으면 서버가 요청 자체를 거부해(400) 한 건도 안 올라가는데,
   // 그 화면에는 아무 설명이 없어서 여기서 먼저 막는다.
   function refresh(){
+    btn.innerHTML=queued() ? '예약하기' : '<svg class="ic sm"><use href="#i-upload"/></svg>올리기';
+    help.textContent=queued()
+      ? '예약하면 사람 검토 없이 그대로 등록됩니다(권한·작성부서는 고른 폴더에서 옵니다).'
+      : '한 번에 ' + WARN + '개 이하를 권장합니다(문서마다 AI가 읽는 시간이 필요합니다).';
     var n=input.files ? input.files.length : 0;
     if(!n){ note.textContent=''; note.style.color=''; return; }
     var mins=Math.max(1, Math.round(n*30/60));
-    if(n>MAX){
-      note.textContent='⛔ '+n+'개 선택됨 — 한 번에 '+MAX+'개까지만 올릴 수 있습니다. '
-        +'나눠서 올리거나, 대량 반입은 관리자에게 요청하세요.';
+    if(n>max()){
+      note.textContent='⛔ '+n+'개 선택됨 — 한 번에 '+max()+'개까지만 올릴 수 있습니다. '
+        +(queued() ? '나눠서 올려주세요.'
+                   : '\'예약 처리\'를 고르면 '+QUEUE_MAX+'개까지 한 번에 올릴 수 있습니다.');
       note.style.color='var(--danger)';
+    } else if(queued()){
+      note.textContent=n+'개 선택됨 · 파일 전송만 하므로 금방 끝납니다(등록은 처리 시간대에).';
+      note.style.color='';
     } else if(n>WARN){
       note.textContent='⚠️ '+n+'개 선택됨 — 약 '+mins+'분 걸릴 수 있고 그동안 이 화면을 닫으면 안 됩니다. '
-        +WARN+'개 이하로 나눠 올리시길 권합니다.';
+        +'많으면 \'예약 처리\'를 쓰세요.';
       note.style.color='var(--warn)';
     } else {
       note.textContent=n+'개 선택됨 · 예상 '+mins+'분';
@@ -70,26 +98,70 @@
     }
   }
   input.addEventListener('change', refresh);
+  f.querySelectorAll('input[name=mode]').forEach(function(r){
+    r.addEventListener('change', refresh);
+  });
+  refresh();
 
   f.addEventListener('submit', function(e){
     var n=input.files ? input.files.length : 0;
-    if(n>MAX){
+    if(n>max()){
       e.preventDefault();
-      alert(n+'개는 한 번에 올릴 수 없습니다(최대 '+MAX+'개).\n'
-            +'나눠서 올리거나, 대량 반입은 서버 일괄 반입을 이용하세요.');
+      alert(n+'개는 한 번에 올릴 수 없습니다(최대 '+max()+'개).');
       return;
     }
-    if(n>WARN && !confirm(n+'개를 올립니다. 약 '+Math.max(1,Math.round(n*30/60))
-        +'분 걸릴 수 있고, 그동안 이 화면을 닫으면 안 됩니다.\n계속할까요?')){
+    if(!queued() && n>WARN && !confirm(n+'개를 올립니다. 약 '+Math.max(1,Math.round(n*30/60))
+        +'분 걸릴 수 있고, 그동안 이 화면을 닫으면 안 됩니다.\n'
+        +'\'예약 처리\'로 바꾸면 올려두기만 하고 자동으로 등록됩니다.\n계속할까요?')){
       e.preventDefault();
       return;
     }
-    var b=document.getElementById('uploadBtn');
-    b.disabled=true; b.innerHTML='<span class="spin"></span> 분석 중…';
+    var t=document.getElementById('uploadProgressText');
+    if(t) t.innerHTML=queued() ? '파일을 <b>서버로 옮기는 중</b>입니다… 잠시만요.'
+                               : '업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요.';
+    btn.disabled=true;
+    btn.innerHTML='<span class="spin"></span> '+(queued() ? '전송 중…' : '분석 중…');
     var p=document.getElementById('uploadProgress'); if(p) p.style.display='flex';
   });
 })();
 </script>
+
+<!-- 예약 업로드 현황 -->
+{% if queue.pending or queue.counts.failed or queue.counts.done %}
+<div class="banner {% if queue.counts.failed %}warn{% else %}info{% endif %}" style="margin-bottom:10px">
+  <b><svg class="ic sm"><use href="#i-clock"/></svg> 예약 업로드</b>
+  <span class="msg-note">처리 시간대 {{ queue.window }}</span>
+  <div style="margin-top:6px;display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+    <span>대기 <b>{{ queue.counts.queued }}</b></span>
+    <span>처리 중 <b>{{ queue.counts.processing }}</b></span>
+    <span>등록 완료 <b>{{ queue.counts.done }}</b></span>
+    <span>실패 <b>{{ queue.counts.failed }}</b></span>
+    {% if queue.hint %}<span class="msg-note">{{ queue.hint }}</span>{% endif %}
+    <span style="flex:1"></span>
+    {% if queue.counts.failed %}
+    <form method="post" action="{% url 'console_queue_action' %}" style="display:inline">
+      {% csrf_token %}<input type="hidden" name="action" value="retry">
+      <button class="btn sm">실패분 다시 시도</button>
+    </form>
+    {% endif %}
+    {% if queue.counts.done %}
+    <form method="post" action="{% url 'console_queue_action' %}" style="display:inline">
+      {% csrf_token %}<input type="hidden" name="action" value="clear">
+      <button class="btn sm ghost">완료 기록 지우기</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if queue.failed_jobs %}
+  <div style="margin-top:6px;font-size:var(--fs-sm)">
+    {% for j in queue.failed_jobs %}
+    <div style="padding-top:4px;border-top:1px dashed var(--line)">
+      <b>{{ j.filename }}</b> <span class="msg-note">{{ j.error }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 <!-- 내 검토 대기 문서(업로더 확인 필요) -->
 {% if my_pending %}

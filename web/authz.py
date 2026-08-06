@@ -27,7 +27,9 @@ def admin_context(request):
     return {
         "is_admin": is_admin(request.user),
         "upload_warn_files": getattr(dj, "UPLOAD_WARN_FILES", 20),
-        "upload_max_files": getattr(dj, "DATA_UPLOAD_MAX_NUMBER_FILES", 50),
+        # 즉시 처리(요청 안에서 AI가 읽는) 한도 / 예약 처리 포함 하드 한도
+        "upload_max_files": getattr(dj, "UPLOAD_SYNC_MAX_FILES", 50),
+        "upload_queue_max_files": getattr(dj, "DATA_UPLOAD_MAX_NUMBER_FILES", 500),
     }
 
 
