@@ -24,13 +24,24 @@ def admin_context(request):
     """템플릿 공통 컨텍스트: 관리자 여부 + 업로드 개수 한도(화면 안내용)."""
     from django.conf import settings as dj
 
+    from app.config import settings as app_settings
+
     return {
         "is_admin": is_admin(request.user),
         "upload_warn_files": getattr(dj, "UPLOAD_WARN_FILES", 20),
-        # 즉시 처리(요청 안에서 AI가 읽는) 한도 / 예약 처리 포함 하드 한도
+        # 즉시 처리(요청 안에서 AI가 읽는) 한도 / 예약 처리 한 요청 하드 한도
         "upload_max_files": getattr(dj, "UPLOAD_SYNC_MAX_FILES", 50),
         "upload_queue_max_files": getattr(dj, "DATA_UPLOAD_MAX_NUMBER_FILES", 500),
+        # 예약 처리는 브라우저가 나눠 보낸다 — 묶음 크기와 전체 상한
+        "upload_batch_files": app_settings.upload_batch_files,
+        "upload_batch_mb": app_settings.upload_batch_mb,
+        "upload_max_total_mb": app_settings.upload_max_total_mb,
+        "upload_max_total_label": _size_label(app_settings.upload_max_total_mb),
     }
+
+
+def _size_label(mb: int) -> str:
+    return f"{mb / 1024:g}GB" if mb >= 1024 else f"{mb}MB"
 
 
 def domain_user_context(session, user):

@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     ingest_window_start: str = "18:00"
     ingest_window_end: str = "08:00"
     ingest_workers: int = 4          # 예약 업로드 동시 처리 수
+    # 예약 업로드는 브라우저가 파일을 **나눠서** 보낸다. 한 요청이 작아야 끊겼을 때
+    # 그 묶음만 다시 보내면 되고, 이미 보낸 묶음은 대기열에 그대로 남는다.
+    upload_batch_files: int = 20     # 한 묶음 최대 파일 수
+    upload_batch_mb: int = 50        # 한 묶음 최대 크기(MB) — 둘 중 먼저 걸리는 쪽
+    upload_max_total_mb: int = 2048  # 한 번에 예약할 수 있는 총 용량(MB)
     # 표 데이터(명단·급여) 구조화 저장소(Tier 2 DuckDB 파일)
     duckdb_path: str = "./storage/datasets.duckdb"
 

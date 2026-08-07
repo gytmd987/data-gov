@@ -31,7 +31,7 @@
       <label><input type="radio" name="mode" value="" checked>
         <b>즉시 처리</b> <span class="msg-note">지금 AI가 읽고, 내가 확인한 뒤 등록 · 최대 {{ upload_max_files }}개</span></label>
       <label><input type="radio" name="mode" value="queue">
-        <b>예약 처리</b> <span class="msg-note">지금은 올려두기만 하고 <b>{{ queue.window }}</b>에 자동 등록(검토 생략) · 최대 {{ upload_queue_max_files }}개</span></label>
+        <b>예약 처리</b> <span class="msg-note">지금은 올려두기만 하고 <b>{{ queue.window }}</b>에 자동 등록(검토 생략) · 개수 제한 없음, 총 {{ upload_max_total_label }}까지</span></label>
     </div>
 
     <span class="msg-note" style="flex-basis:100%">고른 폴더가 <b>작성 부서</b>가 되고 열람 권한도 <b>그 부서(하위 포함)</b>로 설정되며, 파일도 그 폴더에 저장됩니다.
@@ -41,6 +41,10 @@
   <div id="uploadProgress" style="display:none;align-items:center;gap:8px;margin-top:8px;color:var(--sub);font-size:var(--fs-sm)">
     <span class="spin" aria-hidden="true"></span>
     <span id="uploadProgressText">업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요.</span>
+  </div>
+  <div id="queueProgress" style="display:none;margin-top:8px">
+    <div class="bar"><i id="queueBar"></i></div>
+    <div id="queueText" class="msg-note" style="margin-top:5px"></div>
   </div>
 </details>
 <style>
@@ -57,36 +61,52 @@
 .spin{width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);
       border-radius:50%;display:inline-block;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.bar{height:7px;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;
+     overflow:hidden}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 </style>
 <script>
 (function(){
   var f=document.getElementById('uploadForm');
   if(!f) return;
   var WARN={{ upload_warn_files }}, SYNC_MAX={{ upload_max_files }},
-      QUEUE_MAX={{ upload_queue_max_files }};
+      QUEUE_MAX={{ upload_queue_max_files }},
+      BATCH_FILES={{ upload_batch_files }}, BATCH_MB={{ upload_batch_mb }},
+      TOTAL_MB={{ upload_max_total_mb }};
   var input=f.querySelector('input[type=file]'), note=document.getElementById('fileCount'),
       help=document.getElementById('modeHelp'), btn=document.getElementById('uploadBtn');
 
   function queued(){ return f.querySelector('input[name=mode]:checked').value==='queue'; }
-  function max(){ return queued() ? QUEUE_MAX : SYNC_MAX; }
+  function max(){ return queued() ? 100000 : SYNC_MAX; }   // 예약은 나눠 보내므로 개수 제한이 없다
+  function totalMB(){
+    var s=0, fs=input.files||[];
+    for(var i=0;i<fs.length;i++) s+=fs[i].size;
+    return s/1048576;
+  }
+  function fmtMB(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+'GB' : Math.round(mb)+'MB'; }
 
   // 개수를 미리 알려준다. 한도를 넘으면 서버가 요청 자체를 거부해(400) 한 건도 안 올라가는데,
   // 그 화면에는 아무 설명이 없어서 여기서 먼저 막는다.
   function refresh(){
     btn.innerHTML=queued() ? '예약하기' : '<svg class="ic sm"><use href="#i-upload"/></svg>올리기';
     help.textContent=queued()
-      ? '예약하면 사람 검토 없이 그대로 등록됩니다(권한·작성부서는 고른 폴더에서 옵니다).'
+      ? '예약하면 사람 검토 없이 그대로 등록됩니다(권한·작성부서는 고른 폴더에서 옵니다). '
+        + BATCH_FILES + '개씩 나눠 보내므로 중간에 끊겨도 보낸 것은 남습니다.'
       : '한 번에 ' + WARN + '개 이하를 권장합니다(문서마다 AI가 읽는 시간이 필요합니다).';
     var n=input.files ? input.files.length : 0;
     if(!n){ note.textContent=''; note.style.color=''; return; }
-    var mins=Math.max(1, Math.round(n*30/60));
-    if(n>max()){
-      note.textContent='⛔ '+n+'개 선택됨 — 한 번에 '+max()+'개까지만 올릴 수 있습니다. '
-        +(queued() ? '나눠서 올려주세요.'
-                   : '\'예약 처리\'를 고르면 '+QUEUE_MAX+'개까지 한 번에 올릴 수 있습니다.');
+    var mins=Math.max(1, Math.round(n*30/60)), mb=totalMB();
+    if(queued() && mb>TOTAL_MB){
+      note.textContent='⛔ '+n+'개 · '+fmtMB(mb)+' — 한 번에 '+fmtMB(TOTAL_MB)
+        +'까지만 예약할 수 있습니다. 나눠서 올려주세요.';
+      note.style.color='var(--danger)';
+    } else if(n>max()){
+      note.textContent='⛔ '+n+'개 선택됨 — 즉시 처리는 '+SYNC_MAX+'개까지입니다. '
+        +'\'예약 처리\'를 고르면 한 번에 다 올릴 수 있습니다.';
       note.style.color='var(--danger)';
     } else if(queued()){
-      note.textContent=n+'개 선택됨 · 파일 전송만 하므로 금방 끝납니다(등록은 처리 시간대에).';
+      note.textContent=n+'개 선택됨 · '+fmtMB(mb)+' · '+Math.ceil(n/BATCH_FILES)
+        +'번에 나눠 전송합니다(등록은 처리 시간대에).';
       note.style.color='';
     } else if(n>WARN){
       note.textContent='⚠️ '+n+'개 선택됨 — 약 '+mins+'분 걸릴 수 있고 그동안 이 화면을 닫으면 안 됩니다. '
@@ -103,24 +123,113 @@
   });
   refresh();
 
+  // ── 예약 처리: 파일을 나눠 보낸다 ─────────────────────────────────────────
+  // 한 요청에 다 실으면 중간에 끊겼을 때 전부 날아간다. 묶음으로 쪼개면 이미 보낸
+  // 것은 서버 대기열에 남고, 실패한 묶음만 다시 보내면 된다.
+  function chunk(files){
+    var out=[], cur=[], bytes=0, lim=BATCH_MB*1048576;
+    for(var i=0;i<files.length;i++){
+      if(cur.length && (cur.length>=BATCH_FILES || bytes+files[i].size>lim)){
+        out.push(cur); cur=[]; bytes=0;
+      }
+      cur.push(files[i]); bytes+=files[i].size;
+    }
+    if(cur.length) out.push(cur);
+    return out;
+  }
+
+  function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  function send(batchId, files){
+    var fd=new FormData();
+    fd.append('csrfmiddlewaretoken', f.querySelector('[name=csrfmiddlewaretoken]').value);
+    fd.append('mode','queue'); fd.append('ajax','1'); fd.append('batch', batchId);
+    fd.append('folder_node_id', f.querySelector('[name=folder_node_id]').value);
+    for(var i=0;i<files.length;i++) fd.append('file', files[i]);
+    return fetch(window.location.pathname, {method:'POST', body:fd,
+                                            credentials:'same-origin'})
+      .then(function(r){
+        return r.json().catch(function(){ return {ok:false, error:'HTTP '+r.status}; })
+          .then(function(d){
+            if(!r.ok || !d.ok) throw new Error(d.error || ('HTTP '+r.status));
+            return d;
+          });
+      });
+  }
+
+  function randomBatch(){
+    var s='';
+    for(var i=0;i<12;i++) s+='0123456789abcdef'[Math.floor(Math.random()*16)];
+    return s;
+  }
+
+  async function uploadQueued(files){
+    var groups=chunk(files), batchId=randomBatch(), done=0, failed=[];
+    var box=document.getElementById('queueProgress'),
+        bar=document.getElementById('queueBar'),
+        txt=document.getElementById('queueText');
+    box.style.display='block';
+
+    for(var g=0; g<groups.length; g++){
+      var ok=false, lastErr='';
+      for(var attempt=1; attempt<=3 && !ok; attempt++){       // 끊기면 그 묶음만 재시도
+        try { await send(batchId, groups[g]); ok=true; }
+        catch(err){
+          lastErr=err.message||String(err);
+          if(/총 용량/.test(lastErr)) { attempt=99; break; }  // 상한 초과는 재시도 무의미
+          if(attempt<3) await sleep(attempt*1500);
+        }
+      }
+      if(ok){ done+=groups[g].length; }
+      else {
+        for(var k=0;k<groups[g].length;k++) failed.push(groups[g][k].name);
+        txt.style.color='var(--warn)';
+      }
+      bar.style.width=Math.round((g+1)/groups.length*100)+'%';
+      txt.textContent='예약 '+done+' / '+files.length+'건'
+        + (failed.length ? ' · 실패 '+failed.length+'건' : '')
+        + (lastErr && !ok ? ' — '+lastErr : '');
+    }
+
+    if(failed.length){
+      alert(done+'건은 예약됐습니다.\n'
+            +failed.length+'건은 전송하지 못했습니다:\n  '
+            +failed.slice(0,10).join('\n  ')+(failed.length>10 ? '\n  …' : '')
+            +'\n\n예약된 것은 그대로 처리됩니다. 실패한 파일만 다시 골라 올려주세요.');
+    }
+    window.location = '?';    // 새로고침 → 예약 현황 카드에 반영
+  }
+
   f.addEventListener('submit', function(e){
-    var n=input.files ? input.files.length : 0;
-    if(n>max()){
+    var files=input.files ? Array.prototype.slice.call(input.files) : [];
+    var n=files.length;
+
+    if(queued()){
       e.preventDefault();
-      alert(n+'개는 한 번에 올릴 수 없습니다(최대 '+max()+'개).');
+      if(!n) return;
+      if(totalMB()>TOTAL_MB){
+        alert('한 번에 예약할 수 있는 총 용량('+fmtMB(TOTAL_MB)+')을 넘었습니다.\n'
+              +'선택한 파일은 '+fmtMB(totalMB())+'입니다. 나눠서 올려주세요.');
+        return;
+      }
+      btn.disabled=true; btn.innerHTML='<span class="spin"></span> 전송 중…';
+      uploadQueued(files);
       return;
     }
-    if(!queued() && n>WARN && !confirm(n+'개를 올립니다. 약 '+Math.max(1,Math.round(n*30/60))
+
+    if(n>SYNC_MAX){
+      e.preventDefault();
+      alert(n+'개는 즉시 처리로 올릴 수 없습니다(최대 '+SYNC_MAX+'개).\n'
+            +'\'예약 처리\'를 고르면 한 번에 올릴 수 있습니다.');
+      return;
+    }
+    if(n>WARN && !confirm(n+'개를 올립니다. 약 '+Math.max(1,Math.round(n*30/60))
         +'분 걸릴 수 있고, 그동안 이 화면을 닫으면 안 됩니다.\n'
         +'\'예약 처리\'로 바꾸면 올려두기만 하고 자동으로 등록됩니다.\n계속할까요?')){
       e.preventDefault();
       return;
     }
-    var t=document.getElementById('uploadProgressText');
-    if(t) t.innerHTML=queued() ? '파일을 <b>서버로 옮기는 중</b>입니다… 잠시만요.'
-                               : '업로드하고 <b>AI가 문서를 읽는 중</b>입니다… 문서당 수십 초 걸릴 수 있어요.';
-    btn.disabled=true;
-    btn.innerHTML='<span class="spin"></span> '+(queued() ? '전송 중…' : '분석 중…');
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span> 분석 중…';
     var p=document.getElementById('uploadProgress'); if(p) p.style.display='flex';
   });
 })();

@@ -83,7 +83,12 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 # 그래서 하드 한도는 예약 기준으로 두고, 즉시 처리 한도는 뷰에서 따로 막는다.
 UPLOAD_WARN_FILES = 20            # 즉시 처리에서 이보다 많으면 화면에서 경고
 UPLOAD_SYNC_MAX_FILES = 50        # 즉시 처리 한도(뷰에서 검사)
-DATA_UPLOAD_MAX_NUMBER_FILES = 500   # 예약 처리 포함 하드 한도(넘으면 Django 가 거부)
+DATA_UPLOAD_MAX_NUMBER_FILES = 500   # 한 요청의 하드 한도(넘으면 Django 가 거부)
+
+# 업로드 파일을 메모리에 들고 있는 상한. Django 기본은 2.5MB 라, 2.4MB 짜리 파일
+# 여러 개가 한 요청에 오면 그만큼이 통째로 RAM 에 올라간다(500개면 1.2GB).
+# 우리는 받자마자 디스크에 쓰므로 메모리에 들고 있을 이유가 없다 → 낮게 잡는다.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 512 * 1024
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 from datetime import date, timedelta
 from pathlib import Path
@@ -260,26 +261,50 @@ def review_cancel(request, doc_id: str):
         session.close()
 
 
+_BATCH_RE = re.compile(r"^[0-9a-f]{6,32}$")
+
+
+def _batch_id(raw) -> str:
+    """브라우저가 보낸 묶음 id 검증. 경로에 쓰이므로 16진수만 허용한다."""
+    import uuid
+    value = (raw or "").strip().lower()
+    return value if _BATCH_RE.match(value) else uuid.uuid4().hex[:12]
+
+
+def _batch_bytes(batch: str) -> int:
+    """이 묶음이 지금까지 대기 폴더에 쌓아 둔 용량(총량 상한 판정용)."""
+    from app.config import settings as app_settings
+    root = Path(app_settings.upload_queue_dir) / batch
+    if not root.exists():
+        return 0
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+
 def _enqueue_uploads(session, files, *, uploaded_by: str,
-                     folder_node_id=None) -> int:
+                     folder_node_id=None, batch: str = "") -> int:
     """올린 파일을 대기 폴더에 저장하고 처리 대기열에 넣는다. → 예약 건수.
 
     요청 안에서는 파싱·AI 자동 채움을 하지 않는다(문서당 수십 초라 요청이 끊긴다).
     실제 등록은 `scripts.ingest_worker` 가 처리 시간대에 맡는다.
-    """
-    import uuid
 
+    batch 를 주면 그 묶음에 이어서 담는다. 브라우저가 파일을 여러 요청으로 나눠
+    보내기 때문인데, 한 요청이 끊겨도 **이미 보낸 것은 대기열에 그대로 남는다.**
+    """
     from app.config import settings as app_settings
     from app.db.repositories import UploadJobRepository
     from app.ingestion.titletools import safe_filename
 
-    batch = uuid.uuid4().hex[:12]
+    batch = _batch_id(batch)
     queue_dir = Path(app_settings.upload_queue_dir) / batch
     queue_dir.mkdir(parents=True, exist_ok=True)
     repo = UploadJobRepository(session)
 
+    # 이어 담을 때 이미 쓴 번호를 건드리지 않도록 다음 번호부터 시작한다
+    used = [int(p.name) for p in queue_dir.iterdir() if p.is_dir() and p.name.isdigit()]
+    start = max(used) + 1 if used else 0
+
     n = 0
-    for i, f in enumerate(files):
+    for i, f in enumerate(files, start=start):
         # 파일명은 **그대로** 둔다(제목·날짜를 파일명에서 뽑으므로 접두어를 붙이면 안 된다).
         # 대신 파일마다 번호 폴더를 하나씩 줘서 같은 이름이 겹쳐도 덮어쓰지 않게 한다.
         name = Path(f.name).name                     # 경로 조작 방지(디렉터리 성분 제거)
@@ -295,6 +320,40 @@ def _enqueue_uploads(session, files, *, uploaded_by: str,
         n += 1
     session.commit()
     return n
+
+
+def _handle_queue_upload(session, request, *, uploaded_by: str, folder_node_id):
+    """예약 업로드 한 묶음 처리. 브라우저가 나눠 보내므로 묶음마다 여기로 온다.
+
+    총 용량 상한을 넘으면 **저장하기 전에** 거절한다. 넘긴 채로 받아 두면 디스크만
+    먹고 결국 처리도 못 한다.
+    """
+    from django.http import JsonResponse
+
+    from app.config import settings as app_settings
+
+    files = request.FILES.getlist("file")
+    batch = _batch_id(request.POST.get("batch"))
+    ajax = request.POST.get("ajax") == "1"
+    limit = int(app_settings.upload_max_total_mb) * 1024 * 1024
+    incoming = sum(f.size or 0 for f in files)
+
+    if _batch_bytes(batch) + incoming > limit:
+        msg = (f"한 번에 예약할 수 있는 총 용량({app_settings.upload_max_total_mb}MB)을 "
+               "넘었습니다. 나눠서 올려주세요.")
+        if ajax:
+            return JsonResponse({"ok": False, "error": msg}, status=413)
+        messages.error(request, msg)
+        return redirect(request.POST.get("next") or "console_docs")
+
+    n = _enqueue_uploads(session, files, uploaded_by=uploaded_by,
+                         folder_node_id=folder_node_id, batch=batch)
+    if ajax:
+        return JsonResponse({"ok": True, "saved": n, "batch": batch})
+    messages.success(
+        request, f"{n}건을 예약했습니다. 처리 시간대에 자동으로 등록되며, "
+        "진행 상황은 아래 '예약 업로드' 에서 확인할 수 있습니다.")
+    return redirect(request.POST.get("next") or "console_docs")
 
 
 def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
@@ -367,13 +426,11 @@ def docs(request):
         if request.method == "POST" and request.FILES.getlist("file"):
             folder_id = _int(request.POST.get("folder_node_id"), 0) or None
             # 예약 처리: 파일만 받아 대기열에 넣고 바로 응답한다(야간 워커가 등록).
+            # 브라우저는 이걸 **여러 번 나눠** 호출한다. 한 번 끊겨도 그 묶음만 다시
+            # 보내면 되고, 이미 보낸 파일은 대기열에 남아 있다.
             if request.POST.get("mode") == "queue":
-                n = _enqueue_uploads(session, request.FILES.getlist("file"),
-                                     uploaded_by=me, folder_node_id=folder_id)
-                messages.success(
-                    request, f"{n}건을 예약했습니다. 처리 시간대에 자동으로 등록되며, "
-                    "진행 상황은 아래 '예약 업로드' 에서 확인할 수 있습니다.")
-                return redirect(request.POST.get("next") or "console_docs")
+                return _handle_queue_upload(session, request, uploaded_by=me,
+                                            folder_node_id=folder_id)
 
             # 즉시 처리는 요청 안에서 AI가 문서를 읽는다 → 개수를 제한한다.
             # (Django 하드 한도는 예약 기준으로 커서 여기서 따로 막아야 한다)

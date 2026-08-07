@@ -837,12 +837,17 @@ def main() -> int:
     from django.conf import settings as _dj
     page = c.get("/console/docs/").content.decode()
     assert "개 이하를 권장합니다" in page, "업로드 권장 개수 안내가 없음"
-    assert "개는 한 번에 올릴 수 없습니다" in page, "한도 초과 차단 안내가 없음"
+    assert "즉시 처리로 올릴 수 없습니다" in page, "즉시 처리 한도 안내가 없음"
+    assert "총 용량" in page, "예약 총 용량 상한 안내가 없음"
+    assert "나눠 보냅니다" in page or "나눠 전송" in page, "나눠 보내기 안내가 없음"
 
-    def _files(n, prefix="한도테스트"):
+    def _files(n, prefix="한도테스트", size_kb=0):
         out = []
         for i in range(n):
-            b = _io.BytesIO(f"{prefix} 문서 {i}. 연차는 15일이며 인사팀에 신청한다.".encode())
+            body = f"{prefix} 문서 {i}. 연차는 15일이며 인사팀에 신청한다.".encode()
+            if size_kb:
+                body += b" " * (size_kb * 1024)
+            b = _io.BytesIO(body)
             b.name = f"{prefix}_{i:03d}.txt"
             out.append(b)
         return out
@@ -880,13 +885,54 @@ def main() -> int:
         s18.close()
     assert "예약 업로드" in c.get("/console/docs/").content.decode(), "예약 현황이 안 보임"
 
+    # 20-1) 나눠 보내기 — 중간에 끊겨도 이미 보낸 묶음은 대기열에 남아야 한다
+    import json as _json
+
+    def _queued_now():
+        s = bridge.open_session()
+        try:
+            return _UJR(s).counts()[_UJR.QUEUED]
+        finally:
+            s.close()
+
+    def _send_batch(batch, prefix, n=5):
+        return c.post("/console/docs/", {
+            "file": _files(n, prefix), "mode": "queue", "ajax": "1",
+            "batch": batch, "folder_node_id": str(n_part.id)})
+
+    _before = _queued_now()
+    _batch = "a1b2c3d4e5f6"
+    for _g in range(3):                       # 3묶음만 보내고 '끊긴' 상황
+        _r = _send_batch(_batch, f"조각{_g}")
+        assert _r.status_code == 200 and _json.loads(_r.content)["ok"], "묶음 전송 실패"
+    _partial = _queued_now()
+    assert _partial == _before + 3 * 5, f"보낸 묶음이 안 남음: {_partial - _before}"
+
+    for _g in range(3, 6):                    # 사용자가 나머지를 다시 보냄
+        assert _send_batch(_batch, f"조각{_g}").status_code == 200
+    _full = _queued_now()
+    assert _full == _before + 6 * 5, f"이어붙이기 실패: {_full - _before}"
+
+    # 20-2) 총 용량 상한 — 넘으면 저장하지 않고 거절한다
+    _saved_limit = _st.upload_max_total_mb
+    _st.upload_max_total_mb = 1
+    _over = c.post("/console/docs/", {"file": _files(1, "초과", size_kb=2048),
+                                      "mode": "queue", "ajax": "1",
+                                      "batch": "ffff00001111",
+                                      "folder_node_id": str(n_part.id)})
+    assert _over.status_code == 413, f"용량 상한이 안 걸림: {_over.status_code}"
+    assert not _json.loads(_over.content)["ok"]
+    assert _queued_now() == _full, "거절했는데 대기열에 들어감"
+    _st.upload_max_total_mb = _saved_limit
+
+    _pending_total = _queued_now()
     from scripts import ingest_worker as _worker
     s19 = bridge.open_session()
     try:
         _svc19 = bridge.get_review_service(s19)
         _worker._service = lambda: _svc19
         stats = _worker.drain(workers=1)
-        assert stats["done"] == n_queue, f"예약 등록 결과: {stats}"
+        assert stats["done"] == _pending_total, f"예약 등록 결과: {stats}"
         from app.db.repositories import DocumentRepository as _DR4
         made = [d for d in _DR4(s19).list_documents(limit=500)
                 if d["filename"].startswith("예약테스트")]
@@ -898,7 +944,9 @@ def main() -> int:
             f"예약 등록 권한이 폴더 기준이 아님: {doc.governance.access_selections}"
     finally:
         s19.close()
-    print(f"[예약업로드] {n_queue}건 예약 → 워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
+    print(f"[예약업로드] {_pending_total}건 예약(나눠 보내기·이어붙이기 포함) → "
+          f"워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
+    print("[업로드분할] 중간에 끊겨도 보낸 묶음은 대기열에 남음 · 총 용량 상한 차단 ✅")
 
     # 21) 메일 — 사내 형식(.mysingle) 변환 · 사서함 사본 중복 · 첨부 분리
     import base64 as _b64
