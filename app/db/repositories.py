@@ -480,18 +480,36 @@ class UploadJobRepository:
         self.session = session
 
     def enqueue(self, *, path: str, source_filename: str, uploaded_by: str,
-                batch: str, folder_node_id: Optional[int] = None) -> UploadJob:
+                batch: str, folder_node_id: Optional[int] = None,
+                start_after: Optional[datetime] = None,
+                bypass_window: bool = False) -> UploadJob:
+        # 시작 시각은 **항상 UTC 로** 저장한다. SQLite 는 tzinfo 를 버리고 저장하므로,
+        # KST 로 표기된 값을 그대로 넣으면 9시간 뒤로 밀린 것처럼 비교된다.
+        if start_after is not None and start_after.tzinfo is not None:
+            start_after = start_after.astimezone(timezone.utc)
         job = UploadJob(path=path, source_filename=source_filename,
                         uploaded_by=uploaded_by, batch=batch,
-                        folder_node_id=folder_node_id, status=self.QUEUED)
+                        folder_node_id=folder_node_id, status=self.QUEUED,
+                        start_after=start_after, bypass_window=bypass_window)
         self.session.add(job)
         self.session.flush()
         return job
 
-    def claim(self) -> Optional[UploadJob]:
-        """대기 중인 작업 하나를 processing 으로 선점. 없으면 None."""
-        stmt = (select(UploadJob).where(UploadJob.status == self.QUEUED)
+    def claim(self, *, now: Optional[datetime] = None,
+              window_open: bool = True) -> Optional[UploadJob]:
+        """처리할 수 있는 작업 하나를 processing 으로 선점. 없으면 None.
+
+        - 예약 시작 시각(start_after)이 아직 안 됐으면 건너뛴다.
+        - 처리 시간대 밖이면 '지금 바로'로 올린 것(bypass_window)만 집는다.
+        """
+        now = now or datetime.now(timezone.utc)
+        stmt = (select(UploadJob)
+                .where(UploadJob.status == self.QUEUED,
+                       or_(UploadJob.start_after.is_(None),
+                           UploadJob.start_after <= now))
                 .order_by(UploadJob.id).limit(1))
+        if not window_open:
+            stmt = stmt.where(UploadJob.bypass_window.is_(True))
         if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
             stmt = stmt.with_for_update(skip_locked=True)
         job = self.session.execute(stmt).scalars().first()
@@ -543,6 +561,26 @@ class UploadJobRepository:
         for status, n in self.session.execute(stmt).all():
             out[status] = n
         return out
+
+    def claimable(self, *, now: Optional[datetime] = None,
+                  window_open: bool = True) -> int:
+        """지금 집을 수 있는 작업 수(시작 시각·시간대 조건을 반영)."""
+        now = now or datetime.now(timezone.utc)
+        stmt = (select(func.count()).select_from(UploadJob)
+                .where(UploadJob.status == self.QUEUED,
+                       or_(UploadJob.start_after.is_(None),
+                           UploadJob.start_after <= now)))
+        if not window_open:
+            stmt = stmt.where(UploadJob.bypass_window.is_(True))
+        return self.session.execute(stmt).scalar() or 0
+
+    def earliest_start(self, uploaded_by: Optional[str] = None) -> Optional[datetime]:
+        """대기 중인 작업이 가장 빨리 시작하는 시각(화면 안내용)."""
+        stmt = (select(func.min(UploadJob.start_after))
+                .where(UploadJob.status == self.QUEUED))
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        return self.session.execute(stmt).scalar()
 
     def list_jobs(self, *, uploaded_by: Optional[str] = None,
                   status: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:

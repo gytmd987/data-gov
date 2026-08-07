@@ -876,7 +876,8 @@ def main() -> int:
     _st.upload_queue_dir = _tf.mkdtemp(prefix="queue_smoke_")
     n_queue = _dj.UPLOAD_SYNC_MAX_FILES + 3        # 즉시 처리로는 못 올리는 양
     resp = c.post("/console/docs/", {"file": _files(n_queue, "예약테스트"),
-                                     "mode": "queue", "folder_node_id": str(n_part.id)})
+                                     "mode": "queue", "start_now": "1",
+                                     "folder_node_id": str(n_part.id)})
     assert resp.status_code == 302, f"예약 업로드 실패: {resp.status_code}"
     s18 = bridge.open_session()
     try:
@@ -897,7 +898,7 @@ def main() -> int:
 
     def _send_batch(batch, prefix, n=5):
         return c.post("/console/docs/", {
-            "file": _files(n, prefix), "mode": "queue", "ajax": "1",
+            "file": _files(n, prefix), "mode": "queue", "ajax": "1", "start_now": "1",
             "batch": batch, "folder_node_id": str(n_part.id)})
 
     _before = _queued_now()
@@ -925,6 +926,24 @@ def main() -> int:
     assert _queued_now() == _full, "거절했는데 대기열에 들어감"
     _st.upload_max_total_mb = _saved_limit
 
+    # 20-3) 예약 시각 — 기본으로 올리면 처리 시간대 전까지 집히지 않는다
+    assert c.post("/console/docs/", {"file": _files(2, "나중에"), "mode": "queue",
+                                     "folder_node_id": str(n_part.id)}
+                  ).status_code == 302
+    s23 = bridge.open_session()
+    try:
+        _r23 = _UJR(s23)
+        assert _r23.counts()[_UJR.QUEUED] >= 2, "예약이 대기열에 없음"
+        _later = _r23.earliest_start()
+        assert _later is not None, "예약 시작 시각이 안 잡힘"
+        # 아직 시작 시각 전이므로 '지금 바로'로 올린 것만 집을 수 있어야 한다
+        _now_claimable = _r23.claimable()
+        _all_queued = _r23.counts()[_UJR.QUEUED]
+        assert _now_claimable == _all_queued - 2, \
+            f"예약 시각을 안 지킴: 대기 {_all_queued} 중 {_now_claimable} 집힘"
+    finally:
+        s23.close()
+
     _pending_total = _queued_now()
     from scripts import ingest_worker as _worker
     s19 = bridge.open_session()
@@ -932,7 +951,7 @@ def main() -> int:
         _svc19 = bridge.get_review_service(s19)
         _worker._service = lambda: _svc19
         stats = _worker.drain(workers=1)
-        assert stats["done"] == _pending_total, f"예약 등록 결과: {stats}"
+        assert stats["done"] == _pending_total - 2, f"예약 등록 결과: {stats}"
         from app.db.repositories import DocumentRepository as _DR4
         made = [d for d in _DR4(s19).list_documents(limit=500)
                 if d["filename"].startswith("예약테스트")]
@@ -947,6 +966,7 @@ def main() -> int:
     print(f"[예약업로드] {_pending_total}건 예약(나눠 보내기·이어붙이기 포함) → "
           f"워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
     print("[업로드분할] 중간에 끊겨도 보낸 묶음은 대기열에 남음 · 총 용량 상한 차단 ✅")
+    print("[예약시각] 고른 시작 시각 전에는 처리하지 않음 · '지금 바로'는 즉시 ✅")
 
     # 21) 메일 — 사내 형식(.mysingle) 변환 · 사서함 사본 중복 · 첨부 분리
     import base64 as _b64

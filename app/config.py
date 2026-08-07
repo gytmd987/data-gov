@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     upload_queue_dir: str = "./storage/_queue"
     # 예약 업로드 처리 시간대(HH:MM). 시작>종료면 자정을 넘긴 것으로 본다(야간 처리).
     # 업무 시간에 GPU 를 점유해 채팅이 느려지지 않게 기본을 저녁~아침으로 둔다.
+    # 서버 시계가 UTC 여도 아래 시간대 기준으로 해석한다(안 그러면 야간 설정이
+    # 업무시간에 도는 일이 생긴다).
+    schedule_timezone: str = "Asia/Seoul"
     ingest_window_start: str = "18:00"
     ingest_window_end: str = "08:00"
     ingest_workers: int = 4          # 예약 업로드 동시 처리 수

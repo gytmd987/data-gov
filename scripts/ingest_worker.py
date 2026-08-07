@@ -23,13 +23,18 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-
 from app.config import settings
 from app.db.repositories import UploadJobRepository
 from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
-from app.manage.schedule import describe, in_window, seconds_until, window_from_settings
+from app.manage.schedule import (
+    describe,
+    in_window,
+    now_local,
+    seconds_until,
+    tz_of,
+    window_from_settings,
+)
 
 IDLE_SLEEP = 5.0          # 대기열이 비었을 때 쉬는 시간(초)
 STALE_MINUTES = 30        # 이보다 오래 processing 이면 워커가 죽은 것으로 보고 회수
@@ -50,6 +55,11 @@ def _service():
 def _jobs(session=None) -> UploadJobRepository:
     """작업 큐 저장소 — 서비스 세션을 그대로 쓴다(같은 트랜잭션 경계)."""
     return UploadJobRepository(session or _service().session)
+
+
+def _urgent_waiting() -> bool:
+    """시간대 밖이어도 처리해야 할 '지금 바로' 작업이 있나."""
+    return _jobs().claimable(window_open=False) > 0
 
 
 def process_one(job) -> tuple[str, str]:
@@ -106,15 +116,29 @@ def _handle(job) -> str:
     return result
 
 
-def drain(workers: int) -> dict[str, int]:
-    """대기열이 빌 때까지(또는 중단될 때까지) 처리한다."""
-    stats = {"done": 0, "skipped": 0, "failed": 0}
+def drain(workers: int, window=None) -> dict[str, int]:
+    """대기열이 빌 때까지(또는 시간대가 끝날 때까지) 처리한다.
+
+    시간대가 끝나면 **새 작업을 더 집지 않고**, 이미 손댄 문서만 마치고 멈춘다.
+    문서는 한 건씩 커밋되므로 여기서 멈춰도 지금까지 등록한 것은 그대로 남고,
+    다음 시간대에 남은 것부터 이어서 처리한다.
+    """
+    stats = {"done": 0, "skipped": 0, "failed": 0, "paused": 0}
     lock = threading.Lock()
+
+    def open_now() -> bool:
+        if window is None:
+            return True
+        return in_window(now_local(settings), *window)
 
     def run():
         while not _stop.is_set():
-            job = _jobs().claim()
+            was_open = open_now()
+            job = _jobs().claim(window_open=was_open)
             if job is None:
+                if not was_open:
+                    with lock:
+                        stats["paused"] += 1      # 시간대가 끝나 멈춤(남은 건 다음에)
                 return
             kind = _handle(job)
             with lock:
@@ -137,15 +161,25 @@ def main(argv=None) -> int:
         signal.signal(sig, lambda *_: _stop.set())
 
     start, end = window_from_settings(settings)
-    print(f"예약 업로드 워커 시작 — 처리 시간대 {describe(start, end)}"
+    window = None if args.now else (start, end)
+    tz = tz_of(settings)
+    print(f"예약 업로드 워커 시작 — 처리 시간대 {describe(start, end)} [{tz}]"
           f"{' (무시)' if args.now else ''} · 동시 {args.workers}", flush=True)
+    print(f"  현재 시각 {now_local(settings):%Y-%m-%d %H:%M} ({tz})", flush=True)
 
     while not _stop.is_set():
-        now = datetime.now()
-        if not args.now and not in_window(now, start, end):
-            wait = min(seconds_until(now, start), 300)   # 최대 5분마다 다시 확인
+        now = now_local(settings)
+        if window is not None and not in_window(now, start, end):
+            # 시간대 밖 — '지금 바로'로 올린 것만 처리하고, 나머지는 다음 시작까지 기다린다
+            urgent = drain(args.workers, window=None) if _urgent_waiting() else None
+            if urgent and urgent["done"] + urgent["failed"]:
+                print(f"  즉시 처리 {urgent['done']}건 등록 · 실패 {urgent['failed']}",
+                      flush=True)
+            wait = min(seconds_until(now, start, settings), 300)  # 최대 5분마다 재확인
             if _jobs().counts()[UploadJobRepository.QUEUED]:
                 print(f"  대기 중 — {start:%H:%M} 부터 처리합니다.", flush=True)
+            if args.once:
+                break
             _stop.wait(wait)
             continue
 
@@ -157,10 +191,14 @@ def main(argv=None) -> int:
         if pending:
             print(f"대기 {pending}건 처리 시작", flush=True)
             began = time.monotonic()
-            stats = drain(args.workers)
+            stats = drain(args.workers, window=window)
             took = time.monotonic() - began
             print(f"→ 등록 {stats['done']} · 건너뜀 {stats['skipped']} · "
                   f"실패 {stats['failed']} · {took / 60:.1f}분", flush=True)
+            left = _jobs().counts()[UploadJobRepository.QUEUED]
+            if stats.get("paused") and left:
+                print(f"  {end:%H:%M} 이 되어 멈춥니다 — 남은 {left}건은 "
+                      f"{start:%H:%M} 부터 이어서 처리합니다.", flush=True)
         if args.once:
             break
         _stop.wait(IDLE_SLEEP)

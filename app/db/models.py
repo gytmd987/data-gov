@@ -108,6 +108,11 @@ class UploadJob(Base):
     batch: Mapped[str] = mapped_column(String(64), index=True)  # 한 번의 업로드 묶음
 
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    # 이 시각 전에는 처리하지 않는다(업로드할 때 고른 시작 시각, UTC).
+    start_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    # 업무시간이어도 즉시 처리(사용자가 '지금 바로'를 고른 경우)
+    bypass_window: Mapped[bool] = mapped_column(Boolean, default=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

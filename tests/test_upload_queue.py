@@ -7,6 +7,7 @@
 """
 
 from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -16,11 +17,18 @@ from sqlalchemy.pool import StaticPool
 from app.db.models import Base, UploadJob
 from app.db.repositories import DocumentRepository, OrgRepository, UploadJobRepository
 from app.demo.offline import ExtractiveLLM, HashingEmbedder
-from app.manage.schedule import (describe, in_window, next_run_hint, parse_hhmm,
-                                 seconds_until, window_from_settings)
+from app.manage.schedule import (DEFAULT_TZ, describe, in_window, next_at,
+                                 next_run_hint, now_local, parse_hhmm,
+                                 seconds_until, to_local, tz_of,
+                                 window_from_settings)
 from app.review.service import ReviewService
 from app.schemas.ingestion import IngestionStatus
 from scripts import ingest_worker as worker
+
+
+def _kst(*args) -> datetime:
+    """업무 시간대(KST) 기준 시각 — 서버 시계가 UTC 여도 흔들리지 않게."""
+    return datetime(*args, tzinfo=ZoneInfo(DEFAULT_TZ))
 
 
 @pytest.fixture
@@ -147,15 +155,15 @@ def test_equal_bounds_mean_always_on():
 
 
 def test_seconds_until_next_start():
-    now = datetime(2026, 1, 5, 12, 0)
+    now = _kst(2026, 1, 5, 12, 0)
     assert seconds_until(now, time(18, 0)) == 6 * 3600
     assert seconds_until(now, time(9, 0)) == 21 * 3600      # 오늘은 지났으니 내일
 
 
 def test_hint_only_shown_outside_window():
     start, end = time(18, 0), time(8, 0)
-    assert next_run_hint(datetime(2026, 1, 5, 20), start, end) is None
-    hint = next_run_hint(datetime(2026, 1, 5, 16, 30), start, end)
+    assert next_run_hint(_kst(2026, 1, 5, 20, 0), start, end) is None
+    hint = next_run_hint(_kst(2026, 1, 5, 16, 30), start, end)
     assert "18:00" in hint and "1시간 30분" in hint
 
 
@@ -170,6 +178,117 @@ def test_window_from_settings_uses_defaults():
     class _S:
         pass
     assert window_from_settings(_S()) == (time(18, 0), time(8, 0))
+
+
+def test_rejects_out_of_range_time():
+    assert parse_hhmm("25:00", time(18, 0)) == time(18, 0)
+    assert parse_hhmm("12:99", time(18, 0)) == time(18, 0)
+
+
+# ── 시간대: 서버 시계가 UTC 여도 KST 로 해석해야 한다 ────────────────────────
+def test_now_local_follows_configured_timezone():
+    """서버가 UTC 로 돌아도 '지금'은 업무 시간대 기준이어야 한다.
+
+    이게 틀리면 18:00~08:00 설정이 KST 03:00~17:00 = 업무시간에 돌아간다.
+    """
+    class _S:
+        schedule_timezone = "Asia/Seoul"
+
+    utc_now = datetime.now(timezone.utc)
+    local = now_local(_S())
+    assert local.tzinfo is not None
+    assert abs((local - utc_now).total_seconds()) < 5      # 같은 순간
+    assert local.utcoffset() == timedelta(hours=9)         # 표기만 KST
+
+
+def test_naive_time_is_treated_as_utc():
+    naive = datetime(2026, 1, 5, 0, 0)                     # 00:00 UTC
+    assert to_local(naive).hour == 9                       # = 09:00 KST
+
+
+def test_bad_timezone_falls_back_to_default():
+    class _S:
+        schedule_timezone = "Mars/Olympus"
+    assert str(tz_of(_S())) == DEFAULT_TZ
+
+
+def test_next_at_returns_utc_for_local_time():
+    """KST 18:00 은 UTC 09:00 이다 — 저장은 UTC 로 한다."""
+    class _S:
+        schedule_timezone = "Asia/Seoul"
+
+    when = next_at(time(18, 0), _S(), after=_kst(2026, 1, 5, 12, 0))
+    assert when.utcoffset() == timedelta(0)                # UTC 로 나온다
+    assert when == datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)
+    assert to_local(when, _S()).hour == 18                 # 되돌리면 18시
+
+
+def test_next_at_rolls_to_tomorrow_when_past():
+    class _S:
+        schedule_timezone = "Asia/Seoul"
+    when = next_at(time(9, 0), _S(), after=_kst(2026, 1, 5, 12, 0))
+    assert to_local(when, _S()).date() == datetime(2026, 1, 6).date()
+
+
+# ── 예약 시작 시각 ───────────────────────────────────────────────────────────
+def test_job_is_not_claimed_before_its_start_time(session):
+    repo = UploadJobRepository(session)
+    later = datetime.now(timezone.utc) + timedelta(hours=3)
+    repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me",
+                 batch="b1", start_after=later)
+    session.commit()
+
+    assert repo.claim() is None                            # 아직 시작 시각 전
+    assert repo.claim(now=later + timedelta(minutes=1)) is not None
+
+
+def test_jobs_without_start_time_are_claimed_immediately(session):
+    """예전에 쌓인 작업(start_after 없음)도 그대로 처리돼야 한다."""
+    repo = UploadJobRepository(session)
+    repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me", batch="b1")
+    session.commit()
+    assert repo.claim() is not None
+
+
+def test_outside_window_only_urgent_jobs_are_claimed(session):
+    """시간대 밖에서는 '지금 바로'로 올린 것만 집는다."""
+    repo = UploadJobRepository(session)
+    repo.enqueue(path="/q/normal.txt", source_filename="normal.txt",
+                 uploaded_by="me", batch="b1")
+    repo.enqueue(path="/q/urgent.txt", source_filename="urgent.txt",
+                 uploaded_by="me", batch="b1", bypass_window=True)
+    session.commit()
+
+    job = repo.claim(window_open=False)
+    assert job is not None and job.source_filename == "urgent.txt"
+    assert repo.claim(window_open=False) is None           # 일반 건은 안 집는다
+    assert repo.claim(window_open=True) is not None        # 시간대 안에서는 집는다
+
+
+def test_claimable_counts_respect_window_and_start_time(session):
+    repo = UploadJobRepository(session)
+    repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me", batch="b")
+    repo.enqueue(path="/q/b.txt", source_filename="b.txt", uploaded_by="me", batch="b",
+                 bypass_window=True)
+    repo.enqueue(path="/q/c.txt", source_filename="c.txt", uploaded_by="me", batch="b",
+                 start_after=datetime.now(timezone.utc) + timedelta(hours=5))
+    session.commit()
+
+    assert repo.claimable() == 2                           # c 는 아직 시작 전
+    assert repo.claimable(window_open=False) == 1          # b(지금 바로)만
+
+
+def test_earliest_start_is_reported(session):
+    repo = UploadJobRepository(session)
+    soon = datetime.now(timezone.utc) + timedelta(hours=1)
+    late = datetime.now(timezone.utc) + timedelta(hours=9)
+    repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me",
+                 batch="b", start_after=late)
+    repo.enqueue(path="/q/b.txt", source_filename="b.txt", uploaded_by="me",
+                 batch="b", start_after=soon)
+    session.commit()
+    got = repo.earliest_start("me")
+    assert abs((got.replace(tzinfo=timezone.utc) - soon).total_seconds()) < 2
 
 
 # ── 워커(오프라인 fake 로 실제 등록까지) ─────────────────────────────────────
@@ -241,6 +360,57 @@ def test_missing_queue_file_fails_without_retry(session, org, service, tmp_path)
     row = session.get(UploadJob, job.id)
     assert row.status == UploadJobRepository.FAILED      # 다시 해도 같으므로 재시도 안 함
     assert "대기 파일이 없습니다" in row.error
+
+
+def test_worker_stops_at_window_end_and_resumes_later(session, org, service, tmp_path,
+                                                      monkeypatch):
+    """08:00 이 되면 새 작업을 더 집지 않는다 — 남은 건 다음 시간대에 이어서.
+
+    지금까지 등록한 문서는 한 건씩 커밋되므로 그대로 남는다.
+    """
+    for i in range(4):
+        src = tmp_path / f"문서{i}.txt"
+        src.write_text(f"연차 규정 {i}. 휴가는 15일이며 인사팀에 신청한다.", encoding="utf-8")
+        _queued(session, src, org["ㄴ"])
+
+    # 2건 처리한 시점에 시간대가 끝나도록 시계를 조작한다
+    calls = {"n": 0}
+    inside = _kst(2026, 1, 6, 3, 0)      # 시간대 안(새벽 3시)
+    outside = _kst(2026, 1, 6, 9, 0)     # 시간대 밖(오전 9시)
+
+    def fake_now(_settings=None):
+        calls["n"] += 1
+        return inside if calls["n"] <= 2 else outside
+
+    monkeypatch.setattr(worker, "now_local", fake_now)
+    stats = worker.drain(workers=1, window=(time(18, 0), time(8, 0)))
+
+    assert stats["done"] == 2, f"시간대가 끝났는데 계속 처리함: {stats}"
+    assert stats["paused"] == 1
+    repo = UploadJobRepository(session)
+    assert repo.counts()[UploadJobRepository.QUEUED] == 2   # 남은 건 대기열에 그대로
+    assert len(DocumentRepository(session).list_documents()) == 2   # 등록분은 남는다
+
+    # 다음 시간대에 이어서 처리
+    monkeypatch.setattr(worker, "now_local", lambda _s=None: inside)
+    again = worker.drain(workers=1, window=(time(18, 0), time(8, 0)))
+    assert again["done"] == 2
+    assert repo.counts()[UploadJobRepository.QUEUED] == 0
+
+
+def test_urgent_job_runs_even_outside_the_window(session, org, service, tmp_path,
+                                                 monkeypatch):
+    """'지금 바로'로 올린 건 업무시간이어도 처리된다."""
+    src = tmp_path / "급한자료.txt"
+    src.write_text("연차 휴가는 15일이며 인사팀에 신청한다.", encoding="utf-8")
+    UploadJobRepository(session).enqueue(
+        path=str(src), source_filename=src.name, uploaded_by="me@x.kr",
+        batch="b1", folder_node_id=org["ㄴ"], bypass_window=True)
+    session.commit()
+
+    monkeypatch.setattr(worker, "now_local", lambda _s=None: _kst(2026, 1, 6, 14, 0))
+    stats = worker.drain(workers=1, window=(time(18, 0), time(8, 0)))
+    assert stats["done"] == 1, f"지금 바로인데 처리 안 됨: {stats}"
 
 
 def test_duplicate_is_skipped_not_failed(session, org, service, tmp_path):

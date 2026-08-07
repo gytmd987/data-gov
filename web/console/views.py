@@ -280,8 +280,26 @@ def _batch_bytes(batch: str) -> int:
     return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
 
 
-def _enqueue_uploads(session, files, *, uploaded_by: str,
-                     folder_node_id=None, batch: str = "") -> int:
+def _start_after(post):
+    """폼의 '처리 시작' 선택 → (시작 시각 UTC, 업무시간 무시 여부).
+
+    비어 있으면 설정된 시간대 시작(기본 18:00)에 맞춘다. '지금 바로'를 고르면
+    업무시간이어도 처리하도록 표시한다(사용자가 명시적으로 고른 경우만).
+    """
+    from datetime import datetime, timezone
+
+    from app.config import settings as app_settings
+    from app.manage.schedule import next_at, parse_hhmm, window_from_settings
+
+    if post.get("start_now") == "1":
+        return datetime.now(timezone.utc), True      # 저장은 항상 UTC
+    start, _ = window_from_settings(app_settings)
+    chosen = parse_hhmm(post.get("start_at") or "", start)
+    return next_at(chosen, app_settings), False
+
+
+def _enqueue_uploads(session, files, *, uploaded_by: str, folder_node_id=None,
+                     batch: str = "", start_after=None, bypass_window: bool = False) -> int:
     """올린 파일을 대기 폴더에 저장하고 처리 대기열에 넣는다. → 예약 건수.
 
     요청 안에서는 파싱·AI 자동 채움을 하지 않는다(문서당 수십 초라 요청이 끊긴다).
@@ -316,7 +334,8 @@ def _enqueue_uploads(session, files, *, uploaded_by: str,
             for chunk in f.chunks():
                 out.write(chunk)
         repo.enqueue(path=str(dest), source_filename=f.name, uploaded_by=uploaded_by,
-                     batch=batch, folder_node_id=folder_node_id)
+                     batch=batch, folder_node_id=folder_node_id,
+                     start_after=start_after, bypass_window=bypass_window)
         n += 1
     session.commit()
     return n
@@ -346,35 +365,55 @@ def _handle_queue_upload(session, request, *, uploaded_by: str, folder_node_id):
         messages.error(request, msg)
         return redirect(request.POST.get("next") or "console_docs")
 
+    start_after, bypass = _start_after(request.POST)
     n = _enqueue_uploads(session, files, uploaded_by=uploaded_by,
-                         folder_node_id=folder_node_id, batch=batch)
+                         folder_node_id=folder_node_id, batch=batch,
+                         start_after=start_after, bypass_window=bypass)
     if ajax:
         return JsonResponse({"ok": True, "saved": n, "batch": batch})
+    when = "지금부터" if bypass else _local_label(start_after)
     messages.success(
-        request, f"{n}건을 예약했습니다. 처리 시간대에 자동으로 등록되며, "
+        request, f"{n}건을 예약했습니다. {when} 자동으로 등록되며, "
         "진행 상황은 아래 '예약 업로드' 에서 확인할 수 있습니다.")
     return redirect(request.POST.get("next") or "console_docs")
 
 
+def _local_label(moment) -> str:
+    """UTC 시각 → 화면용 '오늘/내일 HH:MM' (업무 시간대 기준)."""
+    from app.config import settings as app_settings
+    from app.manage.schedule import now_local, to_local
+    if moment is None:
+        return "처리 시간대에"
+    local, today = to_local(moment, app_settings), now_local(app_settings).date()
+    day = "오늘" if local.date() == today else "내일" if (local.date() - today).days == 1 \
+        else f"{local:%m/%d}"
+    return f"{day} {local:%H:%M}부터"
+
+
 def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
     """화면에 보여줄 예약 업로드 현황(관리자는 전체, 그 외는 본인 것)."""
-    from datetime import datetime as _dt
-
     from app.config import settings as app_settings
     from app.db.repositories import UploadJobRepository
-    from app.manage.schedule import describe, next_run_hint, window_from_settings
+    from app.manage.schedule import (describe, now_local, tz_of,
+                                     window_from_settings)
 
     repo = UploadJobRepository(session)
     who = None if is_adm else uploaded_by
     counts = repo.counts(who)
     start, end = window_from_settings(app_settings)
+    waiting = counts[UploadJobRepository.QUEUED]
     return {
         "counts": counts,
-        "pending": counts[UploadJobRepository.QUEUED] + counts[UploadJobRepository.PROCESSING],
+        "pending": waiting + counts[UploadJobRepository.PROCESSING],
         "failed_jobs": repo.list_jobs(uploaded_by=who,
                                       status=UploadJobRepository.FAILED, limit=20),
         "window": describe(start, end),
-        "hint": next_run_hint(_dt.now(), start, end),
+        "window_start": f"{start:%H:%M}",
+        "tz": str(tz_of(app_settings)),
+        "now": f"{now_local(app_settings):%H:%M}",
+        # 실제로 언제 시작하는지 — 업로드할 때 고른 시각 기준
+        "hint": (f"{_local_label(repo.earliest_start(who))} 처리를 시작합니다."
+                 if waiting else None),
     }
 
 
