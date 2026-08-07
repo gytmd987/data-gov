@@ -17,9 +17,9 @@ from sqlalchemy.pool import StaticPool
 from app.db.models import Base, UploadJob
 from app.db.repositories import DocumentRepository, OrgRepository, UploadJobRepository
 from app.demo.offline import ExtractiveLLM, HashingEmbedder
-from app.manage.schedule import (DEFAULT_TZ, describe, in_window, next_at,
-                                 next_run_hint, now_local, parse_hhmm,
-                                 seconds_until, to_local, tz_of,
+from app.manage.schedule import (DEFAULT_TZ, clock_report, describe, in_window,
+                                 next_at, next_run_hint, now_local, parse_hhmm,
+                                 seconds_until, to_local, tz_label, tz_of,
                                  window_from_settings)
 from app.review.service import ReviewService
 from app.schemas.ingestion import IngestionStatus
@@ -210,6 +210,32 @@ def test_bad_timezone_falls_back_to_default():
     class _S:
         schedule_timezone = "Mars/Olympus"
     assert str(tz_of(_S())) == DEFAULT_TZ
+
+
+def test_timezone_fallback_never_raises(monkeypatch):
+    """폐쇄망 컨테이너에 tzdata 가 없어도 화면이 죽으면 안 된다."""
+    import app.manage.schedule as sched
+
+    def _no_tzdata(_name):
+        raise sched.ZoneInfoNotFoundError("tzdata 없음")
+
+    monkeypatch.setattr(sched, "ZoneInfo", _no_tzdata)
+    assert tz_of(None) is timezone.utc          # UTC 로 떨어질 뿐 예외는 없다
+
+
+def test_tz_label_shows_offset():
+    class _S:
+        schedule_timezone = "Asia/Seoul"
+    assert tz_label(_S()) == "KST(UTC+09:00)"
+
+
+def test_clock_report_has_what_diagnosis_needs():
+    """시각이 이상할 때 원인을 좁히려면 UTC·로컬·시스템 시계가 다 있어야 한다."""
+    rep = clock_report(None)
+    assert set(rep) >= {"utc", "local", "tz", "tz_label", "system_naive", "system_tz"}
+    assert rep["utc"].tzinfo is not None
+    assert abs((rep["local"] - rep["utc"]).total_seconds()) < 1   # 같은 순간
+    assert rep["tz"] == DEFAULT_TZ
 
 
 def test_next_at_returns_utc_for_local_time():

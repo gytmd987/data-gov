@@ -394,7 +394,9 @@ def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
     """화면에 보여줄 예약 업로드 현황(관리자는 전체, 그 외는 본인 것)."""
     from app.config import settings as app_settings
     from app.db.repositories import UploadJobRepository
-    from app.manage.schedule import (describe, now_local, tz_of,
+    from datetime import timezone as _tz
+
+    from app.manage.schedule import (describe, now_local, tz_label, tz_of,
                                      window_from_settings)
 
     repo = UploadJobRepository(session)
@@ -410,7 +412,12 @@ def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
         "window": describe(start, end),
         "window_start": f"{start:%H:%M}",
         "tz": str(tz_of(app_settings)),
+        "tz_label": tz_label(app_settings),
         "now": f"{now_local(app_settings):%H:%M}",
+        # 브라우저 시계와 대조해 서버 시계가 어긋났는지 화면에서 알아채게 한다.
+        # (시간대 계산이 맞아도 서버 시계 자체가 틀리면 예약이 그만큼 어긋난다)
+        "now_iso": now_local(app_settings).astimezone(_tz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"),
         # 실제로 언제 시작하는지 — 업로드할 때 고른 시각 기준
         "hint": (f"{_local_label(repo.earliest_start(who))} 처리를 시작합니다."
                  if waiting else None),

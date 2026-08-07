@@ -18,13 +18,19 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 DEFAULT_TZ = "Asia/Seoul"
 
 
-def tz_of(settings=None) -> ZoneInfo:
-    """설정된 업무 시간대. 이름이 잘못돼 있으면 기본값으로 떨어진다."""
+def tz_of(settings=None):
+    """설정된 업무 시간대. 이름이 잘못됐거나 tzdata 가 없으면 안전하게 떨어진다.
+
+    폐쇄망 컨테이너에는 tzdata 가 빠져 있는 경우가 있어, 기본값마저 못 만들 수 있다.
+    그때는 UTC 로 떨어뜨린다(시각이 어긋나더라도 화면이 죽지는 않게).
+    """
     name = getattr(settings, "schedule_timezone", None) or DEFAULT_TZ
-    try:
-        return ZoneInfo(str(name))
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo(DEFAULT_TZ)
+    for candidate in (str(name), DEFAULT_TZ):
+        try:
+            return ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError, KeyError):
+            continue
+    return timezone.utc
 
 
 def now_local(settings=None) -> datetime:
@@ -37,6 +43,38 @@ def to_local(moment: datetime, settings=None) -> datetime:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(tz_of(settings))
+
+
+def tz_label(settings=None) -> str:
+    """화면 표기용 시간대 약칭+오프셋. 예: 'KST(UTC+09:00)'."""
+    local = now_local(settings)
+    name = local.tzname() or str(tz_of(settings))
+    offset = local.utcoffset() or timedelta(0)
+    sign = "+" if offset >= timedelta(0) else "-"
+    total = int(abs(offset).total_seconds())
+    return f"{name}(UTC{sign}{total // 3600:02d}:{total % 3600 // 60:02d})"
+
+
+def clock_report(settings=None) -> dict:
+    """시계 진단 — 화면 시각이 이상할 때 원인을 좁히기 위한 값들.
+
+    시각이 틀리는 원인은 둘 중 하나다.
+      ① 시간대 설정이 틀림 → 아래 tz/offset 을 보면 안다.
+      ② **서버 시계 자체가 틀림** → 코드로는 알 수 없다. 실제 시각과 대조해야 한다.
+    """
+    import platform
+    import time as _time
+
+    utc = datetime.now(timezone.utc)
+    return {
+        "utc": utc,
+        "local": utc.astimezone(tz_of(settings)),
+        "tz": str(tz_of(settings)),
+        "tz_label": tz_label(settings),
+        "system_naive": datetime.now(),          # 서버 시스템 로컬 시계
+        "system_tz": "/".join(t for t in _time.tzname if t),
+        "host": platform.node(),
+    }
 
 
 def parse_hhmm(value: str, default: time) -> time:

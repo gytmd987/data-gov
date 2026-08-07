@@ -39,7 +39,8 @@
       <span class="msg-note">처리 시작</span>
       <input type="time" name="start_at" value="{{ queue.window_start }}"
              style="width:auto" id="startAt">
-      <span class="msg-note">{{ queue.tz }} 기준 · 현재 {{ queue.now }}</span>
+      <span class="msg-note">{{ queue.tz }} 기준 · 서버 현재 <b id="srvNow">{{ queue.now }}</b>
+        <span class="msg-note">({{ queue.tz_label }})</span></span>
       <label class="msg-note" style="display:flex;align-items:center;gap:5px;cursor:pointer">
         <input type="checkbox" name="start_now" value="1" id="startNow">
         지금 바로 <span style="color:var(--warn)">(업무시간이어도 즉시 — 채팅이 느려질 수 있음)</span>
@@ -256,11 +257,30 @@
 })();
 </script>
 
+<!-- 서버 시계가 어긋나면 예약 시각이 그만큼 어긋난다 → 브라우저 시계와 대조해 알려준다 -->
+<div id="clockWarn" class="banner warn" style="display:none;margin-bottom:10px"></div>
+<script>
+(function(){
+  var el=document.getElementById('clockWarn');
+  if(!el) return;
+  var server=new Date("{{ queue.now_iso }}");
+  if(isNaN(server)) return;
+  var diffMin=Math.round((server-new Date())/60000);
+  if(Math.abs(diffMin)<5) return;          // 몇 분 차이는 정상(렌더·전송 지연)
+  var h=Math.floor(Math.abs(diffMin)/60), m=Math.abs(diffMin)%60;
+  var gap=(h? h+'시간 ':'')+(m? m+'분':'') || '0분';
+  el.innerHTML='⚠️ <b>서버 시계가 이 PC 보다 '+gap+' '+(diffMin>0?'빠릅니다':'느립니다')+'.</b> '
+    +'예약한 시각도 그만큼 어긋나 처리됩니다. 관리자에게 알리고 서버 시각을 맞춰주세요'
+    +' (<code>python -m scripts.check_time</code>).';
+  el.style.display='block';
+})();
+</script>
+
 <!-- 예약 업로드 현황 -->
 {% if queue.pending or queue.counts.failed or queue.counts.done %}
 <div class="banner {% if queue.counts.failed %}warn{% else %}info{% endif %}" style="margin-bottom:10px">
   <b><svg class="ic sm"><use href="#i-clock"/></svg> 예약 업로드</b>
-  <span class="msg-note">처리 시간대 {{ queue.window }} · {{ queue.tz }} 기준(현재 {{ queue.now }})</span>
+  <span class="msg-note">처리 시간대 {{ queue.window }} · {{ queue.tz }} 기준(서버 현재 {{ queue.now }})</span>
   <div style="margin-top:6px;display:flex;gap:14px;flex-wrap:wrap;align-items:center">
     <span>대기 <b>{{ queue.counts.queued }}</b></span>
     <span>처리 중 <b>{{ queue.counts.processing }}</b></span>

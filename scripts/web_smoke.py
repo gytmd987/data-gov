@@ -884,7 +884,17 @@ def main() -> int:
         assert _UJR(s18).counts()[_UJR.QUEUED] == n_queue, "대기열에 안 들어감"
     finally:
         s18.close()
-    assert "예약 업로드" in c.get("/console/docs/").content.decode(), "예약 현황이 안 보임"
+    _page = c.get("/console/docs/").content.decode()
+    assert "예약 업로드" in _page, "예약 현황이 안 보임"
+    # 서버 시계가 어긋났는지 브라우저와 대조할 수 있어야 한다(시각 오표시 재발 방지)
+    import re as _re
+    from app.manage.schedule import now_local as _nl
+    _m = _re.search(r'new Date\("([0-9T:\-]+Z)"\)', _page)
+    assert _m, "서버 시각(now_iso)이 화면에 안 실림 — 시계 어긋남을 감지할 수 없다"
+    from datetime import datetime as _dtm, timezone as _tzc
+    _rendered = _dtm.strptime(_m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tzc.utc)
+    assert abs((_rendered - _dtm.now(_tzc.utc)).total_seconds()) < 120, "렌더된 서버 시각이 현재와 다름"
+    assert f"서버 현재 {_nl(_st):%H:%M}" in _page, "화면의 서버 현재 시각이 틀림"
 
     # 20-1) 나눠 보내기 — 중간에 끊겨도 이미 보낸 묶음은 대기열에 남아야 한다
     import json as _json
@@ -967,6 +977,7 @@ def main() -> int:
           f"워커가 검토 생략 등록 · 권한은 폴더 기준 ✅")
     print("[업로드분할] 중간에 끊겨도 보낸 묶음은 대기열에 남음 · 총 용량 상한 차단 ✅")
     print("[예약시각] 고른 시작 시각 전에는 처리하지 않음 · '지금 바로'는 즉시 ✅")
+    print("[시계] 화면 시각이 시간대 기준으로 맞고, 어긋나면 감지할 수 있음 ✅")
 
     # 21) 메일 — 사내 형식(.mysingle) 변환 · 사서함 사본 중복 · 첨부 분리
     import base64 as _b64
