@@ -1181,7 +1181,8 @@ def main() -> int:
         "워커가 도는데 경고가 남아 있음"
     print("[워커상태] 예약 처리 워커가 멈춘 걸 화면에서 감지 ✅")
 
-    # 25-2) 예약 취소 — 계속 실패하는 문서를 대기열에서 빼낼 수 있어야 한다
+    # 25-2) 예약 관리 — 취소(삭제)와 '지금 바로 처리'
+    import datetime as _dt2
     s25b = bridge.open_session()
     try:
         _bad_dir = _pl.Path(_st.upload_queue_dir) / "badbatch" / "000"
@@ -1197,8 +1198,37 @@ def main() -> int:
 
     c.force_login(admin)
     _page25 = c.get("/console/docs/").content.decode()
-    assert "깨진파일.hwp" in _page25, "대기 중인 파일이 화면에 안 보임(취소할 방법이 없음)"
-    assert "대기 중인 파일" in _page25 and "선택 취소" in _page25, "취소 UI 가 없음"
+    assert "깨진파일.hwp" in _page25, "대기 중인 파일이 화면에 안 보임(관리할 방법이 없음)"
+    assert "대기 중인 파일" in _page25 and "선택 삭제" in _page25, "삭제 UI 가 없음"
+    assert "지금 바로 처리" in _page25 and "qcheckall" in _page25, "지금 처리·전체 선택이 없음"
+
+    # 예약 시각을 기다리지 않고 지금 처리 — 상태만 바꾸고 워커가 집어 간다
+    s25r = bridge.open_session()
+    try:
+        _r25r = _UJR(s25r)
+        _before = _r25r.claimable(window_open=False)
+        _later = _r25r.enqueue(path=str(_bad.parent / "나중에.txt"),
+                               source_filename="나중에.txt", uploaded_by="admin@company.com",
+                               batch="badbatch",
+                               start_after=_dt2.datetime(2099, 1, 1,
+                                                         tzinfo=_dt2.timezone.utc))
+        s25r.commit()
+        _later_id = _later.id
+        assert _r25r.claimable(window_open=False) == _before, \
+            "예약 시각이 한참 뒤인데 지금 집을 수 있다고 나옴"
+    finally:
+        s25r.close()
+
+    assert c.post("/console/docs/queue", {"action": "run_now", "job_ids": [_later_id],
+                                          "next": "/console/docs/"}).status_code == 302
+    s25s = bridge.open_session()
+    try:
+        assert _UJR(s25s).claimable(window_open=False) == _before + 1, \
+            "'지금 바로 처리'를 눌렀는데 아직 안 집힘"
+    finally:
+        s25s.close()
+    c.post("/console/docs/queue", {"action": "cancel", "job_ids": [_later_id],
+                                   "next": "/console/docs/"})
 
     assert c.post("/console/docs/queue", {"action": "cancel", "job_ids": [_job_id],
                                           "next": "/console/docs/"}).status_code == 302
@@ -1208,9 +1238,9 @@ def main() -> int:
                     if j["id"] == _job_id], "취소했는데 대기열에 남아 있음"
     finally:
         s25c.close()
-    assert not _bad.exists(), "취소했는데 대기 파일이 디스크에 남음"
+    assert not _bad.exists(), "삭제했는데 대기 파일이 디스크에 남음"
     assert not _bad.parent.exists(), "빈 폴더가 안 치워짐"
-    print("[예약취소] 대기 파일 목록 표시 · 선택 취소 · 디스크 정리 ✅")
+    print("[예약관리] 대기 목록 · 전체 선택 · 지금 바로 처리 · 삭제(디스크 정리) ✅")
 
     # 26) 스트리밍 — 답변이 다 만들어지기 전에 조각부터 도착한다
     c.force_login(staffer)

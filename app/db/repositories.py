@@ -656,6 +656,28 @@ class UploadJobRepository:
             self.session.commit()
         return paths
 
+    def run_now(self, job_ids: Iterable[int],
+                uploaded_by: Optional[str] = None) -> int:
+        """고른 작업을 **지금 바로** 처리하도록 바꾼다(예약 시각·시간대 무시).
+
+        급한 문서를 밤까지 기다리지 않게 한다. 워커가 떠 있어야 실제로 처리된다 —
+        여기서는 '집을 수 있는 상태'로만 만든다.
+        """
+        ids = [int(i) for i in job_ids]
+        if not ids:
+            return 0
+        stmt = select(UploadJob).where(UploadJob.id.in_(ids),
+                                       UploadJob.status == self.QUEUED)
+        if uploaded_by:                     # 관리자가 아니면 본인 것만
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        rows = list(self.session.execute(stmt).scalars())
+        for job in rows:
+            job.start_after = datetime.now(timezone.utc)
+            job.bypass_window = True
+        if rows:
+            self.session.commit()
+        return len(rows)
+
     def list_queued(self, uploaded_by: Optional[str] = None,
                     limit: int = 200) -> list[dict[str, Any]]:
         """대기 중인 작업(취소 화면용) — 오래 기다린 것부터."""

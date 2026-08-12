@@ -566,3 +566,39 @@ def test_discard_staged_is_quiet_when_the_file_is_already_gone(tmp_path):
 
     discard_staged(str(tmp_path / "없는파일.txt"))   # 예외가 나면 안 된다
     discard_staged("")
+
+
+def test_run_now_makes_a_scheduled_job_claimable_immediately(session):
+    """급한 문서를 밤까지 기다리지 않게 — 예약 시각·시간대를 모두 건너뛴다."""
+    repo = UploadJobRepository(session)
+    job = repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me",
+                       batch="b1", start_after=_kst(2099, 1, 1, 18, 0))
+    session.commit()
+    assert repo.claimable() == 0                    # 예약 시각이 한참 뒤
+
+    assert repo.run_now([job.id]) == 1
+
+    assert repo.claimable() == 1
+    assert repo.claimable(window_open=False) == 1   # 시간대 밖에서도 집힌다
+    assert repo.claim().source_filename == "a.txt"
+
+
+def test_run_now_cannot_touch_someone_elses_job(session):
+    repo = UploadJobRepository(session)
+    other = repo.enqueue(path="/q/b.txt", source_filename="b.txt", uploaded_by="you",
+                         batch="b2", start_after=_kst(2099, 1, 1, 18, 0))
+    session.commit()
+
+    assert repo.run_now([other.id], uploaded_by="me") == 0
+    assert repo.claimable() == 0                    # 그대로 예약 상태
+
+
+def test_run_now_ignores_jobs_that_are_not_waiting(session):
+    """처리 중이거나 이미 끝난 건은 대상이 아니다."""
+    repo = UploadJobRepository(session)
+    job = repo.enqueue(path="/q/a.txt", source_filename="a.txt",
+                       uploaded_by="me", batch="b1")
+    session.commit()
+    repo.claim()                                    # → processing
+
+    assert repo.run_now([job.id]) == 0

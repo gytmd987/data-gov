@@ -799,8 +799,9 @@ def queue_action(request):
 
     관리자는 전체, 그 외에는 **본인이 올린 것만** 대상으로 한다.
     """
+    from app.config import settings as app_settings
     from app.db.repositories import UploadJobRepository
-    from app.manage.schedule import discard_staged
+    from app.manage.schedule import discard_staged, worker_status
 
     session = bridge.open_session()
     try:
@@ -825,6 +826,18 @@ def queue_action(request):
             messages.success(request, f"{len(paths)}건을 취소하고 대기 파일을 지웠습니다."
                              if paths else "취소할 수 있는 건이 없습니다"
                              "(처리 중인 건은 끝난 뒤에 취소할 수 있습니다).")
+        elif action == "run_now":
+            n = repo.run_now(request.POST.getlist("job_ids"), who)
+            if not n:
+                messages.error(request, "지금 처리할 수 있는 건이 없습니다.")
+            elif worker_status(app_settings)["alive"]:
+                messages.success(request, f"{n}건을 지금 바로 처리하도록 바꿨습니다. "
+                                          "곧 등록됩니다.")
+            else:
+                # 상태만 바꿔 놓고 '곧 처리된다'고 하면 거짓말이 된다
+                messages.warning(request, f"{n}건을 '지금 바로'로 바꿨지만 "
+                                          "**처리 워커가 돌고 있지 않습니다.** "
+                                          "워커를 띄워야 실제로 등록됩니다.")
         elif action == "cancel_failed":
             paths = repo.cancel_failed(who)
             for path in paths:
