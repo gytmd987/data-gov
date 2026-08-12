@@ -26,7 +26,7 @@ class FakeJSONLLM:
     def __init__(self, resp):
         self.resp = resp
 
-    def complete_json(self, prompt, schema):
+    def complete_json(self, prompt, schema, **_):
         return self.resp
 
 

@@ -68,12 +68,29 @@ def extract_json(text: str) -> dict[str, Any]:
     raise ValueError(f"응답에서 JSON을 찾지 못함: {text[:200]!r}")
 
 
+def thinking_kwargs(enabled: bool) -> dict[str, Any]:
+    """추론(<think>) 사용 여부를 vLLM 에 전달하는 본문 조각.
+
+    Qwen3 계열은 추론이 **기본으로 켜져 있어** "연차 며칠?" 같은 질문에도 수백~수천
+    토큰을 먼저 생성한다. 그 토큰은 화면에 안 보이므로(감춘다) 사용자 입장에서는
+    그냥 멈춰 있는 시간이다. 도구 선택·SQL 생성처럼 결과가 짧고 정해진 작업에는
+    추론이 필요 없다.
+
+    모델이 이 옵션을 모르면 vLLM 이 조용히 무시한다 — 켜 두어도 깨지지 않는다.
+    """
+    return {"chat_template_kwargs": {"enable_thinking": bool(enabled)}}
+
+
 def build_json_payload(
     prompt: str, schema: dict[str, Any], model: str,
     mode: str, backend: str = "",
+    max_tokens: Optional[int] = None, thinking: bool = False,
 ) -> dict[str, Any]:
     """구조화 출력 요청 본문을 mode에 맞춰 구성한다(테스트 가능한 순수 함수)."""
-    base = {"model": model, "temperature": 0.0}
+    base: dict[str, Any] = {"model": model, "temperature": 0.0}
+    if max_tokens:
+        base["max_tokens"] = int(max_tokens)
+    base.update(thinking_kwargs(thinking))
 
     if mode == "response_format":
         # OpenAI 표준 json_schema (최신 vLLM 권장)
@@ -114,6 +131,17 @@ class VLLMClient:
         self.structured_mode = structured_mode or settings.vllm_structured_mode
         self.guided_backend = (
             guided_backend if guided_backend is not None else settings.vllm_guided_backend)
+        self.max_tokens = settings.vllm_max_tokens
+        self.task_max_tokens = settings.vllm_task_max_tokens
+        self._thinking = str(settings.vllm_thinking or "answer").lower()
+
+    def thinks_on(self, kind: str) -> bool:
+        """이 종류의 호출에 추론을 쓸 것인가. kind ∈ {answer, task}"""
+        if self._thinking == "on":
+            return True
+        if self._thinking == "off":
+            return False
+        return kind == "answer"        # "answer"(기본): 답변에만 허용
 
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -127,13 +155,19 @@ class VLLMClient:
             return resp.json()
 
     def complete_json(self, prompt: str, schema: dict[str, Any],
-                      retries: int = 2) -> dict[str, Any]:
+                      retries: int = 2, kind: str = "task",
+                      max_tokens: Optional[int] = None) -> dict[str, Any]:
         """구조화 출력 요청. 모델이 간혹 JSON이 아닌 응답을 내므로 몇 회 재시도한다.
 
         (같은 파일을 다시 올리면 됐던 이유 = 이 응답이 비결정적이기 때문. 이제 자동 재시도한다.)
+
+        kind="task" 가 기본이다 — 도구 선택·SQL 생성처럼 **결과가 짧고 정해진** 호출이라
+        추론(<think>)이 필요 없다. 적재 자동채움처럼 판단이 필요한 곳은 kind="answer".
         """
         payload = build_json_payload(
-            prompt, schema, self.model, self.structured_mode, self.guided_backend)
+            prompt, schema, self.model, self.structured_mode, self.guided_backend,
+            max_tokens=max_tokens or self.task_max_tokens,
+            thinking=self.thinks_on(kind))
         last_err: Exception | None = None
         for _ in range(max(1, retries + 1)):
             data = self._post_chat(payload)
@@ -150,6 +184,8 @@ class VLLMClient:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
+            "max_tokens": self.max_tokens,
+            **thinking_kwargs(self.thinks_on("answer")),
         }
         data = self._post_chat(payload)
         return data["choices"][0]["message"]["content"]
@@ -166,7 +202,9 @@ class VLLMClient:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
+            "max_tokens": self.max_tokens,
             "stream": True,
+            **thinking_kwargs(self.thinks_on("answer")),
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         url = f"{self.base_url}/chat/completions"

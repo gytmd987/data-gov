@@ -40,7 +40,10 @@ relation 과 reason(한 줄 근거)을 채우세요."""
 
 
 class RelationLLM(Protocol):
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]: ...
+    def complete_json(self, prompt: str, schema: dict[str, Any],
+                      **tuning: Any) -> dict[str, Any]:
+        """tuning: 속도 조절용 선택 인자(kind·max_tokens). 대역은 무시해도 된다."""
+        ...
 
 
 def classify_relation(llm: RelationLLM, new_title: Optional[str], new_summary: Optional[str],

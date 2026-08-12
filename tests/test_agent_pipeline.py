@@ -184,7 +184,7 @@ def test_a_broken_planner_still_produces_an_answer(env):
     session, pipe, user, ours, theirs = env
 
     class Broken:
-        def complete_json(self, prompt, schema):
+        def complete_json(self, prompt, schema, **_):
             raise RuntimeError("모델 죽음")
 
         def complete_text(self, prompt, temperature=0.2):
@@ -197,3 +197,57 @@ def test_a_broken_planner_still_produces_an_answer(env):
 
     assert events[-1]["type"] == "answer"
     assert events[-1]["answer"].text
+
+
+# ── 다른 방식으로 답할 수 있으면 문장을 아예 안 만든다 ───────────────────────
+def test_preempt_skips_answer_generation_entirely(env):
+    """엑셀(표)은 SQL 로 정확히 답한다 — 문장을 만들어 놓고 버리면 그 시간이 낭비다."""
+    session, pipe, user, ours, theirs = env
+    calls = []
+    real_stream = pipe.llm.stream_text
+    pipe.llm.stream_text = lambda p, **kw: calls.append(p) or real_stream(p, **kw)
+    try:
+        events = list(pipe.answer_events(
+            "연차는 며칠인가요?", user, session=session, today=TODAY,
+            preempt=lambda doc_ids: {"text": "표에서 찾은 답", "rows": []}))
+    finally:
+        pipe.llm.stream_text = real_stream
+
+    assert calls == [], "대체 경로가 잡혔는데 문장을 생성했다"
+    assert events[-1] == {"type": "preempted",
+                          "result": {"text": "표에서 찾은 답", "rows": []}}
+    assert not [e for e in events if e["type"] == "delta"]
+
+
+def test_preempt_gets_the_documents_that_were_actually_found(env):
+    session, pipe, user, ours, theirs = env
+    seen = []
+
+    list(pipe.answer_events("연차는 며칠인가요?", user, session=session, today=TODAY,
+                            preempt=lambda ids: seen.append(list(ids)) or None))
+
+    assert seen and ours in seen[0], f"찾은 문서가 안 넘어왔다: {seen}"
+    assert theirs not in seen[0], "권한 밖 문서가 대체 경로로 새어 나갔다"
+
+
+def test_a_broken_preempt_does_not_stop_the_answer(env):
+    """대체 경로가 깨져도 평소대로 답해야 한다."""
+    session, pipe, user, ours, theirs = env
+
+    def boom(doc_ids):
+        raise RuntimeError("DuckDB 죽음")
+
+    events = list(pipe.answer_events("연차는 며칠인가요?", user, session=session,
+                                     today=TODAY, preempt=boom))
+
+    assert events[-1]["type"] == "answer" and events[-1]["answer"].text
+
+
+def test_no_preempt_behaves_exactly_as_before(env):
+    session, pipe, user, ours, theirs = env
+
+    events = list(pipe.answer_events("연차는 며칠인가요?", user, session=session,
+                                     today=TODAY))
+
+    assert events[-1]["type"] == "answer"
+    assert [e for e in events if e["type"] == "delta"]

@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     # guided_json 백엔드(빈 값이면 미전송 → vLLM 기본값 사용). 예: xgrammar, outlines, lm-format-enforcer
     vllm_guided_backend: str = ""
 
+    # ── 응답 속도 ────────────────────────────────────────────────────────────
+    # 생성 토큰 수가 곧 대기 시간이다. 상한이 없으면 모델이 장황하게 늘어놓는 만큼
+    # 사용자가 그대로 기다린다(끝을 알 수 없어 체감이 특히 나쁘다).
+    vllm_max_tokens: int = 800        # 채팅 답변 상한
+    vllm_task_max_tokens: int = 400   # 도구 선택·SQL 생성 등 기계용 짧은 응답 상한
+    # 추론(<think>) 사용 여부. Qwen3 계열은 기본이 '켜짐'이라 짧은 질문에도 수백~수천
+    # 토큰을 먼저 생성한다. 그 시간 동안 화면에는 아무것도 안 나온다(추론은 감춘다).
+    #   "off"  : 항상 끔 — 제일 빠름
+    #   "answer": 답변 생성에만 허용, 도구 선택·SQL 같은 기계 작업은 끔(권장)
+    #   "on"   : 항상 켬(예전 동작)
+    # 모델이 이 옵션을 모르면 vLLM 이 무시하므로 켜 둬도 안전하다.
+    vllm_thinking: str = "answer"
+
     # 임베딩 / 리랭커 (TEI)
     embedding_model: str = "nlpai-lab/KURE-v1"   # 한국어 특화(BGE-M3 기반). 대안: BAAI/bge-m3
     embedding_port: int = 8081

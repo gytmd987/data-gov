@@ -50,7 +50,10 @@ def assert_ai_mandatory(doc) -> None:
 
 
 class LLMClient(Protocol):
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]: ...
+    def complete_json(self, prompt: str, schema: dict[str, Any],
+                      **tuning: Any) -> dict[str, Any]:
+        """tuning: 속도 조절용 선택 인자(kind·max_tokens). 대역은 무시해도 된다."""
+        ...
 
 
 def build_enrichment_schema() -> dict[str, Any]:
@@ -203,7 +206,9 @@ def enrich(
         filename=filename, content=content[:_MAX_CONTENT_CHARS],
         doc_types=doc_type_glossary(),
     )
-    result = client.complete_json(prompt, schema)
+    # 적재 자동채움은 요약·키워드·예상 Q&A 를 한 번에 만든다 — 판단이 필요하고 출력도
+    # 길다. 야간 배치라 사용자가 기다리지 않으므로 추론을 켜고 넉넉히 준다.
+    result = client.complete_json(prompt, schema, kind="answer", max_tokens=2000)
 
     cls = ClassificationBlock()
     life = LifecycleBlock()

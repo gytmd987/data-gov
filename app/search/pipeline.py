@@ -54,15 +54,21 @@ class SearchPipeline:
     # ── 판단 루프 + 스트리밍 ─────────────────────────────────────────────────
     def answer_events(self, query: str, user: UserContext, session, today=None,
                       include_past: bool = False, folder_node_ids=None,
-                      plan: bool = True):
+                      plan: bool = True, preempt=None):
         """이벤트 생성기 — 화면이 진행 상황과 답변 조각을 바로 받아 볼 수 있게 한다.
 
         내보내는 이벤트:
           {"type":"step",   "text": "규정 47건 확인"}   진행 상황(무엇을 찾고 있나)
           {"type":"delta",  "text": "연차는 "}          답변 조각(도착하는 대로)
           {"type":"answer", "answer": Answer}           후처리까지 끝난 최종본
+          {"type":"preempted", "result": ...}           다른 방식으로 답했음(아래)
 
         plan=False 면 판단 루프 없이 기존 경로(검색 1회)로 간다.
+
+        preempt(doc_ids) 를 주면 **답변을 생성하기 직전에** 한 번 물어본다. 값을
+        돌려주면 문장 생성을 아예 건너뛴다. 표 데이터(엑셀)처럼 SQL 로 정확히 답할 수
+        있는 질문에 쓴다 — 안 그러면 문장 답변을 다 만들어 놓고 버리게 되어, 사용자는
+        답이 흘러나오는 걸 지켜본 뒤 전혀 다른 답으로 바뀌는 걸 보게 된다.
         """
         from .tools import ToolBox
 
@@ -91,6 +97,17 @@ class SearchPipeline:
 
         # 답변에 넣기 직전 마지막 재검증 — 이 경로로도 권한 밖 문서가 새면 안 된다
         evidence = [c for c in evidence if policy.allows(c.payload)]
+
+        # 문장을 만들기 **전에** 물어본다 — 만들고 나서 버리면 그 시간이 통째로 낭비다
+        if preempt is not None:
+            try:
+                taken = preempt([c.doc_id for c in evidence if c.doc_id])
+            except Exception:      # 대체 경로가 깨져도 평소대로 답해야 한다
+                taken = None
+            if taken is not None:
+                self._audit(user, query, evidence, Answer(text=""), steps=steps)
+                yield {"type": "preempted", "result": taken}
+                return
 
         raw = ""
         for piece in stream_answer(self.llm, query, evidence):

@@ -17,7 +17,7 @@ class ScriptedLLM:
         self.decisions = list(decisions)
         self.prompts: list[str] = []
 
-    def complete_json(self, prompt, schema):
+    def complete_json(self, prompt, schema, **_):
         self.prompts.append(prompt)
         if not self.decisions:
             return {"이유": "충분함", "도구": "답변하기"}
@@ -161,7 +161,7 @@ def test_tool_failure_does_not_stop_the_loop():
 
 def test_planner_failure_falls_back_to_prefetched_evidence():
     class Broken:
-        def complete_json(self, prompt, schema):
+        def complete_json(self, prompt, schema, **_):
             raise RuntimeError("모델 죽음")
 
     seed = ToolResult(text="연차 15일", chunks=[_chunk("c1")])

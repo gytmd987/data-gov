@@ -95,7 +95,7 @@ class ExtractiveLLM:
 
     _SQL_TABLE = re.compile(r"TABLE:\s*(\S+)")
 
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+    def complete_json(self, prompt: str, schema: dict[str, Any], **_) -> dict[str, Any]:
         props = schema.get("properties", {})
         # 판단 루프 스키마: 데모에선 미리 돌려 둔 검색으로 바로 답한다(도구 추가 호출 없음).
         # 도구 경로 자체는 테스트에서 가짜 LLM 으로 따로 검증한다.

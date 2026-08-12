@@ -22,7 +22,7 @@ def test_recall_mrr_ndcg():
 
 # ── judge (fake) ─────────────────────────────────────────────────────────────
 class FakeJudge:
-    def complete_json(self, prompt, schema):
+    def complete_json(self, prompt, schema, **_):
         return {"groundedness": 0.9, "relevance": 0.8}
 
 

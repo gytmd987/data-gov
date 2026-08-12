@@ -109,7 +109,7 @@ class FakeLLM:
     def __init__(self, response):
         self.response = response
 
-    def complete_json(self, prompt, schema):
+    def complete_json(self, prompt, schema, **_):
         return self.response
 
 

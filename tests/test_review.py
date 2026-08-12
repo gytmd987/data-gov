@@ -24,7 +24,7 @@ def session():
 
 
 class FakeLLM:
-    def complete_json(self, prompt, schema):
+    def complete_json(self, prompt, schema, **_):
         return {
             "doc_type": {"value": "report", "confidence": 0.95},
             "language": {"value": "ko", "confidence": 0.99},

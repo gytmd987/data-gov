@@ -58,11 +58,11 @@ def test_classify_relation_maps_and_falls_back():
     from app.relations.classify import RELATION_LABELS, classify_relation
 
     class OkLLM:
-        def complete_json(self, prompt, schema):
+        def complete_json(self, prompt, schema, **_):
             return {"relation": "related", "reason": "별첨 자료"}
 
     class BadLLM:
-        def complete_json(self, prompt, schema):
+        def complete_json(self, prompt, schema, **_):
             raise RuntimeError("llm down")
 
     r = classify_relation(OkLLM(), "새", "요약", "기존", "요약2")

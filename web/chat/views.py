@@ -137,31 +137,36 @@ def run_turn(request, body):
             today = date.today()
             folder_ids = _folder_scope(session, body.get("folder_node_id"))
 
+            def _dataset_route(doc_ids):
+                """표 데이터(엑셀)가 잡혔으면 SQL 로 정확히 답한다 — 문장 생성 대신.
+
+                문장을 다 만든 뒤에 갈아 끼우면 그 생성 시간이 통째로 낭비고, 화면에서도
+                답이 흘러나오다가 전혀 다른 답으로 바뀌어 보인다.
+                """
+                from app.datasets.query import maybe_answer_structured
+                return maybe_answer_structured(session, bridge.get_chat_llm(),
+                                               user_ctx, text, doc_ids)
+
             ans = None
             for event in pipe.answer_events(
                     text, user_ctx, session=session, today=today,
                     include_past=include_past, folder_node_ids=folder_ids,
-                    plan=bool(plan)):
+                    plan=bool(plan), preempt=_dataset_route):
                 if event["type"] == "answer":
                     ans = event["answer"]
+                elif event["type"] == "preempted":
+                    dataset_answer = event["result"]
                 else:
                     yield event                      # step / delta 는 그대로 흘린다
 
-            sources = group_sources(ans, today=today)
-            # 본문의 인용 번호를 화면의 출처 번호와 일치시킨다(어긋나면 헷갈린다)
-            answer_text = renumber_citations(ans.text, sources)
-            _attach_related(session, sources, user_ctx, today)
-            # 표 데이터가 검색에 잡히면 구조화(SQL) 답변 시도 → 정확 조회·집계
-            try:
-                from app.datasets.query import maybe_answer_structured
-                cited = [s.get("doc_id") for s in sources if s.get("doc_id")]
-                da = maybe_answer_structured(session, bridge.get_chat_llm(),
-                                             user_ctx, text, cited)
-                if da is not None:
-                    dataset_answer = da
-                    answer_text = da["text"]
-            except Exception:
-                pass
+            if dataset_answer is not None:
+                answer_text = dataset_answer["text"]
+                yield {"type": "delta", "text": answer_text}
+            else:
+                sources = group_sources(ans, today=today)
+                # 본문의 인용 번호를 화면의 출처 번호와 일치시킨다(어긋나면 헷갈린다)
+                answer_text = renumber_citations(ans.text, sources)
+                _attach_related(session, sources, user_ctx, today)
         else:
             hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
             llm = bridge.get_chat_llm()

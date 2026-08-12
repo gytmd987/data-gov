@@ -12,7 +12,10 @@ from pydantic import BaseModel
 
 
 class JudgeLLM(Protocol):
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]: ...
+    def complete_json(self, prompt: str, schema: dict[str, Any],
+                      **tuning: Any) -> dict[str, Any]:
+        """tuning: 속도 조절용 선택 인자(kind·max_tokens). 대역은 무시해도 된다."""
+        ...
 
 
 class JudgeScore(BaseModel):
