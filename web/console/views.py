@@ -410,6 +410,9 @@ def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
         "pending": waiting + counts[UploadJobRepository.PROCESSING],
         "failed_jobs": repo.list_jobs(uploaded_by=who,
                                       status=UploadJobRepository.FAILED, limit=20),
+        # 대기 중인 것도 보여준다 — 잘못 올린 파일을 취소할 수 있어야 한다
+        "queued_jobs": [dict(j, start_label=_local_label(j["start_after"]))
+                        for j in repo.list_queued(who, limit=100)],
         "window": describe(start, end),
         "window_start": f"{start:%H:%M}",
         "tz": str(tz_of(app_settings)),
@@ -792,11 +795,12 @@ def cleanup_apply(request):
 @login_required
 @require_POST
 def queue_action(request):
-    """예약 업로드 대기열 조작 — 실패분 재시도 / 완료 기록 지우기.
+    """예약 업로드 대기열 조작 — 재시도 / 취소 / 완료 기록 지우기.
 
     관리자는 전체, 그 외에는 **본인이 올린 것만** 대상으로 한다.
     """
     from app.db.repositories import UploadJobRepository
+    from app.manage.schedule import discard_staged
 
     session = bridge.open_session()
     try:
@@ -812,6 +816,21 @@ def queue_action(request):
         elif action == "clear":
             n = repo.clear_done(who)
             messages.info(request, f"완료 기록 {n}건을 지웠습니다.")
+        elif action == "cancel":
+            # 깨진 파일이 계속 실패하면 대기열에서 빼야 한다 — 안 그러면 워커가
+            # 매번 같은 것에 걸리고 실패 건수도 안 줄어든다.
+            paths = repo.cancel(request.POST.getlist("job_ids"), who)
+            for path in paths:
+                discard_staged(path)
+            messages.success(request, f"{len(paths)}건을 취소하고 대기 파일을 지웠습니다."
+                             if paths else "취소할 수 있는 건이 없습니다"
+                             "(처리 중인 건은 끝난 뒤에 취소할 수 있습니다).")
+        elif action == "cancel_failed":
+            paths = repo.cancel_failed(who)
+            for path in paths:
+                discard_staged(path)
+            messages.success(request, f"실패한 {len(paths)}건을 취소했습니다."
+                             if paths else "취소할 실패 건이 없습니다.")
         else:
             messages.error(request, "알 수 없는 요청입니다.")
         return redirect(request.POST.get("next") or "console_docs")

@@ -30,6 +30,7 @@ from app.ingestion.intake import DuplicateError
 from app.manage.schedule import (
     beat,
     describe,
+    discard_staged,
     in_window,
     now_local,
     seconds_until,
@@ -92,8 +93,6 @@ def process_one(job) -> tuple[str, str]:
 
 def _handle(job) -> str:
     """처리 + 결과 기록 + 대기 파일 정리."""
-    import os
-
     result, note = process_one(job)
     repo = _jobs()
     if result == "done":
@@ -105,13 +104,7 @@ def _handle(job) -> str:
         retry = "읽지 못했습니다" not in note and "대기 파일이 없습니다" not in note
         repo.fail(job.id, note, retry=retry)
     if result in ("done", "skipped"):
-        try:
-            os.remove(job.path)                  # 등록됐으면 대기 파일은 지운다
-            # 파일마다 번호 폴더를 쓰므로 비면 같이 치운다(배치 폴더도 마지막 건에서 정리)
-            os.rmdir(os.path.dirname(job.path))
-            os.rmdir(os.path.dirname(os.path.dirname(job.path)))
-        except OSError:
-            pass
+        discard_staged(job.path)                 # 등록됐으면 대기 파일은 지운다
     print(f"  [{result}] {job.source_filename}"
           + (f" — {note}" if result != "done" else ""), flush=True)
     return result

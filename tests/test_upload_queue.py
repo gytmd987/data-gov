@@ -451,3 +451,118 @@ def test_duplicate_is_skipped_not_failed(session, org, service, tmp_path):
     stats = worker.drain(workers=1)
     assert (stats["done"], stats["skipped"], stats["failed"]) == (1, 1, 0)
     assert len(DocumentRepository(session).list_documents()) == 1
+
+
+# ── 취소 ─────────────────────────────────────────────────────────────────────
+# 깨진 파일이 계속 실패해도 대기열에서 뺄 방법이 없으면, 워커가 매번 같은 것에 걸리고
+# 화면의 실패 건수도 안 줄어든다.
+def test_cancel_removes_the_job_and_reports_the_file_to_delete(session):
+    repo = UploadJobRepository(session)
+    job = repo.enqueue(path="/q/b1/000/깨진파일.hwp", source_filename="깨진파일.hwp",
+                       uploaded_by="me", batch="b1")
+    session.commit()
+
+    paths = repo.cancel([job.id])
+
+    assert paths == ["/q/b1/000/깨진파일.hwp"]      # 호출자가 이 파일을 지운다
+    assert repo.counts()[UploadJobRepository.QUEUED] == 0
+
+
+def test_cancel_works_on_failed_jobs_too(session):
+    repo = UploadJobRepository(session)
+    job = repo.enqueue(path="/q/a.txt", source_filename="a.txt",
+                       uploaded_by="me", batch="b1")
+    session.commit()
+    repo.claim()
+    repo.fail(job.id, "읽지 못했습니다", retry=False)
+
+    assert repo.cancel([job.id]) == ["/q/a.txt"]
+    assert repo.counts()[UploadJobRepository.FAILED] == 0
+
+
+def test_cancel_leaves_a_job_a_worker_is_processing(session):
+    """지금 워커가 쓰고 있는 파일을 지우면 그쪽이 이상하게 실패한다."""
+    repo = UploadJobRepository(session)
+    job = repo.enqueue(path="/q/a.txt", source_filename="a.txt",
+                       uploaded_by="me", batch="b1")
+    session.commit()
+    repo.claim()                                   # → processing
+
+    assert repo.cancel([job.id]) == []
+    assert repo.counts()[UploadJobRepository.PROCESSING] == 1
+
+
+def test_cancel_cannot_touch_someone_elses_job(session):
+    repo = UploadJobRepository(session)
+    other = repo.enqueue(path="/q/b.txt", source_filename="b.txt",
+                         uploaded_by="you", batch="b2")
+    session.commit()
+
+    assert repo.cancel([other.id], uploaded_by="me") == []
+    assert repo.counts()[UploadJobRepository.QUEUED] == 1
+
+
+def test_cancel_failed_is_scoped_to_the_uploader(session):
+    repo = UploadJobRepository(session)
+    mine = repo.enqueue(path="/q/a.txt", source_filename="a.txt",
+                        uploaded_by="me", batch="b1")
+    other = repo.enqueue(path="/q/b.txt", source_filename="b.txt",
+                         uploaded_by="you", batch="b2")
+    session.commit()
+    for job in (mine, other):
+        repo.claim()
+        repo.fail(job.id, "깨짐", retry=False)
+
+    assert repo.cancel_failed("me") == ["/q/a.txt"]
+    assert repo.counts()[UploadJobRepository.FAILED] == 1     # 남의 것은 남는다
+
+
+def test_list_queued_shows_waiting_jobs_oldest_first(session):
+    repo = UploadJobRepository(session)
+    repo.enqueue(path="/q/a.txt", source_filename="a.txt", uploaded_by="me", batch="b1")
+    repo.enqueue(path="/q/b.txt", source_filename="b.txt", uploaded_by="me", batch="b1")
+    done = repo.enqueue(path="/q/c.txt", source_filename="c.txt",
+                        uploaded_by="me", batch="b1")
+    session.commit()
+    repo.finish(done.id, "D1")
+
+    rows = repo.list_queued("me")
+
+    assert [r["filename"] for r in rows] == ["a.txt", "b.txt"]   # 끝난 건 빠진다
+
+
+def test_discard_staged_removes_the_file_and_its_empty_folders(tmp_path):
+    from app.manage.schedule import discard_staged
+
+    staged = tmp_path / "batch1" / "000" / "문서.txt"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("내용", encoding="utf-8")
+
+    discard_staged(str(staged))
+
+    assert not staged.exists()
+    assert not staged.parent.exists()          # 번호 폴더
+    assert not staged.parent.parent.exists()   # 배치 폴더
+
+
+def test_discard_staged_keeps_a_folder_that_still_has_files(tmp_path):
+    from app.manage.schedule import discard_staged
+
+    keep = tmp_path / "batch1" / "001" / "남길것.txt"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("내용", encoding="utf-8")
+    gone = tmp_path / "batch1" / "000" / "지울것.txt"
+    gone.parent.mkdir(parents=True)
+    gone.write_text("내용", encoding="utf-8")
+
+    discard_staged(str(gone))
+
+    assert not gone.exists() and keep.exists()
+    assert keep.parent.parent.exists()         # 배치 폴더는 남는다
+
+
+def test_discard_staged_is_quiet_when_the_file_is_already_gone(tmp_path):
+    from app.manage.schedule import discard_staged
+
+    discard_staged(str(tmp_path / "없는파일.txt"))   # 예외가 나면 안 된다
+    discard_staged("")

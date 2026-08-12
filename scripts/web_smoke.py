@@ -1181,6 +1181,37 @@ def main() -> int:
         "워커가 도는데 경고가 남아 있음"
     print("[워커상태] 예약 처리 워커가 멈춘 걸 화면에서 감지 ✅")
 
+    # 25-2) 예약 취소 — 계속 실패하는 문서를 대기열에서 빼낼 수 있어야 한다
+    s25b = bridge.open_session()
+    try:
+        _bad_dir = _pl.Path(_st.upload_queue_dir) / "badbatch" / "000"
+        _bad_dir.mkdir(parents=True, exist_ok=True)
+        _bad = _bad_dir / "깨진파일.hwp"
+        _bad.write_bytes(b"\x00\x01 not a real document")
+        _job = _UJR(s25b).enqueue(path=str(_bad), source_filename="깨진파일.hwp",
+                                  uploaded_by="admin@company.com", batch="badbatch")
+        s25b.commit()
+        _job_id = _job.id
+    finally:
+        s25b.close()
+
+    c.force_login(admin)
+    _page25 = c.get("/console/docs/").content.decode()
+    assert "깨진파일.hwp" in _page25, "대기 중인 파일이 화면에 안 보임(취소할 방법이 없음)"
+    assert "대기 중인 파일" in _page25 and "선택 취소" in _page25, "취소 UI 가 없음"
+
+    assert c.post("/console/docs/queue", {"action": "cancel", "job_ids": [_job_id],
+                                          "next": "/console/docs/"}).status_code == 302
+    s25c = bridge.open_session()
+    try:
+        assert not [j for j in _UJR(s25c).list_queued()
+                    if j["id"] == _job_id], "취소했는데 대기열에 남아 있음"
+    finally:
+        s25c.close()
+    assert not _bad.exists(), "취소했는데 대기 파일이 디스크에 남음"
+    assert not _bad.parent.exists(), "빈 폴더가 안 치워짐"
+    print("[예약취소] 대기 파일 목록 표시 · 선택 취소 · 디스크 정리 ✅")
+
     # 26) 스트리밍 — 답변이 다 만들어지기 전에 조각부터 도착한다
     c.force_login(staffer)
 

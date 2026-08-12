@@ -107,6 +107,29 @@ def beat(settings=None) -> None:
         pass                        # 신호 기록 실패로 처리가 멈추면 안 된다
 
 
+def discard_staged(path: str) -> None:
+    """대기 파일 삭제 — 등록됐거나 취소된 파일은 디스크에 남길 이유가 없다.
+
+    파일마다 번호 폴더를 쓰므로 빈 폴더도 같이 치운다(배치 폴더는 마지막 건에서 정리).
+    이미 없거나 아직 안 비었으면 조용히 넘어간다.
+    """
+    import os
+
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    parent = os.path.dirname(path)
+    for _ in range(2):                    # 번호 폴더 → 배치 폴더
+        try:
+            os.rmdir(parent)
+        except OSError:
+            return
+        parent = os.path.dirname(parent)
+
+
 def worker_status(settings=None) -> dict:
     """워커가 살아 있나. → {alive, last_beat, minutes_ago}"""
     path = heartbeat_path(settings)

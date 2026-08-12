@@ -616,6 +616,58 @@ class UploadJobRepository:
         self.session.commit()
         return n
 
+    # ── 취소 ────────────────────────────────────────────────────────────────
+    # 계속 실패하는 문서(깨진 파일 등)를 대기열에서 빼낼 방법이 필요하다. 없으면
+    # 워커가 매번 같은 것에 걸려 시간을 버리고, 화면의 실패 건수도 안 줄어든다.
+    def cancel(self, job_ids: Iterable[int],
+               uploaded_by: Optional[str] = None) -> list[str]:
+        """작업을 대기열에서 뺀다. → 지워야 할 **대기 파일 경로들**.
+
+        **처리 중(processing)인 것은 건드리지 않는다** — 워커가 지금 쓰고 있는 파일을
+        지우면 그쪽이 이상하게 실패한다. 끝난 뒤 다시 취소하면 된다.
+        파일 삭제는 호출하는 쪽에서 한다(저장소는 디스크를 모른다).
+        """
+        ids = [int(i) for i in job_ids]
+        if not ids:
+            return []
+        stmt = select(UploadJob).where(
+            UploadJob.id.in_(ids),
+            UploadJob.status.in_([self.QUEUED, self.FAILED]))
+        if uploaded_by:                     # 관리자가 아니면 본인 것만
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        rows = list(self.session.execute(stmt).scalars())
+        paths = [j.path for j in rows]
+        for job in rows:
+            self.session.delete(job)
+        if rows:
+            self.session.commit()
+        return paths
+
+    def cancel_failed(self, uploaded_by: Optional[str] = None) -> list[str]:
+        """실패한 것을 한 번에 취소. → 지워야 할 대기 파일 경로들."""
+        stmt = select(UploadJob).where(UploadJob.status == self.FAILED)
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        rows = list(self.session.execute(stmt).scalars())
+        paths = [j.path for j in rows]
+        for job in rows:
+            self.session.delete(job)
+        if rows:
+            self.session.commit()
+        return paths
+
+    def list_queued(self, uploaded_by: Optional[str] = None,
+                    limit: int = 200) -> list[dict[str, Any]]:
+        """대기 중인 작업(취소 화면용) — 오래 기다린 것부터."""
+        stmt = (select(UploadJob).where(UploadJob.status == self.QUEUED)
+                .order_by(UploadJob.id).limit(limit))
+        if uploaded_by:
+            stmt = stmt.where(UploadJob.uploaded_by == uploaded_by)
+        return [{"id": j.id, "filename": j.source_filename, "attempts": j.attempts,
+                 "error": j.error, "start_after": j.start_after,
+                 "bypass_window": j.bypass_window, "uploaded_by": j.uploaded_by}
+                for j in self.session.execute(stmt).scalars()]
+
 
 class OrgRepository:
     """조직도(OrgNode) CRUD + 트리 로드. 관리자만 사용(뷰에서 admin_required)."""
