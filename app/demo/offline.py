@@ -85,12 +85,22 @@ class ExtractiveLLM:
                 return "제공된 문서에서 확인할 수 없습니다."
         return f"{snippet} [1]"
 
+    def stream_text(self, prompt: str, temperature: float = 0.0):
+        """스트리밍 대역 — 완성본을 몇 조각으로 잘라 흘려보낸다(화면 동작 확인용)."""
+        text = self.complete_text(prompt, temperature)
+        for i in range(0, len(text), 40):
+            yield text[i:i + 40]
+
     _FILENAME = re.compile(r"파일명:\s*(.+)")
 
     _SQL_TABLE = re.compile(r"TABLE:\s*(\S+)")
 
     def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         props = schema.get("properties", {})
+        # 판단 루프 스키마: 데모에선 미리 돌려 둔 검색으로 바로 답한다(도구 추가 호출 없음).
+        # 도구 경로 자체는 테스트에서 가짜 LLM 으로 따로 검증한다.
+        if "도구" in props:
+            return {"이유": "미리 찾아 둔 자료로 답할 수 있습니다.", "도구": "답변하기"}
         # text-to-SQL 스키마: 데모용으로 항상 유효한 집계 SQL(행 수) 생성
         if "sql" in props:
             m = self._SQL_TABLE.search(prompt)

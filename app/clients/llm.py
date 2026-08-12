@@ -153,3 +153,76 @@ class VLLMClient:
         }
         data = self._post_chat(payload)
         return data["choices"][0]["message"]["content"]
+
+    def stream_text(self, prompt: str, temperature: float = 0.2):
+        """답변을 토큰 단위로 흘려보낸다(생성기).
+
+        답변 생성은 4~9초가 걸리는데, 다 만든 뒤 한 번에 주면 그동안 화면이 멈춰
+        보인다. 첫 글자부터 내보내면 총 시간이 같아도 훨씬 빠르게 느껴진다.
+
+        `<think>` 추론 블록은 걸러 낸다 — 사용자에게 보일 내용이 아니다.
+        """
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "stream": True,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        url = f"{self.base_url}/chat/completions"
+        with httpx.Client(timeout=self._timeout) as client:
+            with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    resp.read()
+                    raise RuntimeError(
+                        f"vLLM {resp.status_code} @ {url}: {resp.text[:500]}")
+                yield from _iter_sse_deltas(resp.iter_lines())
+
+
+def _iter_sse_deltas(lines):
+    """vLLM 의 SSE 응답에서 본문 조각만 뽑아 낸다(`<think>` 블록 제외)."""
+    in_think = False
+    buffer = ""
+    for raw in lines:
+        line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if not body or body == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        piece = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content")
+        if not piece:
+            continue
+        # <think> 태그가 조각 경계에 걸쳐 올 수 있어 버퍼에 모아 처리한다
+        buffer += piece
+        while buffer:
+            if in_think:
+                end = buffer.find("</think>")
+                if end < 0:
+                    buffer = buffer[-8:] if len(buffer) > 8 else buffer
+                    break
+                buffer = buffer[end + len("</think>"):]
+                in_think = False
+                continue
+            start = buffer.find("<think>")
+            if start < 0:
+                # 태그가 반쯤 걸쳐 있을 수 있으니 끝부분은 남겨 둔다
+                keep = 0
+                for n in range(min(7, len(buffer)), 0, -1):
+                    if "<think>".startswith(buffer[-n:]):
+                        keep = n
+                        break
+                out, buffer = buffer[:len(buffer) - keep], buffer[len(buffer) - keep:]
+                if out:
+                    yield out
+                break
+            out, buffer = buffer[:start], buffer[start + len("<think>"):]
+            in_think = True
+            if out:
+                yield out
+    if buffer and not in_think:
+        yield buffer

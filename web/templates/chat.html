@@ -29,6 +29,18 @@
      font-weight:600;margin-bottom:6px}
 .who .ic{stroke:var(--accent)}
 
+/* 진행 상황 — 무엇을 찾고 있는지 한 줄씩 쌓인다(오래 걸릴 때 멈춘 듯 보이지 않게) */
+.steps{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.step{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--sub)}
+.step .ic{stroke:var(--sub);flex:none}
+.step:last-child{color:var(--accent)}
+.step:last-child .ic{stroke:var(--accent)}
+/* 타이핑 커서 — 답변이 흘러 들어오는 중임을 보여 준다 */
+.caret{display:inline-block;width:7px;height:1em;vertical-align:-2px;margin-left:1px;
+       background:var(--accent);animation:blink 1s steps(2,start) infinite}
+@keyframes blink{to{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.caret{animation:none}}
+
 /* 출처 */
 .srcs{margin-top:12px;display:flex;flex-direction:column;gap:6px}
 .src{border:1px solid var(--line);border-radius:10px;background:#fbfcfe;font-size:var(--fs-sm)}
@@ -144,6 +156,10 @@
             <label class="switch"><input type="checkbox" id="includePast"><span class="slider"></span></label>
             <span>만료 문서 포함</span>
           </div>
+          <div class="toggle" id="planToggle">
+            <label class="switch"><input type="checkbox" id="usePlan" checked><span class="slider"></span></label>
+            <span title="필요하면 문서를 목록으로 훑고 하나씩 읽어 가며 답합니다. 오래 걸릴 수 있습니다.">자세히 찾기</span>
+          </div>
           <div class="toggle" id="folderToggle">
             <svg class="ic sm" style="stroke:var(--sub)"><use href="#i-folder"/></svg>
             <select id="folderScope" style="width:auto;max-width:280px">
@@ -173,6 +189,7 @@ document.getElementById('useRag').addEventListener('change', e => {
     e.target.checked ? '(사내 문서에서 근거 검색)' : '(꺼짐 — 일반 질문)';
   document.getElementById('pastToggle').classList.toggle('disabled', !e.target.checked);
   document.getElementById('folderToggle').classList.toggle('disabled', !e.target.checked);
+  document.getElementById('planToggle').classList.toggle('disabled', !e.target.checked);
 });
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
@@ -284,29 +301,95 @@ function bubble(role, text, sources, meta, dataset){
   return turn;
 }
 
+// 진행 중인 답변을 담는 임시 말풍선 — 조각이 도착할 때마다 이어 붙인다
+function liveBubble(){
+  document.getElementById('empty')?.remove();
+  const turn = document.createElement('div');
+  turn.className = 'turn asst';
+  turn.innerHTML = `<div class="who">${icon('sparkle')}어시스턴트</div>`
+                 + `<div class="steps"></div><div class="bubble"><span class="caret"></span></div>`;
+  innerEl().appendChild(turn);
+  stream.scrollTop = stream.scrollHeight;
+  return {
+    turn,
+    steps: turn.querySelector('.steps'),
+    body: turn.querySelector('.bubble'),
+    text: '',
+    // 진행 상황 한 줄 추가(무엇을 찾고 있는지 보여 준다)
+    step(t){
+      const d = document.createElement('div');
+      d.className = 'step';
+      d.innerHTML = `${icon('search')}${esc(t)}`;
+      this.steps.appendChild(d);
+      stream.scrollTop = stream.scrollHeight;
+    },
+    delta(t){
+      this.text += t;
+      this.body.innerHTML = esc(this.text) + '<span class="caret"></span>';
+      stream.scrollTop = stream.scrollHeight;
+    },
+  };
+}
+
+// SSE 한 줄씩 읽기 — EventSource 는 POST 를 못 해서 fetch 로 직접 파싱한다
+async function* sseEvents(resp){
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true){
+    const {value, done} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    let cut;
+    while ((cut = buf.indexOf('\n\n')) >= 0){
+      const raw = buf.slice(0, cut); buf = buf.slice(cut + 2);
+      if (!raw.startsWith('data:')) continue;
+      try { yield JSON.parse(raw.slice(5).trim()); } catch(e){ /* 조각난 줄은 건너뛴다 */ }
+    }
+  }
+}
+
 async function sendMsg(){
   const inp = document.getElementById('input');
   const text = inp.value.trim();
   if (!text) return;
   const useRag = document.getElementById('useRag').checked;
   const includePast = useRag && document.getElementById('includePast').checked;
+  const usePlan = useRag && document.getElementById('usePlan').checked;
   inp.value = '';
   bubble('user', text);
-  const thinking = bubble('asst', useRag ? '문서를 검색하는 중…' : '생각하는 중…');
+  const live = liveBubble();
+  live.step(useRag ? '사내 문서에서 찾는 중…' : '생각하는 중…');
   document.getElementById('sendBtn').disabled = true;
   try {
-    const r = await fetch('/chat/send', {method:'POST',
+    const r = await fetch('/chat/stream', {method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':csrft},
       body: JSON.stringify({conversation_id: convId, text, use_rag: useRag,
-                            include_past: includePast,
+                            include_past: includePast, plan: usePlan,
                             folder_node_id: useRag ? (document.getElementById('folderScope').value || null) : null})});
-    const d = await r.json();
-    thinking.remove();
-    if (!r.ok){ bubble('asst', (d.error || '오류가 발생했습니다.')); return; }
-    if (!convId){ convId = d.conversation_id; addConvItem(text, convId); }
-    bubble('asst', d.text, d.sources, {query:text, answer:d.text,
-      cited: (d.sources||[]).map(s=>s.doc_id).filter(Boolean)}, d.dataset_answer);
-  } catch(e){ thinking.remove(); bubble('asst', '서버에 연결할 수 없습니다.'); }
+    if (!r.ok || !r.body){
+      live.turn.remove();
+      bubble('asst', '서버에 연결할 수 없습니다.');
+    } else {
+      let done = null, failed = null;
+      for await (const ev of sseEvents(r)){
+        if (ev.type === 'step')  live.step(ev.text);
+        else if (ev.type === 'delta') live.delta(ev.text);
+        else if (ev.type === 'done')  done = ev;
+        else if (ev.type === 'error') failed = ev.error;
+      }
+      // 최종본으로 갈아 끼운다 — 인용 번호 정리·출처·평가 버튼이 여기서 붙는다
+      live.turn.remove();
+      if (failed){ bubble('asst', failed); }
+      else if (done){
+        if (!convId){ convId = done.conversation_id; addConvItem(text, convId); }
+        bubble('asst', done.text, done.sources, {query:text, answer:done.text,
+          cited: (done.sources||[]).map(s=>s.doc_id).filter(Boolean)}, done.dataset_answer);
+      } else {
+        bubble('asst', '답변을 받지 못했습니다.');
+      }
+    }
+  } catch(e){ live.turn.remove(); bubble('asst', '서버에 연결할 수 없습니다.'); }
   document.getElementById('sendBtn').disabled = false;
 }
 

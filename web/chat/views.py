@@ -86,16 +86,33 @@ def _plain_prompt(history_msgs, text: str) -> str:
     return "\n".join(lines)
 
 
-@login_required
-@require_POST
-def send(request):
-    body = json.loads(request.body or "{}")
+def _folder_scope(session, folder_id):
+    """폴더 스코프: 상위 폴더를 고르면 하위 폴더 문서까지 포함(subtree)."""
+    if not folder_id:
+        return None
+    from app.db.repositories import OrgRepository
+    try:
+        return set(OrgRepository(session).load_tree().subtree(int(folder_id)))
+    except (TypeError, ValueError):
+        return None
+
+
+def run_turn(request, body):
+    """한 번의 질문 처리 — 이벤트 생성기.
+
+    스트리밍(`/chat/stream`)과 한 번에 받기(`/chat/send`)가 **같은 이 함수**를 쓴다.
+    경로를 둘로 나눠 두면 한쪽만 고쳐져 조용히 어긋난다.
+
+    이벤트: `step`(진행 상황) · `delta`(답변 조각) · `done`(최종) · `error`
+    """
     text = (body.get("text") or "").strip()
     use_rag = bool(body.get("use_rag"))
     include_past = bool(body.get("include_past"))
+    plan = body.get("plan", True)            # 판단 루프(자세히 찾기)
     conv_id = body.get("conversation_id")
     if not text:
-        return JsonResponse({"error": "질문이 비어 있습니다."}, status=400)
+        yield {"type": "error", "error": "질문이 비어 있습니다.", "status": 400}
+        return
 
     email = _email_of(request.user)
     session = bridge.open_session()
@@ -111,22 +128,25 @@ def send(request):
         if use_rag:
             user_ctx = domain_user_context(session, request.user)
             if user_ctx is None:
-                return JsonResponse({"error": f"'{email}' 사용자의 권한 정보가 없습니다. "
-                                     "관리자에게 사용자 등록을 요청하세요."}, status=403)
+                yield {"type": "error", "status": 403,
+                       "error": f"'{email}' 사용자의 권한 정보가 없습니다. "
+                                "관리자에게 사용자 등록을 요청하세요."}
+                return
             from app.search.present import group_sources, renumber_citations
             pipe = bridge.get_search_pipeline(session)
             today = date.today()
-            # 폴더 스코프: 상위 폴더를 고르면 하위 폴더 문서까지 포함(subtree)
-            folder_ids = None
-            folder_id = body.get("folder_node_id")
-            if folder_id:
-                from app.db.repositories import OrgRepository
-                try:
-                    folder_ids = set(OrgRepository(session).load_tree().subtree(int(folder_id)))
-                except (TypeError, ValueError):
-                    folder_ids = None
-            ans = pipe.answer(text, user_ctx, today=today, include_past=include_past,
-                              folder_node_ids=folder_ids)
+            folder_ids = _folder_scope(session, body.get("folder_node_id"))
+
+            ans = None
+            for event in pipe.answer_events(
+                    text, user_ctx, session=session, today=today,
+                    include_past=include_past, folder_node_ids=folder_ids,
+                    plan=bool(plan)):
+                if event["type"] == "answer":
+                    ans = event["answer"]
+                else:
+                    yield event                      # step / delta 는 그대로 흘린다
+
             sources = group_sources(ans, today=today)
             # 본문의 인용 번호를 화면의 출처 번호와 일치시킨다(어긋나면 헷갈린다)
             answer_text = renumber_citations(ans.text, sources)
@@ -145,17 +165,68 @@ def send(request):
         else:
             hist = chat.get_messages(conv_id, user_id=email, limit=_HISTORY_TURNS)
             llm = bridge.get_chat_llm()
-            answer_text = llm.complete_text(_plain_prompt(hist, text))
+            prompt = _plain_prompt(hist, text)
+            streamer = getattr(llm, "stream_text", None)
+            if streamer is None:
+                answer_text = llm.complete_text(prompt)
+            else:
+                answer_text = ""
+                for piece in streamer(prompt):
+                    answer_text += piece
+                    yield {"type": "delta", "text": piece}
 
         chat.add_message(conv_id, "user", text, use_rag=use_rag)
         msg_id = chat.add_message(conv_id, "assistant", answer_text,
                                   use_rag=use_rag, sources=sources)
         session.commit()
-        return JsonResponse({"conversation_id": conv_id, "message_id": msg_id,
-                             "text": answer_text, "sources": sources,
-                             "dataset_answer": dataset_answer})
+        yield {"type": "done", "conversation_id": conv_id, "message_id": msg_id,
+               "text": answer_text, "sources": sources,
+               "dataset_answer": dataset_answer}
     finally:
         session.close()
+
+
+@login_required
+@require_POST
+def send(request):
+    """한 번에 받기 — 이벤트를 다 흘려보내고 마지막 결과만 JSON 으로 돌려준다.
+
+    스트리밍을 못 쓰는 호출자(스모크·스크립트)를 위해 남겨 둔다.
+    """
+    body = json.loads(request.body or "{}")
+    for event in run_turn(request, body):
+        if event["type"] == "error":
+            return JsonResponse({"error": event["error"]},
+                                status=event.get("status", 400))
+        if event["type"] == "done":
+            return JsonResponse({k: v for k, v in event.items() if k != "type"})
+    return JsonResponse({"error": "답변을 만들지 못했습니다."}, status=500)
+
+
+@login_required
+@require_POST
+def stream(request):
+    """스트리밍 — 진행 상황과 답변 조각을 도착하는 대로 내보낸다(SSE).
+
+    답변 생성에 4~9초가 걸리는데 다 만든 뒤 한 번에 주면 그동안 화면이 멈춰 보인다.
+    """
+    from django.http import StreamingHttpResponse
+
+    body = json.loads(request.body or "{}")
+
+    def events():
+        try:
+            for event in run_turn(request, body):
+                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+        except Exception as e:      # 생성 도중 죽어도 화면은 이유를 받아야 한다
+            yield "data: " + json.dumps(
+                {"type": "error", "error": f"처리 중 오류: {type(e).__name__}"},
+                ensure_ascii=False) + "\n\n"
+
+    resp = StreamingHttpResponse(events(), content_type="text/event-stream")
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"      # nginx 가 버퍼링하면 스트리밍이 무의미해진다
+    return resp
 
 
 @login_required

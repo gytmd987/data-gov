@@ -1181,6 +1181,79 @@ def main() -> int:
         "워커가 도는데 경고가 남아 있음"
     print("[워커상태] 예약 처리 워커가 멈춘 걸 화면에서 감지 ✅")
 
+    # 26) 스트리밍 — 답변이 다 만들어지기 전에 조각부터 도착한다
+    c.force_login(staffer)
+
+    def _sse(payload):
+        """/chat/stream 응답을 이벤트 목록으로."""
+        resp = c.post("/chat/stream", json.dumps(payload),
+                      content_type="application/json")
+        assert resp.status_code == 200, resp.status_code
+        assert resp["Content-Type"].startswith("text/event-stream"), resp["Content-Type"]
+        out = []
+        for block in b"".join(resp.streaming_content).decode().split("\n\n"):
+            if block.startswith("data:"):
+                out.append(json.loads(block[5:].strip()))
+        return out
+
+    evs = _sse({"text": "연차는 며칠인가요?", "use_rag": True, "plan": True})
+    kinds = [e["type"] for e in evs]
+    assert "delta" in kinds, f"답변이 조각으로 안 옴: {kinds}"
+    assert kinds[-1] == "done", f"마지막이 done 이 아님: {kinds}"
+    final = evs[-1]
+    assert final["sources"], "스트리밍 답변에 출처가 없음"
+    streamed = "".join(e["text"] for e in evs if e["type"] == "delta")
+    assert streamed.strip(), "흘려보낸 내용이 비어 있음"
+    conv_stream = final["conversation_id"]
+
+    # 판단 루프를 꺼도 같은 형식으로 답이 나온다(되돌릴 구멍을 남겨 둔다)
+    off = _sse({"conversation_id": conv_stream, "text": "연차 규정 알려줘",
+                "use_rag": True, "plan": False})
+    assert off[-1]["type"] == "done" and off[-1]["text"], "판단 루프를 끄면 답이 안 나옴"
+    assert not [e for e in off if e["type"] == "step"], "plan=False 인데 진행 단계가 나옴"
+
+    # RAG 를 꺼도(일반 질문) 스트리밍은 동작한다
+    plain = _sse({"conversation_id": conv_stream, "text": "고마워!", "use_rag": False})
+    assert plain[-1]["type"] == "done", "일반 질문 스트리밍 실패"
+
+    # 빈 질문은 오류 이벤트로 — 연결이 조용히 끊기면 화면이 멈춘 것처럼 보인다
+    bad = _sse({"text": "  ", "use_rag": True})
+    assert bad and bad[-1]["type"] == "error", f"빈 질문 처리: {bad}"
+
+    # 대화 이력에 스트리밍 답변이 남는다(한 번에 받기와 같은 경로)
+    hist_s = c.get(f"/chat/history/{conv_stream}").json()["messages"]
+    assert len(hist_s) == 6, f"스트리밍 대화 이력 {len(hist_s)}건"
+    print(f"[스트리밍] 조각 {len([e for e in evs if e['type']=='delta'])}개로 나눠 도착 · "
+          "출처·이력 정상 · 판단 루프 on/off 모두 동작 ✅")
+
+    # 27) 판단 루프 — 권한 밖 문서는 어떤 도구로도 안 나온다
+    import datetime as _dt
+
+    from app.search.access import AccessPolicy as _AP
+    from app.search.access import Visibility as _Vis
+    from app.search.tools import ToolBox as _Box
+    s26 = bridge.open_session()
+    try:
+        from app.db.repositories import UserRepository as _UR9
+        _pipe = bridge.get_search_pipeline(s26)
+        _uc = _UR9(s26).get_user_context("xpark@company.com")   # ㅅ그룹, 남의 문서 못 봄
+        _policy = _AP.for_user(_uc, today=_dt.date.today())
+        _box = _Box(session=s26, policy=_policy,
+                    visibility=_Vis(read_tokens=frozenset(_uc.groups)),
+                    retrieve=_pipe._retrieve_ranked, today=_dt.date.today())
+        assert "대외비" not in _box.read_document(문서id=peek).text, \
+            "판단 루프의 문서_읽기로 권한 밖 본문이 새어 나감"
+        assert peek not in _box.list_documents(개수=200).text, \
+            "판단 루프의 문서_목록에 권한 밖 문서가 나옴"
+        assert all(c.doc_id != peek for c in _box.search_chunks(검색어="대외비").chunks), \
+            "판단 루프의 내용_검색에 권한 밖 문서가 나옴"
+        # LLM 이 무슨 조건을 줘도 권한 필터는 코드가 붙인 것이어야 한다
+        _f = _box._filters({"visible_to": "관리자인척", "access_groups": ["*"]})
+        assert _f["visible_to"] is _box.visibility and "access_groups" not in _f
+    finally:
+        s26.close()
+    print("[판단루프] 도구 4종 모두 권한 밖 문서 차단 · LLM 조건은 범위를 넓히지 못함 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

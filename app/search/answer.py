@@ -92,11 +92,43 @@ def parse_citations(text: str, chunks: list[RetrievedChunk]) -> list[Citation]:
     return sorted(citations, key=lambda c: c.marker)
 
 
+NO_EVIDENCE = "제공된 문서에서 확인할 수 없습니다."
+
+
+def stream_answer(llm, query: str, chunks: list[RetrievedChunk]):
+    """답변을 조각으로 흘려보낸다(생성기). 후처리 전 **날것**이다.
+
+    다 만들어 놓고 한 번에 주면 그동안 화면이 멈춰 보인다. 첫 글자부터 내보내려면
+    후처리(한자 제거·인용번호 정리)를 뒤로 미뤄야 하므로, 끝난 뒤 `finalize_answer`
+    로 정리한 최종본을 화면이 한 번 갈아 끼운다.
+
+    `stream_text` 가 없는 LLM(오프라인 데모·테스트 대역)은 한 번에 내놓는다.
+    """
+    if not chunks:
+        yield NO_EVIDENCE
+        return
+    prompt = build_answer_prompt(query, chunks)
+    streamer = getattr(llm, "stream_text", None)
+    if streamer is None:
+        yield llm.complete_text(prompt).strip()
+        return
+    yield from streamer(prompt)
+
+
+def finalize_answer(raw: str, chunks: list[RetrievedChunk]) -> Answer:
+    """흘려보낸 날것 → 한자 정리 + 인용 파싱까지 끝낸 최종 답변."""
+    if not chunks:
+        return Answer(text=NO_EVIDENCE, citations=[], used_chunks=[])
+    source_text = "\n".join(c.text or "" for c in chunks)
+    text = strip_foreign_leakage((raw or "").strip(), source_text)
+    return Answer(text=text, citations=parse_citations(text, chunks), used_chunks=chunks)
+
+
 def generate_answer(
     llm: TextLLM, query: str, chunks: list[RetrievedChunk], retries: int = 1
 ) -> Answer:
     if not chunks:
-        return Answer(text="제공된 문서에서 확인할 수 없습니다.", citations=[], used_chunks=[])
+        return Answer(text=NO_EVIDENCE, citations=[], used_chunks=[])
     prompt = build_answer_prompt(query, chunks)
     source_text = "\n".join(c.text or "" for c in chunks)
 
