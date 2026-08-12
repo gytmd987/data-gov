@@ -33,6 +33,7 @@ from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
 from app.review.service import ENUM_OPTIONS, USER_DOC_STATUSES
+from app.schemas.enums import DocStatus
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
 
@@ -397,7 +398,7 @@ def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
     from datetime import timezone as _tz
 
     from app.manage.schedule import (describe, now_local, tz_label, tz_of,
-                                     window_from_settings)
+                                     window_from_settings, worker_status)
 
     repo = UploadJobRepository(session)
     who = None if is_adm else uploaded_by
@@ -421,6 +422,8 @@ def _queue_status(session, uploaded_by: str, is_adm: bool) -> dict:
         # 실제로 언제 시작하는지 — 업로드할 때 고른 시각 기준
         "hint": (f"{_local_label(repo.earliest_start(who))} 처리를 시작합니다."
                  if waiting else None),
+        # 워커가 죽어 있으면 예약은 영원히 '대기 중'이다 — 화면에서 바로 알려준다
+        "worker": worker_status(app_settings),
     }
 
 
@@ -696,6 +699,97 @@ def docs(request):
 
 
 @login_required
+def cleanup(request):
+    """폴더 정리 추천 — 겹치는(버전만 다른) 문서를 묶어 보여주고 사람이 정리한다.
+
+    새로 판정하지 않는다. 적재할 때 저장해 둔 유사 문서 후보를 읽어 묶기만 한다.
+    관리 권한이 있는 사람(관리자·부서장)만 볼 수 있고, **자기 관리 범위 안에서만** 본다.
+    """
+    from app.db.repositories import DocumentRepository, OrgRepository
+    from app.manage.cleanup import build_groups
+
+    session = bridge.open_session()
+    try:
+        is_adm, scope = manage_scope(session, request.user)
+        if not (is_adm or scope):
+            messages.error(request, "폴더 정리 권한이 없습니다(관리자·부서장만).")
+            return redirect("console_docs")
+
+        vis = visibility_for(session, request.user)
+        mgr = bridge.get_document_manager(session)
+        org = OrgRepository(session)
+        tree = org.load_tree()
+
+        folder_sel = _int(request.GET.get("folder"), 0) or None
+        author_ids = set(tree.subtree(folder_sel)) or {-1} if folder_sel else None
+        docs = mgr.list_documents(limit=1000, indexed_only=True, visible_to=vis,
+                                  author_node_ids=author_ids)
+        # 이미 정리한 것(대체됨)은 다시 추천하지 않는다 — 안 그러면 같은 묶음이 계속 뜬다
+        docs = [d for d in docs
+                if d.get("lifecycle_status") != DocStatus.SUPERSEDED.value]
+
+        repo = DocumentRepository(session)
+        cands = {d["doc_id"]: repo.get_similar_candidates(d["doc_id"]) for d in docs}
+        groups = build_groups(docs, cands)
+
+        folder_tree = _org_options(org, include_folders=True)
+        for n in folder_tree:
+            n["selected"] = (n["id"] == folder_sel)
+        return render(request, "console/cleanup.html", {
+            "groups": groups, "scanned": len(docs),
+            "folder_tree": folder_tree, "folder_sel": folder_sel,
+            "folder_path": " / ".join(tree.name_path(folder_sel)) if folder_sel else "",
+        })
+    finally:
+        session.close()
+
+
+@login_required
+@require_POST
+def cleanup_apply(request):
+    """정리 적용 — 고른 최신본만 남기고 나머지를 '대체됨'으로 처리한다.
+
+    삭제하지 않는다. supersede 는 되돌릴 수 있고 원본도 그대로 남는다.
+    """
+    from app.db.repositories import DocumentRepository
+
+    session = bridge.open_session()
+    try:
+        is_adm, scope = manage_scope(session, request.user)
+        if not (is_adm or scope):
+            messages.error(request, "폴더 정리 권한이 없습니다.")
+            return redirect("console_docs")
+
+        keep = request.POST.get("keep")
+        drop = [d for d in request.POST.getlist("member") if d and d != keep]
+        if not keep or not drop:
+            messages.error(request, "남길 문서를 고르고 적용해주세요.")
+            return redirect(request.POST.get("next") or "console_cleanup")
+
+        mgr = bridge.get_document_manager(session)
+        repo = DocumentRepository(session)
+        # 남길 문서도 반드시 관리 범위 안이어야 한다 — POST 값은 사용자가 바꿀 수 있다
+        keep_doc = repo.get(keep)
+        if keep_doc is None or not can_manage_doc(session, request.user, keep_doc):
+            messages.error(request, "남길 문서를 관리할 권한이 없습니다.")
+            return redirect(request.POST.get("next") or "console_cleanup")
+
+        done = 0
+        for old in drop:
+            doc = repo.get(old)
+            # 관리 범위 밖 문서를 정리하면 안 된다 — 한 건씩 다시 확인한다
+            if doc is None or not can_manage_doc(session, request.user, doc):
+                continue
+            mgr.supersede(old, keep)
+            done += 1
+        session.commit()
+        messages.success(request, f"{done}건을 '대체됨'으로 정리했습니다(삭제 아님).")
+        return redirect(request.POST.get("next") or "console_cleanup")
+    finally:
+        session.close()
+
+
+@login_required
 @require_POST
 def queue_action(request):
     """예약 업로드 대기열 조작 — 실패분 재시도 / 완료 기록 지우기.
@@ -738,6 +832,44 @@ def docs_sweep(request):
         else:
             messages.info(request, "만료 처리할 문서가 없습니다.")
         return redirect(request.POST.get("next") or "console_docs")
+    finally:
+        session.close()
+
+
+@login_required
+def docs_info(request, doc_id: str):
+    """문서 요약 정보 → JSON. 관련 문서를 **다운로드 대신 미리보기**로 열기 위한 것.
+
+    열람 권한을 반드시 확인한다(이 경로로 남의 부서 문서 내용이 새면 안 된다).
+    """
+    from django.http import JsonResponse
+
+    session = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository
+        doc = DocumentRepository(session).get(doc_id)
+        if doc is None or not can_read_doc(session, request.user, doc):
+            return JsonResponse({"ok": False, "error": "볼 권한이 없습니다."}, status=404)
+        c, life, gov, ident = (doc.classification, doc.lifecycle,
+                               doc.governance, doc.identification)
+        node = None
+        if gov.author_node_id:
+            from app.db.repositories import OrgRepository
+            org = OrgRepository(session)
+            node = " / ".join(org.load_tree().name_path(gov.author_node_id))
+        return JsonResponse({
+            "ok": True, "doc_id": doc_id,
+            "title": c.title_normalized or ident.source_filename,
+            "filename": ident.source_filename,
+            "doc_type": system_config.label(c.doc_type.value) if c.doc_type else "",
+            "status": system_config.label(life.status.value) if life.status else "",
+            "summary": c.summary or "",
+            "keywords": list(c.keywords or []),
+            "department": node or c.department or "",
+            "author": gov.author_name or gov.author_id or "",
+            "effective_date": str(life.effective_date or ""),
+            "expiry_date": str(life.expiry_date or ""),
+        })
     finally:
         session.close()
 

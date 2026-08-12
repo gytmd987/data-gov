@@ -28,7 +28,7 @@ _COLUMNS = [
     ("documents", "message_id", "VARCHAR(512)"),
     ("documents", "in_reply_to", "VARCHAR(512)"),
     ("documents", "thread_root", "VARCHAR(512)"),
-    ("upload_jobs", "start_after", "TIMESTAMP"),
+    ("upload_jobs", "start_after", "TIMESTAMPTZ"),
     ("upload_jobs", "bypass_window", "BOOLEAN DEFAULT FALSE"),
 ]
 
@@ -92,6 +92,24 @@ def _fix_email_extension(engine) -> int:
     return n
 
 
+def _fix_timestamptz(engine) -> int:
+    """upload_jobs.start_after 를 timestamptz 로 맞춘다(Postgres 전용, 멱등).
+
+    모델은 DateTime(timezone=True) 인데 초기 마이그레이션이 TIMESTAMP(시간대 없음)로
+    만들어 둔 적이 있다. 세션 시간대에 따라 예약 시각 비교가 어긋날 수 있다.
+    """
+    if engine.dialect.name != "postgresql":
+        return 0
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE upload_jobs ALTER COLUMN start_after "
+                "TYPE TIMESTAMPTZ USING start_after AT TIME ZONE 'UTC'"))
+        return 1
+    except Exception:      # 이미 timestamptz 이거나 테이블이 없음
+        return 0
+
+
 def main(engine=None) -> int:
     engine = engine or make_engine()   # engine 주입은 테스트용
     create_all(engine)            # 새 테이블(feedback, document_access_tokens, upload_jobs 등) 생성
@@ -123,6 +141,8 @@ def main(engine=None) -> int:
             print(f"  {'OK(drop)' if dropped else 'skip(drop)'}: {table}.{col}")
     n = _backfill_access_tokens(engine)
     print(f"  OK: document_access_tokens 백필 {n}건")
+    if _fix_timestamptz(engine):
+        print("  OK: upload_jobs.start_after → TIMESTAMPTZ")
     fixed = _fix_email_extension(engine)
     if fixed:
         print(f"  OK: 메일 원본 확장자 .email → .eml {fixed}건")

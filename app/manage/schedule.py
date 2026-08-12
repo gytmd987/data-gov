@@ -77,6 +77,50 @@ def clock_report(settings=None) -> dict:
     }
 
 
+# ── 워커 생존 신호 ───────────────────────────────────────────────────────────
+# 워커가 죽어 있으면 예약 파일은 그냥 쌓이기만 하고 화면에는 '대기 중'으로만 보인다.
+# "할 일이 없어서 조용한 것"과 "죽어서 조용한 것"을 구분하려면 살아 있다는 신호가 필요하다.
+HEARTBEAT_NAME = ".worker-heartbeat"
+HEARTBEAT_STALE_MIN = 15        # 이보다 오래 소식이 없으면 멈춘 것으로 본다
+
+
+def heartbeat_path(settings=None) -> "Path":
+    """하트비트 파일 위치 — 대기열 디렉터리 안.
+
+    settings 를 안 주면 **실제 설정**을 읽는다. 기본값을 따로 두면 워커가 남긴 신호와
+    화면이 읽는 위치가 갈려 '워커가 죽었다'고 잘못 뜬다.
+    """
+    from pathlib import Path
+    if settings is None:
+        from app.config import settings as settings
+    root = getattr(settings, "upload_queue_dir", None) or "./storage/_queue"
+    return Path(root) / HEARTBEAT_NAME
+
+
+def beat(settings=None) -> None:
+    """워커가 '나 살아 있다'를 남긴다(루프마다 호출)."""
+    try:
+        path = heartbeat_path(settings)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+    except OSError:
+        pass                        # 신호 기록 실패로 처리가 멈추면 안 된다
+
+
+def worker_status(settings=None) -> dict:
+    """워커가 살아 있나. → {alive, last_beat, minutes_ago}"""
+    path = heartbeat_path(settings)
+    try:
+        last = datetime.fromisoformat(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return {"alive": False, "last_beat": None, "minutes_ago": None}
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    ago = (datetime.now(timezone.utc) - last).total_seconds() / 60
+    return {"alive": ago <= HEARTBEAT_STALE_MIN, "last_beat": last,
+            "minutes_ago": round(ago, 1)}
+
+
 def parse_hhmm(value: str, default: time) -> time:
     try:
         hh, _, mm = str(value).partition(":")

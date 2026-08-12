@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}폴더 정리{% endblock %}
+{% block content %}
+<div style="max-width:1100px;margin:0 auto;padding:0 18px">
+<div style="display:flex;align-items:baseline;gap:10px;margin:16px 0 10px;flex-wrap:wrap">
+  <h2>폴더 정리</h2>
+  <span class="msg-note">겹치는(버전만 다른) 문서를 찾아 드립니다. <b>정리 여부는 직접 판단하세요.</b></span>
+</div>
+{% for m in messages %}<div class="banner info" style="margin-bottom:10px">{{ m }}</div>{% endfor %}
+
+<form method="get" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+  <select name="folder" style="width:auto;min-width:220px" onchange="this.form.submit()">
+    <option value="">전체 폴더</option>
+    {% for n in folder_tree %}
+    <option value="{{ n.id }}" {% if n.selected %}selected{% endif %}>{{ n.indent }}{{ n.name }}</option>
+    {% endfor %}
+  </select>
+  <span class="msg-note">문서 {{ scanned }}건을 확인했습니다{% if folder_path %} · {{ folder_path }}{% endif %}</span>
+  <span style="flex:1"></span>
+  <a class="btn ghost sm" href="{% url 'console_docs' %}">문서 관리로</a>
+</form>
+
+{% if not groups %}
+<div class="banner info">
+  겹치는 문서가 없습니다. 정리할 것이 없습니다.
+  <div class="msg-note" style="margin-top:6px">
+    업로드할 때 계산해 둔 유사 문서 판정을 그대로 읽습니다. 새로 분석하지 않으므로 즉시 나옵니다.
+  </div>
+</div>
+{% else %}
+<div class="msg-note" style="margin-bottom:10px">
+  겹치는 묶음 <b>{{ groups|length }}개</b>를 찾았습니다.
+  남길 문서를 고르고 적용하면 나머지는 <b>'대체됨'</b>이 됩니다 —
+  <b>삭제가 아니라</b> 검색에서만 빠지고 원본과 이력은 그대로 남습니다.
+</div>
+
+{% for g in groups %}
+<form method="post" action="{% url 'console_cleanup_apply' %}" class="cg">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  <div class="cg-head">
+    <b>겹치는 문서 {{ g.size }}건</b>
+    <span class="msg-note">{{ g.reason }}</span>
+  </div>
+  {% for d in g.docs %}
+  <label class="cg-row">
+    <input type="radio" name="keep" value="{{ d.doc_id }}" {% if forloop.first %}checked{% endif %}>
+    <input type="hidden" name="member" value="{{ d.doc_id }}">
+    <span class="cg-title">
+      {{ d.title|default:d.filename }}
+      {% if forloop.first %}<span class="chip">최신본 제안</span>{% endif %}
+    </span>
+    <span class="msg-note">{{ d.filename }}</span>
+    <span class="msg-note">{{ d.owner|default_if_none:"—" }}</span>
+    <span class="msg-note">{{ d.effective_date|default_if_none:"—" }}</span>
+    <a class="msg-note docinfo" href="#" data-doc="{{ d.doc_id }}">내용 보기</a>
+  </label>
+  {% endfor %}
+  <div class="cg-foot">
+    <span class="msg-note">고른 것만 남기고 나머지 {{ g.size|add:"-1" }}건을 '대체됨'으로 표시합니다.</span>
+    <button class="btn sm" onclick="return confirm('고른 문서만 남기고 나머지를 대체됨으로 처리합니다.\n삭제는 아니며 되돌릴 수 있습니다. 계속할까요?')">정리 적용</button>
+  </div>
+</form>
+{% endfor %}
+{% endif %}
+</div>
+
+<style>
+.cg{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}
+.cg-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+         padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
+.cg-row{display:grid;grid-template-columns:22px 1fr 200px 90px 90px 66px;gap:10px;
+        align-items:center;padding:9px 14px;border-bottom:1px solid var(--line);
+        cursor:pointer;font-size:var(--fs-sm)}
+.cg-row:hover{background:var(--accent-weak)}
+.cg-row:has(input:checked){background:var(--accent-weak)}
+.cg-title{font-weight:600;display:flex;align-items:center;gap:6px}
+.cg-foot{display:flex;align-items:center;gap:10px;padding:10px 14px}
+.cg-foot>span{flex:1}
+@media(max-width:900px){.cg-row{grid-template-columns:22px 1fr}}
+</style>
+
+<!-- 문서 내용 미리보기(다운로드 대신) -->
+<div id="docModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <b id="dmTitle">문서 정보</b>
+      <button type="button" id="dmClose" class="btn ghost sm">닫기</button>
+    </div>
+    <div id="dmBody" class="modal-body"></div>
+    <div class="modal-foot">
+      <a id="dmOpen" class="btn ghost sm" href="#">문서 관리에서 열기</a>
+      <a id="dmDown" class="btn ghost sm" href="#">원본 다운로드</a>
+    </div>
+  </div>
+</div>
+<style>
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:80;
+       display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+           box-shadow:var(--shadow);width:min(620px,100%);max-height:82vh;display:flex;
+           flex-direction:column}
+.modal-head{display:flex;align-items:center;gap:10px;padding:12px 16px;
+            border-bottom:1px solid var(--line)}
+.modal-head>b{flex:1}
+.modal-body{padding:14px 16px;overflow:auto;font-size:var(--fs-sm)}
+.modal-body dl{display:grid;grid-template-columns:88px 1fr;gap:6px 12px;margin:0}
+.modal-body dt{color:var(--sub)}
+.modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;
+            border-top:1px solid var(--line)}
+</style>
+<script>
+(function(){
+  var modal=document.getElementById('docModal');
+  if(!modal) return;
+  var body=document.getElementById('dmBody'), title=document.getElementById('dmTitle');
+  function esc(t){ var d=document.createElement('div'); d.textContent=t==null?'':t; return d.innerHTML; }
+  function row(k,v){ return v ? '<dt>'+k+'</dt><dd>'+esc(v)+'</dd>' : ''; }
+  function open(id){
+    title.textContent='문서 정보';
+    body.innerHTML='<span class="msg-note">불러오는 중…</span>';
+    modal.style.display='flex';
+    document.getElementById('dmOpen').href='/console/docs/?doc='+encodeURIComponent(id);
+    document.getElementById('dmDown').href='/docs/original/'+encodeURIComponent(id);
+    fetch('/console/docs/'+encodeURIComponent(id)+'/info', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d.ok){ body.innerHTML='<span class="msg-note">'+esc(d.error||'열 수 없습니다')+'</span>'; return; }
+        title.textContent=d.title;
+        var kw=(d.keywords||[]).map(function(k){ return '<span class="tag">'+esc(k)+'</span>'; }).join(' ');
+        body.innerHTML='<dl>'
+          + row('파일명', d.filename) + row('종류', d.doc_type) + row('상태', d.status)
+          + row('작성부서', d.department) + row('작성자', d.author)
+          + row('작성일', d.effective_date) + row('유효일', d.expiry_date)
+          + '</dl>'
+          + (d.summary ? '<p style="margin:12px 0 0;line-height:1.6">'+esc(d.summary)+'</p>' : '')
+          + (kw ? '<div style="margin-top:10px">'+kw+'</div>' : '');
+      })
+      .catch(function(){ body.innerHTML='<span class="msg-note">불러오지 못했습니다.</span>'; });
+  }
+  document.addEventListener('click', function(e){
+    var a=e.target.closest('.docinfo');
+    if(a){ e.preventDefault(); e.stopPropagation(); open(a.dataset.doc); return; }
+    if(e.target===modal || e.target.id==='dmClose') modal.style.display='none';
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') modal.style.display='none'; });
+})();
+</script>
+{% endblock %}

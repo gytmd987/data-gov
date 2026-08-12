@@ -1090,6 +1090,97 @@ def main() -> int:
         s22.close()
     print("[메일스레드] 인용문 제외 색인 · 헤더 기반 답장 관계 연결 ✅")
 
+    # 23) 관련 문서 미리보기 — 클릭하면 다운로드가 아니라 정보 팝업이 뜬다
+    s23b = bridge.open_session()
+    try:
+        svc23 = bridge.get_review_service(s23b)
+        d23 = _pl.Path(_tf.gettempdir())
+        (d23 / "미리보기 대외비.txt").write_text(
+            "ㄴ파트만 보는 인사 검토 메모. 대외비 내용이 들어 있다.", encoding="utf-8")
+        peek = svc23.start_ingestion(str(d23 / "미리보기 대외비.txt"),
+                                     ingested_by="nlee@company.com",
+                                     folder_node_id=n_part.id)
+        svc23.submit_review(peek, governance=GovernanceBlock(
+            author_node_id=n_part.id, access_selections=[f"node:{n_part.id}"]),
+            lifecycle_overrides={"status": "active"})
+        s23b.commit()
+    finally:
+        s23b.close()
+
+    c_x = Client()
+    c_x.force_login(DjUser.objects.get(username="xpark@company.com"))
+    info = c.get(f"/console/docs/{peek}/info")          # c = admin
+    assert info.status_code == 200 and info.json()["ok"], info.content
+    assert info.json()["title"], "미리보기에 제목이 없음"
+    blocked = c_x.get(f"/console/docs/{peek}/info")     # 권한 밖 문서
+    assert not blocked.json().get("ok"), "권한 없는 문서 정보가 새어 나감"
+    assert "대외비" not in blocked.content.decode(), "권한 없는 문서 내용이 새어 나감"
+    print("[관련문서] 정보 팝업 JSON 제공 · 권한 밖 문서는 차단 ✅")
+
+    # 24) 폴더 정리 — 저장된 유사 판정을 묶어 보여주고, 사람이 고른 것만 남긴다
+    s24 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR8
+        svc24 = bridge.get_review_service(s24)
+        d24 = _pl.Path(_tf.gettempdir())
+        (d24 / "출장비 규정.txt").write_text(
+            "출장비는 실비로 정산하며 영수증을 첨부한다.", encoding="utf-8")
+        (d24 / "출장비 규정 개정.txt").write_text(
+            "출장비는 실비로 정산하며 영수증을 첨부한다. 일비는 2만원.", encoding="utf-8")
+        old_id = svc24.start_ingestion(str(d24 / "출장비 규정.txt"),
+                                       ingested_by="admin@company.com",
+                                       folder_node_id=n_part.id)
+        svc24.submit_review(old_id, governance=GovernanceBlock(author_node_id=n_part.id),
+                            lifecycle_overrides={"status": "active",
+                                                 "effective_date": "2024-01-01"})
+        new_id = svc24.start_ingestion(str(d24 / "출장비 규정 개정.txt"),
+                                       ingested_by="admin@company.com",
+                                       folder_node_id=n_part.id)
+        svc24.submit_review(new_id, governance=GovernanceBlock(author_node_id=n_part.id),
+                            lifecycle_overrides={"status": "active",
+                                                 "effective_date": "2025-06-01"})
+        # 적재할 때 저장해 둔 유사 후보(정리 화면은 이걸 읽기만 한다)
+        _DR8(s24).set_similar_candidates(
+            new_id, [{"doc_id": old_id, "score": 0.94, "ai_relation": "revision"}])
+        s24.commit()
+    finally:
+        s24.close()
+
+    page24 = c.get("/console/cleanup/").content.decode()
+    assert "겹치는 문서" in page24, "정리 화면이 묶음을 못 찾음"
+    assert "출장비 규정 개정" in page24 and "최신본 제안" in page24, page24[:300]
+    # 부서장·관리자가 아닌 사람은 아예 못 들어간다
+    assert c_x.get("/console/cleanup/").status_code == 302, "권한 없는 사용자가 정리 화면 접근"
+
+    resp24 = c.post("/console/cleanup/apply",
+                    {"keep": new_id, "member": [new_id, old_id]})
+    assert resp24.status_code == 302, resp24.status_code
+    s25 = bridge.open_session()
+    try:
+        from app.db.repositories import DocumentRepository as _DR9
+        assert _DR9(s25).get(old_id).lifecycle.status.value == "superseded", "정리가 안 됨"
+        assert _DR9(s25).get(new_id).lifecycle.status.value == "active", "남길 문서가 바뀜"
+    finally:
+        s25.close()
+    # 정리한 묶음은 다시 추천하지 않는다
+    assert "출장비 규정 개정" not in c.get("/console/cleanup/").content.decode(), \
+        "정리한 묶음이 계속 다시 뜸"
+    print("[폴더정리] 저장된 유사 판정으로 묶기 · 고른 것만 남기고 대체됨 · 재추천 없음 ✅")
+
+    # 25) 워커 하트비트 — 예약 처리가 멈춰 있으면 화면에서 알 수 있어야 한다
+    from app.manage.schedule import beat as _beat
+    from app.manage.schedule import heartbeat_path as _hb
+    from app.manage.schedule import worker_status as _wstat
+    _hb().unlink(missing_ok=True)          # 워커가 죽은 상태를 만든다
+    assert not _wstat()["alive"], "워커가 안 도는데 살아 있다고 함"
+    assert "처리 워커가 돌고 있지 않습니다" in c.get("/console/docs/").content.decode(), \
+        "워커가 멈춘 걸 화면에서 알려주지 않음"
+    _beat()
+    assert _wstat()["alive"], "하트비트를 남겼는데 죽었다고 함"
+    assert "처리 워커가 돌고 있지 않습니다" not in c.get("/console/docs/").content.decode(), \
+        "워커가 도는데 경고가 남아 있음"
+    print("[워커상태] 예약 처리 워커가 멈춘 걸 화면에서 감지 ✅")
+
     print("\n✅ Django 웹 스모크 통과")
     return 0
 

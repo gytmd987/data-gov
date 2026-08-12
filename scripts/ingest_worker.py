@@ -28,6 +28,7 @@ from app.db.repositories import UploadJobRepository
 from app.ingestion.enrichment import ReadError
 from app.ingestion.intake import DuplicateError
 from app.manage.schedule import (
+    beat,
     describe,
     in_window,
     now_local,
@@ -168,6 +169,7 @@ def main(argv=None) -> int:
     print(f"  현재 시각 {now_local(settings):%Y-%m-%d %H:%M} ({tz})", flush=True)
 
     while not _stop.is_set():
+        beat(settings)          # 살아 있음을 남긴다(화면·진단이 이걸로 판단)
         now = now_local(settings)
         if window is not None and not in_window(now, start, end):
             # 시간대 밖 — '지금 바로'로 올린 것만 처리하고, 나머지는 다음 시작까지 기다린다
@@ -187,7 +189,8 @@ def main(argv=None) -> int:
         if reclaimed:
             print(f"  멈춰 있던 작업 {reclaimed}건을 대기열로 되돌렸습니다.", flush=True)
 
-        pending = _jobs().counts()[UploadJobRepository.QUEUED]
+        # counts 는 '예약 시각이 아직 안 된 건'까지 세므로, 지금 집을 수 있는 것만 본다
+        pending = _jobs().claimable()
         if pending:
             print(f"대기 {pending}건 처리 시작", flush=True)
             began = time.monotonic()

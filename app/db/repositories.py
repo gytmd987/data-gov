@@ -592,6 +592,7 @@ class UploadJobRepository:
         return [{"id": j.id, "filename": j.source_filename, "status": j.status,
                  "error": j.error, "doc_id": j.doc_id, "attempts": j.attempts,
                  "folder_node_id": j.folder_node_id, "batch": j.batch,
+                 "start_after": j.start_after, "bypass_window": j.bypass_window,
                  "created_at": j.created_at}
                 for j in self.session.execute(stmt).scalars()]
 
