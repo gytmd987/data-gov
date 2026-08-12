@@ -80,3 +80,12 @@ def test_no_folder_warning_inside_the_real_project(tmp_path, capsys):
     main(["--workdir", str(tmp_path)])
 
     assert "프로젝트 폴더가 아닌 것 같습니다" not in capsys.readouterr().out
+
+
+def test_shows_the_detected_paths_so_they_can_be_sanity_checked(tmp_path, capsys):
+    """경로가 틀린 채로 만들어지면 서비스는 뜨는데 엉뚱한 곳을 가리켜 원인 찾기가 어렵다."""
+    main(["--workdir", str(tmp_path), "--user", "hrrag"])
+
+    out = capsys.readouterr().out
+    assert str(tmp_path) in out and "hrrag" in out
+    assert "프로젝트 폴더" in out and "실행 계정" in out

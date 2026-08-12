@@ -9,8 +9,11 @@
 
 `systemctl enable` 은 **유닛 파일이 이미 있어야** 동작한다("Unit ... does not exist").
 그래서 파일을 먼저 만들어야 하는데, 경로(프로젝트 위치·가상환경·실행 계정)는 서버마다
-달라서 문서에 적힌 예시를 그대로 쓰면 안 맞는다. 여기서는 **지금 이 환경을 그대로
-읽어** 유닛 파일을 만든다.
+달라서 문서에 적힌 예시(`/opt/data-gov`)를 그대로 쓰면 안 맞는다. 여기서는 **지금 이
+환경을 그대로 읽어** 유닛 파일을 만든다.
+
+프로젝트 폴더에서 실행해야 한다 — 다른 곳에서는 `No module named 'scripts'` 로 아예
+시작하지 못하므로, **실행이 됐다면 폴더는 맞는 것**이다.
 """
 
 from __future__ import annotations
@@ -100,6 +103,14 @@ def main(argv=None) -> int:
     files = units(workdir, args.python.resolve(), args.user,
                   args.port, args.workers, args.threads)
 
+    # 무엇을 읽어 왔는지 먼저 보여준다 — 경로가 틀린 채로 파일이 만들어지면
+    # 서비스가 뜨긴 뜨는데 엉뚱한 곳을 가리켜 원인 찾기가 어렵다.
+    print("이 값으로 만듭니다(틀리면 --workdir / --python / --user 로 바꾸세요):")
+    print(f"  프로젝트 폴더 : {workdir}")
+    print(f"  파이썬        : {args.python.resolve()}")
+    print(f"  실행 계정     : {args.user}")
+    print(f"  웹 포트       : {args.port}")
+    print()
     for note in _warn_if_odd(workdir, args.python.resolve()):
         print(note)
     print()
