@@ -90,6 +90,7 @@ def _one_run(pipe, session, user, args, rerank_chunks, AccessPolicy) -> None:
 
     with timer.step("검색(임베딩+Qdrant)"):
         candidates = pipe.retriever.retrieve(args.question, policy, top_n=pipe.top_n)
+    sizes = sorted((len(c.text or "") for c in candidates), reverse=True)
     with timer.step(f"리랭킹({len(candidates)}개)"):
         reranked = rerank_chunks(pipe.reranker, args.question, candidates,
                                  top_k=pipe.top_k)
@@ -132,7 +133,10 @@ def _one_run(pipe, session, user, args, rerank_chunks, AccessPolicy) -> None:
 
     print(f"\n  근거 조각 {len(reranked)}개 · 프롬프트 {len(prompt):,}자 · "
           f"답변 {chars:,}자" + (f" · 도구 호출 {steps}회" if args.plan else ""))
-    _advise(first_at or 0.0, gen_took, chars, total)
+    if sizes:
+        print(f"  후보 청크 길이: 최대 {sizes[0]:,}자 · 중앙값 {sizes[len(sizes)//2]:,}자 "
+              f"· 합계 {sum(sizes):,}자")
+    _advise(first_at or 0.0, gen_took, chars, total, timer, sizes)
 
 
 def _vis(user):
@@ -140,15 +144,32 @@ def _vis(user):
     return Visibility(read_tokens=frozenset(user.groups))
 
 
-def _advise(ttft: float, gen: float, chars: int, total: float) -> None:
-    """숫자만 보면 뭘 고쳐야 할지 모른다 — 해석을 붙인다."""
+def _advise(ttft: float, gen: float, chars: int, total: float,
+            timer: Timer, sizes: list[int]) -> None:
+    """숫자만 보면 뭘 고쳐야 할지 모른다 — 해석과 다음 조치를 붙인다."""
     print("\n── 해석 ────────────────────────────────────────────────")
+    took = dict(timer.marks)
+    rerank = next((v for k, v in took.items() if k.startswith("리랭킹")), 0.0)
+
+    if rerank > 2:
+        print(f"  ⚠️  리랭킹이 {rerank:.1f}초입니다. 후보 수 × 글자 수에 거의 비례합니다.")
+        if sizes and sizes[0] > settings.rerank_max_chars * 2:
+            print(f"      가장 긴 후보가 {sizes[0]:,}자입니다 — 표(엑셀·워드 표)는 헤더를"
+                  " 지키려고 쪼개지 않아 청크 하나가 아주 커집니다.")
+            print(f"      RERANK_MAX_CHARS(지금 {settings.rerank_max_chars})로 잘라 보내고,"
+                  f" RERANK_TOP_N(지금 {settings.rerank_top_n})을 줄이면 그만큼 빨라집니다.")
+        print("      그래도 느리면 **리랭커가 CPU 로 돌고 있을 수 있습니다** — 확인:")
+        print("        docker compose ps · docker compose logs reranker | head -20")
+        print("        (로그에 cuda/gpu 언급이 없으면 CPU 폴백입니다)")
+
     if ttft > 3:
         print(f"  ⚠️  첫 글자까지 {ttft:.1f}초. 이 동안 화면은 멈춰 보입니다.")
+        print(f"      프롬프트가 길수록 여기가 길어집니다 — ANSWER_MAX_CHARS"
+              f"(지금 {settings.answer_max_chars})로 근거를 잘라 보세요.")
         if settings.vllm_thinking != "off":
-            print("      추론(<think>)이 켜져 있으면 안 보이는 토큰을 먼저 만드느라"
-                  " 여기가 길어집니다.")
-            print("      .env 에 VLLM_THINKING=off 를 넣고 다시 재 보세요.")
+            print("      추론(<think>)이 켜져 있어도 길어집니다. VLLM_THINKING=off 로"
+                  " 재 봐서 차이가 없으면 이 모델은 추론을 안 쓰는 것이니 되돌리세요.")
+
     speed = chars / gen if gen else 0
     print(f"  생성 속도 약 {speed:.0f}자/초 · 답변 {chars:,}자")
     if chars > 1200:
@@ -159,7 +180,7 @@ def _advise(ttft: float, gen: float, chars: int, total: float) -> None:
     elif total < 12:
         print("  △ 총 5~12초 — 쓸 만하지만 더 줄일 수 있습니다.")
     else:
-        print("  ❌ 총 12초 초과 — 위 항목부터 손보세요.")
+        print("  ❌ 총 12초 초과 — 위에서 제일 큰 항목부터 손보세요.")
 
 
 if __name__ == "__main__":

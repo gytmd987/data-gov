@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import zlib
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -38,6 +39,16 @@ def _bigrams(text: str) -> list[str]:
     return [s[i:i + 2] for i in range(len(s) - 1)]
 
 
+def _slot(token: str, dim: int) -> int:
+    """토큰 → 벡터 칸. **실행할 때마다 같아야 한다.**
+
+    파이썬 내장 `hash()` 는 문자열에 대해 프로세스마다 값이 달라진다(해시 시드 무작위화).
+    그걸 쓰면 오프라인 테스트의 검색 순위가 실행마다 바뀌어, 어떤 날은 통과하고 어떤
+    날은 실패하는 테스트가 된다. 그런 테스트는 없느니만 못하다.
+    """
+    return zlib.crc32(token.encode("utf-8")) % dim
+
+
 class HashingEmbedder:
     """bigram 해싱 TF 벡터(정규화). 어휘가 겹칠수록 코사인 유사도가 높다."""
 
@@ -49,7 +60,7 @@ class HashingEmbedder:
         for t in texts:
             v = [0.0] * self.dim
             for bg in _bigrams(t):
-                v[hash(bg) % self.dim] += 1.0
+                v[_slot(bg, self.dim)] += 1.0
             norm = math.sqrt(sum(x * x for x in v)) or 1.0
             out.append([x / norm for x in v])
         return out

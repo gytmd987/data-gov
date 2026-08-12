@@ -22,7 +22,12 @@ class TEIReranker:
             return []
         # 빈 문자열은 TEI가 거부(422) → 공백으로 대체. 긴 입력은 truncate.
         clean_query = strip_surrogates(query) or " "
-        clean = [t or " " for t in clean_texts(texts)]
+        # 표 청크는 쪼개지 않아 수만 자가 되기도 한다. 전문을 보내면 크로스 인코더가
+        # 그만큼 오래 도는데, 관련도 판단에는 앞부분이면 충분하다. (점수 계산에만
+        # 쓰는 값이라 화면에 보이는 인용문은 잘리지 않는다.)
+        cap = settings.rerank_max_chars
+        clean = [(t or " ")[:cap] if cap else (t or " ")
+                 for t in clean_texts(texts)]
         batch = settings.tei_max_batch  # TEI 최대 배치(기본 32) 초과 시 나눠서 요청
         scores = [0.0] * len(clean)
         with httpx.Client(timeout=self._timeout) as client:

@@ -251,3 +251,17 @@ def test_no_preempt_behaves_exactly_as_before(env):
 
     assert events[-1]["type"] == "answer"
     assert [e for e in events if e["type"] == "delta"]
+
+
+def test_preempt_only_sees_the_top_ranked_documents(env):
+    """후보 전부를 넘기면 순위가 낮은 표 하나가 엉뚱한 질문까지 가로챈다."""
+    from app.search.pipeline import PREEMPT_TOP_DOCS
+    session, pipe, user, ours, theirs = env
+    seen = []
+
+    list(pipe.answer_events("연차는 며칠인가요?", user, session=session, today=TODAY,
+                            preempt=lambda ids: seen.append(list(ids)) or None))
+
+    assert seen and len(seen[0]) <= PREEMPT_TOP_DOCS, \
+        f"상위 {PREEMPT_TOP_DOCS}건만 넘겨야 하는데 {len(seen[0])}건 넘어갔다"
+    assert len(set(seen[0])) == len(seen[0]), "같은 문서가 중복으로 넘어갔다"

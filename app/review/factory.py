@@ -78,4 +78,7 @@ def build_search_pipeline(session: Session | None = None):
         reranker=TEIReranker(),
         llm=VLLMClient(),
         audit=AuditRepository(session),
+        # 후보를 몇 개까지 리랭커에 넘길지 — 리랭커는 크로스 인코더라 후보 수에
+        # 거의 비례해 느려진다. 상위 6개만 쓸 거라 24개면 충분하다.
+        top_n=settings.rerank_top_n,
     )

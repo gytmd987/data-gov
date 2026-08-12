@@ -18,6 +18,10 @@ from .retriever import HybridRetriever
 from .types import Answer
 
 
+# 표(SQL) 경로로 넘길 상위 문서 수. 넓히면 질문과 무관한 표가 답을 가로챈다.
+PREEMPT_TOP_DOCS = 3
+
+
 class AuditSink(Protocol):
     def record(self, event: dict[str, Any]) -> None: ...
 
@@ -98,10 +102,18 @@ class SearchPipeline:
         # 답변에 넣기 직전 마지막 재검증 — 이 경로로도 권한 밖 문서가 새면 안 된다
         evidence = [c for c in evidence if policy.allows(c.payload)]
 
-        # 문장을 만들기 **전에** 물어본다 — 만들고 나서 버리면 그 시간이 통째로 낭비다
+        # 문장을 만들기 **전에** 물어본다 — 만들고 나서 버리면 그 시간이 통째로 낭비다.
+        # **상위 몇 건만** 넘긴다. 후보 전체를 넘기면 순위가 한참 낮은 표 하나 때문에
+        # 엉뚱한 질문까지 SQL 경로로 가로채인다(질문과 무관한 표가 답이 되어 버린다).
         if preempt is not None:
+            top = []
+            for c in evidence:
+                if c.doc_id and c.doc_id not in top:
+                    top.append(c.doc_id)
+                if len(top) >= PREEMPT_TOP_DOCS:
+                    break
             try:
-                taken = preempt([c.doc_id for c in evidence if c.doc_id])
+                taken = preempt(top)
             except Exception:      # 대체 경로가 깨져도 평소대로 답해야 한다
                 taken = None
             if taken is not None:

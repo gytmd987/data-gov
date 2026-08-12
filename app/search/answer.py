@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from typing import Optional, Protocol
 
 from .types import Answer, Citation, RetrievedChunk
 
@@ -62,8 +62,37 @@ def strip_foreign_leakage(text: str, source_text: str = "") -> str:
     return cleaned.strip()
 
 
-def build_answer_prompt(query: str, chunks: list[RetrievedChunk]) -> str:
+def clip(text: str, limit: int) -> str:
+    """근거를 프롬프트에 넣을 만큼만 자른다.
+
+    표(엑셀·워드 표)는 헤더를 지키려고 쪼개지 않으므로 청크 하나가 수만 자가 되기도
+    한다. 그대로 넣으면 답변 시작까지(프리필) 그만큼 오래 걸린다. 표는 **앞부분에
+    헤더와 대표 행**이 있어 잘라도 대개 판단이 된다. 잘렸다는 사실은 표시한다 —
+    모델이 "이게 전부"라고 단정하지 않게.
+    """
+    if not limit or len(text or "") <= limit:
+        return text or ""
+    return text[:limit].rstrip() + f"\n…(이하 {len(text) - limit:,}자 생략)"
+
+
+def build_answer_prompt(query: str, chunks: list[RetrievedChunk],
+                        max_chars: Optional[int] = None,
+                        total_chars: Optional[int] = None) -> str:
+    """근거를 번호 매겨 프롬프트로. 길이는 두 겹으로 묶는다.
+
+    - max_chars  : 근거 **하나당** 상한(표 청크가 수만 자인 경우 대비)
+    - total_chars: 프롬프트 **전체** 상한. 이걸 넘으면 뒤쪽 근거부터 뺀다.
+
+    전체 상한이 필요한 이유: vLLM 은 `--max-model-len`(예: 16384) 을 넘는 요청을
+    거절한다. 판단 루프가 근거를 14개까지 모으면 상한 없이는 그 선을 넘어 **답변이
+    아예 안 나온다.** 뒤쪽은 관련도가 낮은 것들이라 빼도 답에 큰 영향이 없다.
+    """
+    from app.config import settings
+    limit = settings.answer_max_chars if max_chars is None else max_chars
+    budget = settings.answer_total_chars if total_chars is None else total_chars
+
     lines = [_SYSTEM, "\n[근거]"]
+    used = 0
     for i, c in enumerate(chunks, start=1):
         loc = []
         if c.title:
@@ -71,7 +100,12 @@ def build_answer_prompt(query: str, chunks: list[RetrievedChunk]) -> str:
         if c.page_no is not None:
             loc.append(f"p.{c.page_no}")
         header = f"[{i}]" + (f" ({', '.join(loc)})" if loc else "")
-        lines.append(f"{header}\n{c.text}")
+        body = clip(c.text, limit)
+        # 첫 근거는 예산을 넘더라도 넣는다 — 근거 없는 답변보다는 낫다
+        if budget and i > 1 and used + len(body) > budget:
+            break
+        used += len(body)
+        lines.append(f"{header}\n{body}")
     lines.append(f"\n[질문]\n{query}\n\n[답변]")
     return "\n\n".join(lines)
 
