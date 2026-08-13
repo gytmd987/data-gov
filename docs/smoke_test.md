@@ -33,7 +33,16 @@ curl -s $VLLM_BASE_URL/models | head -c 200
 못 잡아 두 서비스가 생성조차 안 된 상태다. NVIDIA Container Toolkit 미설치 또는 Blackwell(SM120)
 이미지 비호환이 원인.
 
-해결: **임베딩·리랭커를 CPU로** 돌린다(568M 소형이라 30명 규모엔 충분). 준비된 CPU 전용 파일 사용:
+**일단 띄우려면** 임베딩·리랭커를 CPU 로 돌린다. 준비된 CPU 전용 파일이 있다:
+
+> ⚠️ **CPU 는 "일단 동작하게" 하는 임시 방편이지 운영용이 아니다.** 실측으로
+> 리랭킹 8초, 문서 1건 색인에 CPU 전부 점유다(아래 실측표). 반드시 아래 설정을 함께
+> 조정하고, GPU 를 쓸 수 있게 되면 되돌릴 것.
+>
+> ```ini
+> RERANK_TOP_N=8 · RERANK_MAX_CHARS=600 · INGEST_WORKERS=1
+> ```
+
 
 ```bash
 docker compose -f docker-compose.cpu.yml up -d
@@ -87,12 +96,16 @@ TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:1.8
 로그에 `runtime compute cap 120 is not compatible with compile time compute cap 80` 이 뜨면
 = 그 이미지가 SM80(A100)용으로 빌드된 것. Blackwell(120)용 이미지가 필요하다.
 
-**폐쇄망이면 인터넷 되는 머신에서 빌드 → 이미지를 서버로 반입**한다:
+**폐쇄망이면 인터넷 되는 머신에서 빌드 → 이미지를 서버로 반입**한다.
+
+> `Dockerfile-cuda` 는 **TEI 소스 저장소 안에 있는 파일**이다. 우리 프로젝트 폴더에서
+> `docker build -f Dockerfile-cuda …` 를 치면 당연히 그런 파일이 없다고 나온다.
+> 반드시 아래처럼 **먼저 clone 하고 그 폴더로 들어가서** 빌드해야 한다.
 
 ```bash
-# (인터넷 머신)
+# (인터넷 되는 머신에서)
 git clone https://github.com/huggingface/text-embeddings-inference
-cd text-embeddings-inference
+cd text-embeddings-inference        # ← 이 폴더 안에 Dockerfile-cuda 가 있다
 docker build -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=120 -t tei-blackwell:local .
 docker save tei-blackwell:local -o tei-blackwell.tar
 
@@ -101,11 +114,44 @@ docker load -i tei-blackwell.tar
 # → .env 에  TEI_IMAGE=tei-blackwell:local
 ```
 
-> Blackwell TEI 이미지를 구하기 어려운 폐쇄망이면, **CPU(위)가 가장 빠른 길**이다. 또는 이미 Blackwell에서
-> 도는 vLLM으로 임베딩/리랭커까지 서빙하는 방법이 있다(별도 구성 필요 — 팀에 문의).
-
 > 요구: NVIDIA 드라이버가 CUDA 12.2+ 호환이어야 한다(Blackwell이면 최신 드라이버라 보통 충족).
-> **번거로우면 CPU(위)가 30명 규모엔 충분하다** — 임베딩/리랭커는 소형이라 CPU 지연도 문제되지 않는다.
+
+#### ⚠️ "CPU 로도 충분하다"는 말은 사실이 아니다 (실측)
+
+이 문서에 예전에 "임베딩/리랭커는 소형이라 CPU 지연도 문제되지 않는다"고 적혀 있었다.
+**실제로 재 보니 틀렸다.** 모델이 작은 건 맞지만(568M) 처리량이 크다.
+
+| 작업 | 통과 토큰 | CPU | GPU(추정) |
+|---|---|---|---|
+| 채팅 질문 임베딩 | ~15 | 0.1초 | 0.05초 |
+| 리랭킹(후보 24개) | ~17,000 | **8초** | 0.3초 |
+| 문서 1건 색인(50청크) | ~30,000 | **~15초, CPU 전부 점유** | 0.3초 |
+
+질문 임베딩만 보면 빨라서 괜찮아 보이는데, 그건 **질문 한 줄**만 처리하기 때문이다
+(문서 임베딩은 적재할 때 이미 해 뒀다). 리랭킹과 색인은 **문서 본문 전체**를 통과시킨다.
+
+CPU 로 운영해야 한다면 이것들을 조정해야 한다 — 자세한 건 `docs/질문_이해.md`:
+
+```ini
+RERANK_TOP_N=8 · RERANK_MAX_CHARS=600   # 리랭킹 8초 → 1초대
+RERANK_ENABLED=false                     # 그래도 느리면 아예 끔
+INGEST_WORKERS=1                         # 기본 4 는 GPU 기준. CPU 면 서버가 마비된다
+```
+
+#### GPU 이미지를 못 구하면 — vLLM 으로 임베딩을 서빙하는 길
+
+**이미 Blackwell 에서 도는 vLLM 이 있다면** 그게 가장 확실한 길이다. vLLM 은 임베딩
+모델도 서빙할 수 있어(`--task embed`) TEI 이미지 문제를 통째로 피한다. 남은 VRAM
+(~26GB)에 568M 모델 하나는 충분히 들어간다.
+
+```bash
+vllm serve nlpai-lab/KURE-v1 --task embed --port 8081 \
+  --gpu-memory-utilization 0.05
+```
+
+다만 API 모양이 다르다 — TEI 는 `POST /embed {"inputs": [...]}`, vLLM 은 OpenAI 형식인
+`POST /v1/embeddings {"input": [...]}` 이다. 이 경로를 쓰려면 클라이언트를 하나 더
+붙여야 한다(`app/clients/embedding.py` 옆에 OpenAI 형식 구현 추가). 필요하면 요청할 것.
 
 ## 2. 파이썬 환경
 
