@@ -70,6 +70,15 @@ services:
       - ./models:/models:ro          # 폐쇄망: 미리 받은 모델을 로컬 경로로 마운트
     environment:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      # ── CPU 로 돌 때만: 코어를 다 쓰게 하기 ───────────────────────────────
+      # 리랭커는 크로스 인코더라 후보마다 모델을 한 번씩 돌린다. 코어를 하나만 쓰면
+      # 그만큼 느려진다. 아래로 확인하고, 100% 근처면 두 줄의 주석을 풀 것:
+      #   docker stats --no-stream reranker    # CPU% 가 100 근처 = 1코어만 사용 중
+      #   nproc                                # 이 서버의 코어 수
+      # 숫자는 nproc 결과로 바꾼다. 값을 비워 두면 안 된다(빈 값이 1로 해석될 수 있음).
+      # GPU 로 도는 중이면 아무 효과 없다 — 건드리지 말 것.
+      # OMP_NUM_THREADS: "16"
+      # RAYON_NUM_THREADS: "16"
     deploy:
       resources:
         reservations:
