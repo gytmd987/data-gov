@@ -29,7 +29,7 @@ class AuditSink(Protocol):
 @dataclass
 class SearchPipeline:
     retriever: HybridRetriever
-    reranker: Reranker
+    reranker: Optional[Reranker]     # None 이면 재정렬 없이 검색 융합 순위를 쓴다
     llm: TextLLM
     audit: Optional[AuditSink] = None
     top_n: int = 40

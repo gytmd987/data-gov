@@ -75,7 +75,8 @@ def build_search_pipeline(session: Session | None = None):
     return SearchPipeline(
         retriever=HybridRetriever(dense=QdrantDenseSearch(embedder=TEIEmbedder()),
                                   sparse=sparse),
-        reranker=TEIReranker(),
+        # 리랭커가 CPU 로 돌면 질문마다 8초씩 먹는다 → 끄면 융합 순위를 그대로 쓴다
+        reranker=TEIReranker() if settings.rerank_enabled else None,
         llm=VLLMClient(),
         audit=AuditRepository(session),
         # 후보를 몇 개까지 리랭커에 넘길지 — 리랭커는 크로스 인코더라 후보 수에

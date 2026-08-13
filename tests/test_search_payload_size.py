@@ -162,3 +162,46 @@ def test_no_budget_means_everything_goes_in():
     chunks = [_chunk("다" * 1000, f"c{i}") for i in range(6)]
     prompt = build_answer_prompt("질문", chunks, max_chars=1000, total_chars=0)
     assert "[6]" in prompt
+
+
+# ── 리랭커 끄기 (CPU 폴백 상황의 탈출구) ────────────────────────────────────
+def test_disabled_reranker_keeps_the_search_order():
+    """리랭커가 CPU 로 돌아 8초씩 먹을 때 — 끄면 융합 순위 그대로 바로 답한다."""
+    from app.search.rerank import rerank_chunks
+
+    chunks = [_chunk(f"본문{i}", f"c{i}") for i in range(10)]
+
+    kept = rerank_chunks(None, "질문", chunks, top_k=4)
+
+    assert [c.chunk_id for c in kept] == ["c0", "c1", "c2", "c3"]
+
+
+def test_disabled_reranker_on_empty_input():
+    from app.search.rerank import rerank_chunks
+    assert rerank_chunks(None, "질문", [], top_k=4) == []
+
+
+def test_pipeline_answers_without_a_reranker():
+    """리랭커를 꺼도 파이프라인이 끝까지 돌아야 한다."""
+    from app.search.access import AccessPolicy, UserContext
+    from app.search.pipeline import SearchPipeline
+
+    readable = RetrievedChunk(
+        chunk_id="c1", text="연차는 15일이다", score=1.0,
+        payload={"parent_doc_id": "d1", "title": "연차규정",
+                 "access_groups": ["*"], "status": "active"})
+
+    class _Retriever:
+        def retrieve(self, query, policy, top_n=40):
+            return [readable]
+
+    class _LLM:
+        def complete_text(self, prompt, temperature=0.2):
+            return "연차는 15일입니다 [1]"
+
+    pipe = SearchPipeline(retriever=_Retriever(), reranker=None, llm=_LLM())
+    user = UserContext(user_id="u", groups=frozenset({"n:1"}))
+
+    answer = pipe.answer("연차?", user)
+
+    assert "15일" in answer.text

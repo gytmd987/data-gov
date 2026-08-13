@@ -72,7 +72,8 @@ def main(argv=None) -> int:
         print(f"질문   : {args.question}")
         print(f"모델   : {settings.vllm_model}")
         print(f"설정   : max_tokens={settings.vllm_max_tokens} · "
-              f"추론={settings.vllm_thinking} · 판단루프={'켬' if args.plan else '끔'}")
+              f"추론={settings.vllm_thinking} · 판단루프={'켬' if args.plan else '끔'} · "
+              f"리랭커={'켬' if settings.rerank_enabled else '끔'}")
 
         for run in range(1, args.repeat + 1):
             if args.repeat > 1:
@@ -158,9 +159,11 @@ def _advise(ttft: float, gen: float, chars: int, total: float,
                   " 지키려고 쪼개지 않아 청크 하나가 아주 커집니다.")
             print(f"      RERANK_MAX_CHARS(지금 {settings.rerank_max_chars})로 잘라 보내고,"
                   f" RERANK_TOP_N(지금 {settings.rerank_top_n})을 줄이면 그만큼 빨라집니다.")
-        print("      그래도 느리면 **리랭커가 CPU 로 돌고 있을 수 있습니다** — 확인:")
-        print("        docker compose ps · docker compose logs reranker | head -20")
-        print("        (로그에 cuda/gpu 언급이 없으면 CPU 폴백입니다)")
+        print("      리랭커가 **CPU 로 돌고 있으면** 이 정도가 정상입니다(크로스 인코더는"
+              " 후보마다 모델을 한 번씩 돌립니다). GPU 면 보통 0.2~0.5초입니다.")
+        print("        python -m scripts.check_tei      # GPU 로 도는지 확인")
+        print("      GPU 를 당장 못 고치면 임시로 끄세요 — 8초가 0초가 됩니다:")
+        print("        .env 에 RERANK_ENABLED=false (정확도는 조금 떨어집니다)")
 
     if ttft > 3:
         print(f"  ⚠️  첫 글자까지 {ttft:.1f}초. 이 동안 화면은 멈춰 보입니다.")
