@@ -98,3 +98,90 @@ def test_every_structured_mode_carries_the_limit(mode):
 def test_no_limit_means_the_field_is_omitted():
     """0/None 이면 아예 안 보낸다 — 서버 기본값을 쓰라는 뜻."""
     assert "max_tokens" not in build_json_payload("p", SCHEMA, "m", "guided_json")
+
+
+# ── 추론 모델이 생각만 하다 한도에 걸리는 경우 ──────────────────────────────
+# 추론 모델은 추론 토큰도 max_tokens 를 함께 쓴다. 한도가 빠듯하면 본문을 쓰기도 전에
+# 끊겨 content 가 None 으로 온다. 예전에는 그게 정규식으로 흘러가 TypeError 로 터졌고,
+# 진짜 원인("한도가 모자람")이 가려졌다.
+def _reply(content, finish="stop"):
+    return {"choices": [{"message": {"content": content}, "finish_reason": finish}]}
+
+
+def test_extract_json_says_what_is_wrong_when_there_is_no_content():
+    from app.clients.llm import extract_json
+
+    with pytest.raises(ValueError) as caught:
+        extract_json(None)
+
+    assert "max_tokens" in str(caught.value), "원인을 알 수 없는 오류가 났다"
+
+
+def test_empty_content_is_treated_the_same_as_missing():
+    from app.clients.llm import extract_json
+    with pytest.raises(ValueError):
+        extract_json("")
+
+
+def test_budget_doubles_when_the_model_ran_out_of_room(monkeypatch):
+    client = _client(monkeypatch, vllm_task_max_tokens=500)
+    seen = []
+
+    def fake(payload):
+        seen.append(payload["max_tokens"])
+        if len(seen) < 3:
+            return _reply(None, finish="length")     # 생각만 하다 끝남
+        return _reply('{"a":"b"}')
+
+    monkeypatch.setattr(client, "_post_chat", fake)
+
+    assert client.complete_json("p", SCHEMA) == {"a": "b"}
+    assert seen == [500, 1000, 2000], f"한도를 안 늘리고 같은 요청만 반복했다: {seen}"
+
+
+def test_budget_stays_put_when_the_answer_was_merely_malformed(monkeypatch):
+    """한도 문제가 아니면(finish_reason=stop) 늘려 봐야 소용없다."""
+    client = _client(monkeypatch, vllm_task_max_tokens=500)
+    seen = []
+
+    def fake(payload):
+        seen.append(payload["max_tokens"])
+        return _reply("이건 JSON 이 아닙니다")
+
+    monkeypatch.setattr(client, "_post_chat", fake)
+    with pytest.raises(RuntimeError):
+        client.complete_json("p", SCHEMA)
+
+    assert seen == [500, 500, 500]
+
+
+def test_budget_never_grows_past_the_cap(monkeypatch):
+    from app.clients.llm import MAX_TOKEN_BUDGET
+
+    client = _client(monkeypatch, vllm_task_max_tokens=MAX_TOKEN_BUDGET)
+    seen = []
+    monkeypatch.setattr(client, "_post_chat",
+                        lambda p: seen.append(p["max_tokens"]) or _reply(None, "length"))
+
+    with pytest.raises(RuntimeError):
+        client.complete_json("p", SCHEMA)
+
+    assert set(seen) == {MAX_TOKEN_BUDGET}
+
+
+def test_final_failure_reports_the_budget_it_gave_up_at(monkeypatch):
+    client = _client(monkeypatch, vllm_task_max_tokens=500)
+    monkeypatch.setattr(client, "_post_chat", lambda p: _reply(None, "length"))
+
+    with pytest.raises(RuntimeError) as caught:
+        client.complete_json("p", SCHEMA)
+
+    assert "한도" in str(caught.value)
+
+
+def test_complete_text_returns_empty_string_not_none(monkeypatch):
+    """None 을 돌려주면 부르는 쪽 .strip() 에서 엉뚱하게 터진다."""
+    client = _client(monkeypatch)
+    monkeypatch.setattr(client, "_post_chat", lambda p: _reply(None, "length"))
+
+    assert client.complete_text("안녕") == ""

@@ -207,8 +207,9 @@ def enrich(
         doc_types=doc_type_glossary(),
     )
     # 적재 자동채움은 요약·키워드·예상 Q&A 를 한 번에 만든다 — 판단이 필요하고 출력도
-    # 길다. 야간 배치라 사용자가 기다리지 않으므로 추론을 켜고 넉넉히 준다.
-    result = client.complete_json(prompt, schema, kind="answer", max_tokens=2000)
+    # 길다. 추론 모델이면 추론 토큰까지 같은 한도를 쓰므로 넉넉히 준다(상한일 뿐이라
+    # 일찍 끝나면 남는 만큼 비용이 없다). 모자라면 클라이언트가 늘려 다시 시도한다.
+    result = client.complete_json(prompt, schema, kind="answer", max_tokens=4000)
 
     cls = ClassificationBlock()
     life = LifecycleBlock()

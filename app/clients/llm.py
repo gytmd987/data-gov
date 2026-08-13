@@ -21,6 +21,10 @@ _FENCE_OPEN_RE = re.compile(r"^```[a-zA-Z]*\n?")
 _FENCE_CLOSE_RE = re.compile(r"\n?```$")
 _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 
+# 한도에 걸릴 때마다 두 배로 늘리되 여기까지만. 이걸 넘기면 한도 문제가 아니라
+# 프롬프트·스키마가 잘못된 것이므로 계속 늘려 봐야 시간만 버린다.
+MAX_TOKEN_BUDGET = 8000
+
 
 def _try_parse(s: str) -> Optional[dict[str, Any]]:
     """엄격 JSON → 후행콤마 제거 → 파이썬 리터럴(작은따옴표 dict) 순으로 시도."""
@@ -41,11 +45,19 @@ def _try_parse(s: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def extract_json(text: str) -> dict[str, Any]:
+def extract_json(text: Optional[str]) -> dict[str, Any]:
     """모델 응답에서 JSON 오브젝트를 견고하게 추출한다.
 
     코드펜스(```json ...```), <think> 추론 블록, 앞뒤 잡텍스트, 작은따옴표/후행콤마까지 견딘다.
+
+    **본문이 아예 없을 수 있다.** 추론 모델은 생각을 다 쓰기도 전에 생성 한도에 걸리면
+    `content: null` 을 돌려준다. 그대로 정규식에 넣으면 TypeError 로 터져 진짜 원인이
+    가려지므로, 여기서 알아볼 수 있는 오류로 바꾼다.
     """
+    if not text:
+        raise ValueError(
+            "모델이 본문을 돌려주지 않았습니다(content 없음). 생성 한도(max_tokens)에 "
+            "걸렸을 가능성이 큽니다 — 추론 모델은 추론 토큰도 이 한도를 함께 씁니다.")
     s = _THINK_RE.sub("", text).strip()
     if s.startswith("```"):
         s = _FENCE_CLOSE_RE.sub("", _FENCE_OPEN_RE.sub("", s)).strip()
@@ -163,20 +175,30 @@ class VLLMClient:
 
         kind="task" 가 기본이다 — 도구 선택·SQL 생성처럼 **결과가 짧고 정해진** 호출이라
         추론(<think>)이 필요 없다. 적재 자동채움처럼 판단이 필요한 곳은 kind="answer".
+
+        **한도에 걸리면 한도를 늘려 다시 시도한다.** 추론 모델은 추론 토큰도 max_tokens
+        를 함께 쓰므로, 한도가 빠듯하면 생각만 하다 끝나 `content` 가 비어서 온다
+        (`finish_reason="length"`). 얼마나 생각할지는 모델·질문마다 달라 고정값으로는
+        맞출 수 없으니, 걸릴 때마다 두 배로 늘려 본다.
         """
-        payload = build_json_payload(
-            prompt, schema, self.model, self.structured_mode, self.guided_backend,
-            max_tokens=max_tokens or self.task_max_tokens,
-            thinking=self.thinks_on(kind))
+        budget = max_tokens or self.task_max_tokens
         last_err: Exception | None = None
         for _ in range(max(1, retries + 1)):
+            payload = build_json_payload(
+                prompt, schema, self.model, self.structured_mode, self.guided_backend,
+                max_tokens=budget, thinking=self.thinks_on(kind))
             data = self._post_chat(payload)
-            content = data["choices"][0]["message"]["content"]
+            choice = (data.get("choices") or [{}])[0]
+            content = (choice.get("message") or {}).get("content")
             try:
                 return extract_json(content)
             except ValueError as e:
-                last_err = e   # 비-JSON 응답 → 재시도
-        raise last_err  # type: ignore[misc]
+                last_err = e
+                if choice.get("finish_reason") == "length":
+                    # 생각하다 끝났다 → 더 주고 다시. 안 늘리면 몇 번을 해도 같다.
+                    budget = min(budget * 2, MAX_TOKEN_BUDGET)
+        raise RuntimeError(
+            f"vLLM 구조화 응답 실패(마지막 한도 {budget}): {last_err}") from last_err
 
     def complete_text(self, prompt: str, temperature: float = 0.2) -> str:
         """일반 텍스트 생성(답변 생성용). answer.TextLLM 프로토콜 구현."""
@@ -188,7 +210,9 @@ class VLLMClient:
             **thinking_kwargs(self.thinks_on("answer")),
         }
         data = self._post_chat(payload)
-        return data["choices"][0]["message"]["content"]
+        # 추론 모델이 생각만 하다 한도에 걸리면 content 가 None 으로 온다 → 빈 문자열로.
+        # (None 을 그대로 돌려주면 부르는 쪽에서 .strip() 하다 엉뚱한 곳에서 터진다)
+        return (data["choices"][0]["message"].get("content") or "")
 
     def stream_text(self, prompt: str, temperature: float = 0.2):
         """답변을 토큰 단위로 흘려보낸다(생성기).
