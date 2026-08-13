@@ -90,6 +90,25 @@ DATA_UPLOAD_MAX_NUMBER_FILES = 500   # 한 요청의 하드 한도(넘으면 Dja
 # 우리는 받자마자 디스크에 쓰므로 메모리에 들고 있을 이유가 없다 → 낮게 잡는다.
 FILE_UPLOAD_MAX_MEMORY_SIZE = 512 * 1024
 
+# 로그를 표준 출력으로 — systemd 로 띄우면 `journalctl -u hr-web` 에 그대로 남는다.
+# 이게 없으면 업로드 실패 같은 예외가 어디에도 안 남아 관리자가 원인을 못 찾는다.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "[{asctime}] {levelname} {name}: {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # 요청 처리 중 터진 예외는 항상 남긴다(DEBUG=0 이어도)
+        "django.request": {"handlers": ["console"], "level": "ERROR",
+                           "propagate": False},
+    },
+}
+
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"

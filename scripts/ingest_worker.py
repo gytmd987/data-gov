@@ -22,10 +22,12 @@ import signal
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from app.config import settings
 from app.db.repositories import UploadJobRepository
 from app.ingestion.enrichment import ReadError
+from app.ingestion.failures import explain as explain_failure
 from app.ingestion.intake import DuplicateError
 from app.manage.schedule import (
     beat,
@@ -81,7 +83,8 @@ def process_one(job) -> tuple[str, str]:
         return "failed", str(e)
     except Exception as e:                       # noqa: BLE001
         svc.session.rollback()
-        return "failed", f"{type(e).__name__}: {e}"
+        traceback.print_exc()                    # 자세한 내용은 워커 로그로
+        return "failed", explain_failure(e)      # 화면에는 분류된 원인만
 
     try:
         svc.confirm_without_review(doc_id)

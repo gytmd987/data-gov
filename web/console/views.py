@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import tempfile
 from datetime import date, timedelta
@@ -30,12 +31,15 @@ from web.authz import (
 
 from app import system_config
 from app.ingestion.enrichment import ReadError
+from app.ingestion.failures import explain as explain_failure
 from app.ingestion.intake import DuplicateError
 from app.manage.lifecycle import sweep_expired
 from app.review.service import ENUM_OPTIONS, USER_DOC_STATUSES
 from app.schemas.enums import DocStatus
 from app.schemas.ingestion import IngestionStatus
 from app.schemas.metadata import GovernanceBlock
+
+log = logging.getLogger(__name__)
 
 _PAGE_SIZE = 50            # 문서 관리 목록 한 페이지 행 수(대량에서도 화면이 안 먹통)
 _EXPIRE_SOON_DAYS = 30     # 만료 임박 알림 기준
@@ -509,8 +513,11 @@ def docs(request):
                     dups.append(f"{f.name}({e.reason})")
                 except ReadError as e:
                     errs.append(f"{f.name}: {e}")
-                except Exception:   # LLM 일시 오류 등 — 500 대신 안내 후 재시도 유도
-                    errs.append(f"{f.name}: AI 처리 중 일시 오류가 발생했습니다. 잠시 후 다시 올려주세요.")
+                except Exception as e:   # 500 대신 원인을 알려 주고 재시도를 유도한다
+                    # 예외를 통째로 삼키면 화면에도 로그에도 원인이 안 남아 관리자조차
+                    # 손을 못 댄다. 자세한 내용은 로그로, 화면에는 분류된 원인만.
+                    log.exception("업로드 실패: %s", f.name)
+                    errs.append(f"{f.name}: {explain_failure(e)}")
             if ok_n:
                 messages.success(request, f"{ok_n}건 업로드 완료 — 내용을 확인·수정한 뒤 등록을 확정하세요.")
             if dups:
